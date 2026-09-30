@@ -411,7 +411,7 @@ async function aboutSection() {
   const f = i.ffmpeg;
   return h('div', { class: 'form' },
     h('div', { class: 'form-section' }, h('h2', null, 'AI disclosure'),
-      h('p', null, 'Lex was developed with generative AI assistance in code, documentation and review. AI-assisted output can contain errors; maintainers are responsible for validation. Lex does not call AI model services at runtime.')),
+      h('p', null, 'Lex was built by large language models: LLM coding agents wrote its code, interface, tests and documentation under human direction. LLM-written code can contain mistakes, including security ones, and has not had an independent security review. Lex does not call AI model services at runtime.')),
     h('div', { class: 'form-section' }, h('h2', null, 'Lex'), h('dl', { class: 'kv' },
       h('dt', null, 'Version'), h('dd', null, i.version),
       h('dt', null, 'Go runtime'), h('dd', null, i.go),

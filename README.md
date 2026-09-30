@@ -5,6 +5,11 @@ built for small Linux hosts, including Raspberry Pi. A Go binary with SQLite,
 `ffmpeg`/`ffprobe` for media processing, and a dependency-free web UI embedded
 in the binary. macOS can be used for local development.
 
+> [!NOTE]
+> **Built by AI.** Lex was written by large language models (LLM coding
+> agents) under human direction: the code, UI, tests, documentation and
+> screenshots. See [AI disclosure](#ai-disclosure).
+
 ![Lex home screen](docs/screenshots/home.webp)
 
 ## Screenshots
@@ -243,12 +248,18 @@ and issues. See [contributing](CONTRIBUTING.md) and the
 
 ## AI disclosure
 
-This project has been developed and reviewed with generative AI assistance,
-including code, documentation, and publication-audit work. AI-assisted output
-can contain errors; the checks and audit are not an independent security
-certification. Maintainers remain responsible for reviewing and validating
-changes. Lex does not call an AI model service at runtime. A disclosure also
-appears in Settings → About.
+Lex was built by large language models. LLM coding agents wrote the Go
+server, the web UI, the tests, the documentation, the publication audit and
+the README screenshots; a human maintainer set the direction, chose the
+features, reported bugs and tested it on real hardware. This covers the whole
+history, including the initial commit; commits since then also name the model
+in a `Co-Authored-By` trailer.
+
+LLM-written code can contain mistakes, including security ones. The automated
+checks and the publication audit were also produced with LLMs and are not an
+independent security review, so treat Lex like any other unaudited software:
+review it before exposing it to the internet. Lex does not call an AI model
+service at runtime. The same disclosure appears in Settings → About.
 
 ## License
 
