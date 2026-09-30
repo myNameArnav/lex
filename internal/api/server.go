@@ -299,14 +299,14 @@ func peerIP(r *http.Request) string {
 // Only explicitly configured proxy peers may supply client identity or TLS headers.
 func (s *Server) trustedProxy(r *http.Request) bool {
 	cfg := s.St.Config()
-	if !cfg.TrustProxy {
-		return false
-	}
-	ip := net.ParseIP(peerIP(r))
+	return cfg.TrustProxy && inCIDRs(cfg.TrustedProxies, net.ParseIP(peerIP(r)))
+}
+
+func inCIDRs(list string, ip net.IP) bool {
 	if ip == nil {
 		return false
 	}
-	for _, cidr := range strings.Split(cfg.TrustedProxies, ",") {
+	for _, cidr := range strings.Split(list, ",") {
 		if _, network, err := net.ParseCIDR(strings.TrimSpace(cidr)); err == nil && network.Contains(ip) {
 			return true
 		}
@@ -314,18 +314,38 @@ func (s *Server) trustedProxy(r *http.Request) bool {
 	return false
 }
 
+// clientIP identifies the client. Behind a trusted proxy it walks
+// X-Forwarded-For from the right: each proxy appends the address it saw, so
+// the rightmost entry that isn't itself a trusted proxy is the first one a
+// client couldn't forge. Entries to its left, and headers such as X-Real-IP
+// or CF-Connecting-IP that proxies often pass through untouched, are ignored.
 func (s *Server) clientIP(r *http.Request) string {
-	if s.trustedProxy(r) {
-		for _, h := range []string{"CF-Connecting-IP", "X-Real-IP", "X-Forwarded-For"} {
-			if v := r.Header.Get(h); v != "" {
-				first := strings.TrimSpace(strings.Split(v, ",")[0])
-				if net.ParseIP(first) != nil {
-					return first
-				}
-			}
+	peer := peerIP(r)
+	if !s.trustedProxy(r) {
+		return peer
+	}
+	proxies := s.St.Config().TrustedProxies
+	var hops []string
+	for _, v := range r.Header.Values("X-Forwarded-For") {
+		hops = append(hops, strings.Split(v, ",")...)
+	}
+	client := peer
+	for i := len(hops) - 1; i >= 0; i-- {
+		hop := strings.TrimSpace(hops[i])
+		if host, _, err := net.SplitHostPort(hop); err == nil {
+			hop = host
+		}
+		ip := net.ParseIP(hop)
+		if ip == nil {
+			// Unreadable hop: nothing left of it can be trusted.
+			break
+		}
+		client = ip.String()
+		if !inCIDRs(proxies, ip) {
+			break
 		}
 	}
-	return peerIP(r)
+	return client
 }
 
 func (s *Server) isRemote(ipStr string) bool {
