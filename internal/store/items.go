@@ -219,16 +219,52 @@ func (s *Store) InsertItem(it *Item) (int64, error) {
 
 // SaveMetadata writes every metadata column of an item.
 func (s *Store) SaveMetadata(it *Item) error {
+	_, err := s.saveMetadata(it, nil)
+	return err
+}
+
+// MatchGuard pins the match an automatic metadata refresh started from: the
+// lock and provider ids of the item that decides the match (the item itself,
+// or the show for seasons and episodes).
+type MatchGuard struct {
+	ItemID      int64
+	Locked      bool
+	ProviderIDs string
+}
+
+// GuardOf captures an item's current match for SaveMetadataIf.
+func GuardOf(it *Item) MatchGuard {
+	return MatchGuard{ItemID: it.ID, Locked: it.MetaLocked, ProviderIDs: jsonString(nonNilM(it.ProviderIDs))}
+}
+
+// SaveMetadataIf is SaveMetadata for automatic refreshes, which work from a
+// snapshot taken before slow network lookups: it only writes if the guarded
+// item's match is unchanged, so a manual "Fix match" (or unmatch) made in the
+// meantime wins. It reports whether the item was written.
+func (s *Store) SaveMetadataIf(it *Item, g MatchGuard) (bool, error) {
+	return s.saveMetadata(it, &g)
+}
+
+func (s *Store) saveMetadata(it *Item, g *MatchGuard) (bool, error) {
 	if it.SortTitle == "" {
 		it.SortTitle = SortTitle(it.Title)
 	}
 	it.UpdatedAt = now()
-	_, err := s.db.Exec(`UPDATE items SET title=?,sort_title=?,original_title=?,year=?,overview=?,tagline=?,rating=?,content_rating=?,
-		genres=?,cast_json=?,studios=?,runtime=?,premiere=?,poster=?,backdrop=?,thumb=?,provider_ids=?,updated_at=?,meta_status=?,meta_locked=?,hint=? WHERE id=?`,
-		it.Title, it.SortTitle, it.OriginalTitle, it.Year, it.Overview, it.Tagline, it.Rating, it.ContentRating,
+	q := `UPDATE items SET title=?,sort_title=?,original_title=?,year=?,overview=?,tagline=?,rating=?,content_rating=?,
+		genres=?,cast_json=?,studios=?,runtime=?,premiere=?,poster=?,backdrop=?,thumb=?,provider_ids=?,updated_at=?,meta_status=?,meta_locked=?,hint=? WHERE id=?`
+	args := []any{it.Title, it.SortTitle, it.OriginalTitle, it.Year, it.Overview, it.Tagline, it.Rating, it.ContentRating,
 		jsonString(nonNil(it.Genres)), jsonString(nonNilP(it.Cast)), jsonString(nonNil(it.Studios)), it.Runtime, it.Premiere, it.Poster, it.Backdrop, it.Thumb,
-		jsonString(nonNilM(it.ProviderIDs)), it.UpdatedAt, it.MetaStatus, it.MetaLocked, jsonString(it.Hint), it.ID)
-	return err
+		jsonString(nonNilM(it.ProviderIDs)), it.UpdatedAt, it.MetaStatus, it.MetaLocked, jsonString(it.Hint), it.ID}
+	if g != nil {
+		q += ` AND EXISTS (SELECT 1 FROM items g WHERE g.id=? AND g.meta_locked=? AND (CASE WHEN g.provider_ids IN ('','null') THEN '{}' ELSE g.provider_ids END)=?)`
+		args = append(args, g.ItemID, g.Locked, g.ProviderIDs)
+	}
+	res, err := s.db.Exec(q, args...)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 func nonNil(v []string) []string {

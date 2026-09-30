@@ -1174,7 +1174,11 @@ class Player {
     this.introSkipped = false;
     if (this.skipBtn) { this.skipBtn.remove(); this.skipBtn = null; }
     for (const c of [...this.rail.querySelectorAll('.chap, .seg')]) c.remove();
+    // Fallbacks (remux/transcode, software encoder) were for the last file;
+    // the next one starts from the user's chosen method again.
     this.fallbacks = 0;
+    this.mode = prefs.get('mode');
+    this.swEncode = false;
     this.stalls = { count: 0, secs: 0, since: 0 };
     this.teardown();
     const ud = next.userData;

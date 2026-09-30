@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"lex/internal/store"
+	"lex/internal/stream"
 	"lex/internal/subsearch"
 )
 
@@ -32,15 +34,25 @@ func lang1to3(l string) string {
 	return l
 }
 
+// subClient returns the OpenSubtitles client for the current settings.
+// Clients are never modified once handed out (requests use them without
+// holding subMu); a settings change swaps in a new one instead.
 func (s *Server) subClient() *subsearch.Client {
 	c := s.St.Config()
+	key, user, pass := strings.TrimSpace(c.OpenSubtitlesKey), c.OpenSubtitlesUser, c.OpenSubtitlesPass
 	s.subMu.Lock()
 	defer s.subMu.Unlock()
-	if s.subsClient == nil {
-		s.subsClient = &subsearch.Client{}
+	if cl := s.subsClient; cl == nil || cl.Key != key || cl.User != user || cl.Pass != pass {
+		s.subsClient = subsearch.New(key, user, pass)
 	}
-	s.subsClient.Key, s.subsClient.User, s.subsClient.Pass = strings.TrimSpace(c.OpenSubtitlesKey), c.OpenSubtitlesUser, c.OpenSubtitlesPass
 	return s.subsClient
+}
+
+// subFail logs an internal error and sends a generic 500 (the detail can
+// name server paths).
+func (s *Server) subFail(w http.ResponseWriter, what string, err error) {
+	s.Log.Errorf("subtitles: %s: %v", what, err)
+	writeErr(w, 500, "subtitle error; see admin logs")
 }
 
 // downloadedStreams lists downloaded subtitles as external streams.
@@ -132,6 +144,16 @@ func (s *Server) subDownload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "fileId required")
 		return
 	}
+	dir := filepath.Join(s.DataDir, "subs", "downloaded")
+	path := filepath.Join(dir, fmt.Sprintf("%d-%d.srt", f.ID, req.FileID))
+	// Already downloaded for this file: hand out the existing track rather
+	// than spending quota on a second copy.
+	if d, err := s.St.DownloadedSubByPath(f.ID, path); err == nil {
+		if st, err := os.Stat(path); err == nil && st.Size() > 0 {
+			s.writeDownloaded(w, f.ID, d.ID)
+			return
+		}
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 	data, _, err := s.subClient().Download(ctx, req.FileID)
@@ -139,34 +161,38 @@ func (s *Server) subDownload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 502, err.Error())
 		return
 	}
-	dir := filepath.Join(s.DataDir, "subs", "downloaded")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		writeErr(w, 500, err.Error())
+		s.subFail(w, "download", err)
 		return
 	}
-	path := filepath.Join(dir, fmt.Sprintf("%d-%d.srt", f.ID, req.FileID))
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		writeErr(w, 500, err.Error())
+	if err := stream.WriteFileAtomic(path, data); err != nil {
+		s.subFail(w, "download", err)
 		return
 	}
 	title := strings.TrimSpace(req.Release)
 	if len(title) > 80 {
 		title = title[:80] + "…"
 	}
-	d := &store.DownloadedSub{FileID: f.ID, Language: lang1to3(req.Language), Title: title, Path: path, Provider: "opensubtitles", HearingImpaired: req.HearingImpaired}
-	if err := s.St.AddDownloadedSub(d); err != nil {
-		writeErr(w, 500, err.Error())
+	d := &store.DownloadedSub{FileID: f.ID, Language: lang1to3(req.Language), Title: title, Path: path, Provider: "opensubtitles",
+		HearingImpaired: req.HearingImpaired, UserID: userOf(r).ID}
+	if _, err := s.St.AddDownloadedSub(d); err != nil {
+		s.subFail(w, "download", err)
 		return
 	}
 	s.Log.Infof("subtitles: downloaded %s (%s) for %s", title, d.Language, filepath.Base(f.Path))
-	st := s.downloadedStreams(f.ID)
+	s.writeDownloaded(w, f.ID, d.ID)
+}
+
+// writeDownloaded responds with the stream entry for a downloaded subtitle.
+func (s *Server) writeDownloaded(w http.ResponseWriter, fileID, id int64) {
+	st := s.downloadedStreams(fileID)
 	for _, x := range st {
-		if x.Index == store.DownloadedSubBase+int(d.ID) {
+		if x.Index == store.DownloadedSubBase+int(id) {
 			writeJSON(w, x)
 			return
 		}
 	}
-	writeJSON(w, map[string]int{"index": store.DownloadedSubBase + int(d.ID)})
+	writeJSON(w, map[string]int{"index": store.DownloadedSubBase + int(id)})
 }
 
 func (s *Server) subDelete(w http.ResponseWriter, r *http.Request) {
@@ -185,8 +211,26 @@ func (s *Server) subDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "not found")
 		return
 	}
-	os.Remove(d.Path)
-	s.St.DeleteDownloadedSub(d.ID)
+	// Downloaded subtitles are shared by everyone who can see the file, so
+	// only whoever fetched one (or an admin) may remove it.
+	if u := userOf(r); !u.IsAdmin && d.UserID != u.ID {
+		writeErr(w, 403, "only the user who downloaded this subtitle or an admin can delete it")
+		return
+	}
+	free, err := s.St.DeleteDownloadedSub(d.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeErr(w, 404, "not found")
+		return
+	} else if err != nil {
+		s.subFail(w, "delete", err)
+		return
+	}
+	if free {
+		os.Remove(d.Path)
+	}
+	if s.Subs != nil {
+		s.Subs.Forget(id, idx)
+	}
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -204,7 +248,7 @@ func (s *Server) fonts(w http.ResponseWriter, r *http.Request) {
 	}
 	_, names, err := s.Subs.Fonts(r.Context(), f)
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		s.subFail(w, "fonts", err)
 		return
 	}
 	urls := []string{}
@@ -227,7 +271,7 @@ func (s *Server) font(w http.ResponseWriter, r *http.Request) {
 	}
 	dir, names, err := s.Subs.Fonts(r.Context(), f)
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		s.subFail(w, "fonts", err)
 		return
 	}
 	name := r.PathValue("name")

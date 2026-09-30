@@ -127,7 +127,50 @@ func TestProxyTrust(t *testing.T) {
 			t.Errorf("%s secure=%v", tc.peer, got)
 		}
 	}
-	r := httptest.NewRequest("GET", "https://lex.test", nil)
+	// Proxies append the peer they saw, so everything left of the rightmost
+	// untrusted hop, and headers proxies pass through, is client-controlled.
+	for _, tc := range []struct {
+		name, want string
+		xff        []string
+		extra      map[string]string
+	}{
+		{"no header", "127.0.0.1", nil, nil},
+		{"single hop", "198.51.100.20", []string{"198.51.100.20"}, nil},
+		{"spoofed prefix", "198.51.100.20", []string{"203.0.113.99, 198.51.100.20"}, nil},
+		{"spoofed loopback", "198.51.100.20", []string{"127.0.0.1, 198.51.100.20"}, nil},
+		{"garbage prefix", "198.51.100.20", []string{"not-an-ip, 198.51.100.20"}, nil},
+		{"proxy chain", "198.51.100.20", []string{"203.0.113.99, 198.51.100.20, 127.0.0.1"}, nil},
+		{"repeated headers", "198.51.100.20", []string{"203.0.113.99", "198.51.100.20"}, nil},
+		{"with port", "198.51.100.20", []string{"198.51.100.20:5555"}, nil},
+		{"ipv6", "2001:db8::1", []string{"[2001:db8::1]:443"}, nil},
+		{"unreadable last hop", "127.0.0.1", []string{"198.51.100.20, unknown"}, nil},
+		{"pass-through headers ignored", "198.51.100.20", []string{"198.51.100.20"},
+			map[string]string{"X-Real-IP": "203.0.113.99", "CF-Connecting-IP": "203.0.113.98"}},
+	} {
+		r := httptest.NewRequest("GET", "http://lex.test/api/me", nil)
+		r.RemoteAddr = "127.0.0.1:1234"
+		for _, v := range tc.xff {
+			r.Header.Add("X-Forwarded-For", v)
+		}
+		for k, v := range tc.extra {
+			r.Header.Set(k, v)
+		}
+		if got := s.clientIP(r); got != tc.want {
+			t.Errorf("%s: client=%s want %s", tc.name, got, tc.want)
+		}
+	}
+	cfg.TrustedProxies = "127.0.0.0/8, ::1/128"
+	if _, err := s.St.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("GET", "http://lex.test/api/me", nil)
+	r.RemoteAddr = "127.0.0.1:1234"
+	r.Header.Set("X-Forwarded-For", "127.0.0.2, ::1")
+	if got := s.clientIP(r); got != "127.0.0.2" {
+		t.Errorf("all-trusted chain: client=%s", got)
+	}
+
+	r = httptest.NewRequest("GET", "https://lex.test", nil)
 	r.TLS = &tls.ConnectionState{}
 	if !s.isHTTPS(r) {
 		t.Fatal("native TLS must be secure")
@@ -204,6 +247,33 @@ func TestLoginLimiterIsBounded(t *testing.T) {
 	}
 	if s.loginAllowed("127.0.0.1") {
 		t.Fatal("failed logins were not limited")
+	}
+}
+
+func TestChangePasswordIsRateLimited(t *testing.T) {
+	s, h := securityServer(t)
+	u, err := s.St.CreateInitialAdmin("admin", "test-password-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _ := s.St.CreateToken(u.ID, "Test", "127.0.0.1")
+	change := func(current, peer string) int {
+		body := `{"current":"` + current + `","new":"other-password-456"}`
+		r := httptest.NewRequest("PUT", "http://lex.test/api/me/password", strings.NewReader(body))
+		r.RemoteAddr = peer
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	for i := 0; i < 10; i++ {
+		if code := change("wrong-guess", "192.0.2.1:1"); code != 403 {
+			t.Fatalf("guess %d returned %d", i, code)
+		}
+	}
+	// The account stays limited from a fresh address, even with the right password.
+	if code := change("test-password-123", "192.0.2.2:1"); code != 429 {
+		t.Fatalf("limited change returned %d", code)
 	}
 }
 

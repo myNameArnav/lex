@@ -5,10 +5,17 @@ import { prefs, DEFAULTS, QUALITIES } from './prefs.js';
 import { capsSummary } from './caps.js';
 import { lineChart, columnChart, sparkline, barList, SERIES } from './charts.js';
 
-// Timers owned by the current admin view; cleared on navigation.
+// Timers owned by the current admin view; cleared on navigation, when the
+// view is re-rendered (ctx no longer current) and when the session expires.
 let timers = [];
-function every(ms, fn) { const t = setInterval(fn, ms); timers.push(t); return t; }
-window.addEventListener('hashchange', () => { timers.forEach(clearInterval); timers = []; });
+function stopTimers() { timers.forEach(clearInterval); timers = []; }
+function every(ctx, ms, fn) {
+  const t = setInterval(() => { if (ctx.isCurrent()) fn(); else clearInterval(t); }, ms);
+  timers.push(t);
+  return t;
+}
+window.addEventListener('hashchange', stopTimers);
+window.addEventListener('lex:unauthorized', stopTimers);
 
 // ======================================================================
 // Settings
@@ -369,19 +376,19 @@ async function cacheSection(ctx) {
       field('Prefetch upcoming episodes', h('select', { onchange: (e) => { draft.cachePrefetch = +e.target.value; } }, [0, 1, 2, 3, 5].map((v) => h('option', { value: v, selected: draft.cachePrefetch === v }, v ? `Next ${v}` : 'Off'))))),
   ]);
   await render();
-  every(2000, render);
+  every(ctx, 2000, render);
   return h('div', { class: 'form' }, form, statusBox, listBox);
 }
 
 // ---------- tasks & logs ----------
-async function logsSection() {
+async function logsSection(ctx) {
   const tasks = h('div', { class: 'form-section' });
   const logBox = h('div', { class: 'logs' });
   let follow = true;
   logBox.addEventListener('scroll', () => { follow = logBox.scrollTop + logBox.clientHeight >= logBox.scrollHeight - 20; });
   const renderTasks = async () => {
     const t = await api('/api/admin/tasks').catch(() => null);
-    if (!t) return;
+    if (!t || !ctx.isCurrent()) return;
     const s = t.scan, m = t.metadata;
     clear(tasks).append(h('h2', null, 'Background tasks'),
       h('div', { class: 'task' }, s.running ? h('div', { class: 'spinner', style: { width: '16px', height: '16px', borderWidth: '2px' } }) : h('span', { class: 'good', html: icons.check, style: { width: '16px' } }),
@@ -395,14 +402,15 @@ async function logsSection() {
       h('div', { class: 'row' }, h('button', { class: 'btn sm', onclick: async () => { await api('/api/admin/scan', { method: 'POST', body: {} }); renderTasks(); } }, 'Scan now')));
   };
   const renderLogs = async () => {
-    const lines = await api('/api/admin/logs').catch(() => []);
+    const lines = await api('/api/admin/logs').catch(() => null);
+    if (!lines || !ctx.isCurrent()) return;
     clear(logBox).append(...lines.map((l) => h('div', { class: l.level }, `${new Date(l.t).toLocaleTimeString()} ${l.level.padEnd(5)} ${l.msg}`)));
     if (follow) logBox.scrollTop = logBox.scrollHeight;
   };
   await renderTasks();
   await renderLogs();
-  every(2000, renderTasks);
-  every(3000, renderLogs);
+  every(ctx, 2000, renderTasks);
+  every(ctx, 3000, renderLogs);
   return h('div', { class: 'form', style: { maxWidth: 'none' } }, tasks, h('div', { class: 'form-section' }, h('h2', null, 'Log'), logBox));
 }
 
@@ -566,8 +574,8 @@ async function liveTab(ctx) {
   };
 
   await Promise.all([renderSystem(true), renderSessions()]);
-  every(3000, () => renderSystem(false));
-  every(2000, renderSessions);
+  every(ctx, 3000, () => renderSystem(false));
+  every(ctx, 2000, renderSessions);
   return h('div', { class: 'dash-live' },
     h('section', null, h('div', { class: 'dash-head' }, nowTitle), sessionsBox),
     h('section', null, h('div', { class: 'dash-head' }, h('h2', { class: 'section-title' }, 'Server'), h('span', { class: 'muted small' }, 'last hour')),

@@ -77,11 +77,36 @@ type Cache struct {
 	hits    int64
 	misses  int64
 	lastErr string
-	ready   map[int64]string // file id -> cached path (complete entries)
+	ready   map[int64]copyInfo // file id -> complete cached copy
+	// recheck asks the worker to reconcile before its next job.
+	recheck bool
+	disk    func(dir string) (free, total int64, ok bool) // diskSpace; tests fake it
 }
 
+// copyInfo is a complete cached copy and the source it was made from: it
+// only stands in for a file with the same size and mtime, so a changed file
+// or a reused file id never reads an old copy.
+type copyInfo struct {
+	path  string
+	size  int64
+	mtime int64
+}
+
+func (ci copyInfo) matches(f *store.File) bool { return ci.size == f.Size && ci.mtime == f.Mtime }
+
+const (
+	// Entries used within keepRecent are never evicted. last_access only
+	// moves when playback starts or seeks, so a film being watched looks
+	// idle for hours, and deleting a file ffmpeg still holds open frees no
+	// space anyway.
+	keepRecent = 4 * time.Hour
+	// reconcileEvery re-reads the directory to drop copies whose files left
+	// the library behind the cache's back (e.g. a deleted library).
+	reconcileEvery = 30 * time.Minute
+)
+
 func New(st *store.Store, log *logx.Logger, dataDir string) *Cache {
-	c := &Cache{st: st, log: log, dataDir: dataDir, wake: make(chan struct{}, 1), touched: map[int64]int64{}, ready: map[int64]string{}}
+	c := &Cache{st: st, log: log, dataDir: dataDir, wake: make(chan struct{}, 1), touched: map[int64]int64{}, ready: map[int64]copyInfo{}, disk: diskSpace}
 	c.reconcile()
 	go c.worker()
 	return c
@@ -103,32 +128,38 @@ func (c *Cache) enabled() bool { return c.st.Config().CacheEnabled }
 
 func (c *Cache) db() *sql.DB { return c.st.DB() }
 
-// reconcile drops stale temp files, entries whose cached copy vanished and
-// cached files the database doesn't know about.
+// reconcile rebuilds the in-memory view from the database and drops stale
+// temp files, entries whose cached copy vanished and cached files the
+// database doesn't know about (their file left the library). It runs on the
+// worker goroutine (or before it starts), never alongside a copy.
 func (c *Cache) reconcile() {
 	dir := c.Dir()
 	os.MkdirAll(dir, 0o755)
 	known := map[string]bool{}
-	rows, err := c.db().Query(`SELECT file_id, path FROM cache_entries`)
+	ready := map[int64]copyInfo{}
+	rows, err := c.db().Query(`SELECT file_id, path, size, src_mtime FROM cache_entries`)
 	if err != nil {
 		return
 	}
 	var gone []int64
 	for rows.Next() {
 		var id int64
-		var p string
-		rows.Scan(&id, &p)
-		if _, err := os.Stat(p); err != nil {
+		var ci copyInfo
+		rows.Scan(&id, &ci.path, &ci.size, &ci.mtime)
+		if _, err := os.Stat(ci.path); err != nil {
 			gone = append(gone, id)
 			continue
 		}
-		known[p] = true
-		c.ready[id] = p
+		known[ci.path] = true
+		ready[id] = ci
 	}
 	rows.Close()
 	for _, id := range gone {
 		c.db().Exec(`DELETE FROM cache_entries WHERE file_id=?`, id)
 	}
+	c.mu.Lock()
+	c.ready = ready
+	c.mu.Unlock()
 	ents, _ := os.ReadDir(dir)
 	for _, e := range ents {
 		p := filepath.Join(dir, e.Name())
@@ -139,27 +170,28 @@ func (c *Cache) reconcile() {
 }
 
 // Resolve returns the path to read a file from: the cached copy if it's
-// complete and still matches the source, otherwise the original.
+// complete and still matches the source, otherwise the original. It counts
+// as a use of the copy (hit statistics, eviction order), so it's meant for
+// playback; background readers use Peek.
 func (c *Cache) Resolve(f *store.File) string {
 	if !c.enabled() {
 		return f.Path
 	}
 	c.mu.Lock()
-	p, ok := c.ready[f.ID]
+	ci, ok := c.ready[f.ID]
+	if !ok {
+		c.misses++
+	}
 	c.mu.Unlock()
 	if !ok {
-		c.mu.Lock()
-		c.misses++
-		c.mu.Unlock()
 		return f.Path
 	}
-	var size, mtime int64
-	if err := c.db().QueryRow(`SELECT size, src_mtime FROM cache_entries WHERE file_id=?`, f.ID).Scan(&size, &mtime); err != nil || size != f.Size || mtime != f.Mtime {
+	if !ci.matches(f) {
 		// Source replaced (e.g. a quality upgrade): drop the stale copy.
 		c.Remove(f.ID)
 		return f.Path
 	}
-	if st, err := os.Stat(p); err != nil || st.Size() != size {
+	if st, err := os.Stat(ci.path); err != nil || st.Size() != ci.size {
 		c.Remove(f.ID)
 		return f.Path
 	}
@@ -174,7 +206,7 @@ func (c *Cache) Resolve(f *store.File) string {
 	if now-last > 60 {
 		c.db().Exec(`UPDATE cache_entries SET last_access=?, hits=hits+1 WHERE file_id=?`, now, f.ID)
 	}
-	return p
+	return ci.path
 }
 
 // Peek is Resolve without side effects (no hit counting or LRU touch), for
@@ -184,15 +216,15 @@ func (c *Cache) Peek(f *store.File) string {
 		return f.Path
 	}
 	c.mu.Lock()
-	p, ok := c.ready[f.ID]
+	ci, ok := c.ready[f.ID]
 	c.mu.Unlock()
-	if !ok {
+	if !ok || !ci.matches(f) {
 		return f.Path
 	}
-	if st, err := os.Stat(p); err != nil || st.Size() != f.Size {
+	if st, err := os.Stat(ci.path); err != nil || st.Size() != f.Size {
 		return f.Path
 	}
-	return p
+	return ci.path
 }
 
 // IsCached reports whether a complete copy exists.
@@ -215,7 +247,7 @@ func (c *Cache) Request(f *store.File, reason string) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, ok := c.ready[f.ID]; ok {
+	if ci, ok := c.ready[f.ID]; ok && ci.matches(f) {
 		return
 	}
 	if c.current != nil && c.current.FileID == f.ID {
@@ -239,7 +271,9 @@ func (c *Cache) Request(f *store.File, reason string) {
 	}
 }
 
-// Remove deletes a cached copy (or cancels its copy job).
+// Remove deletes a cached copy (or cancels its copy job). The scanner calls
+// it for files that were deleted or changed; their database row may already
+// be gone, but the copy on disk and the in-memory entry are not.
 func (c *Cache) Remove(fileID int64) {
 	c.mu.Lock()
 	if c.current != nil && c.current.FileID == fileID && c.cancel != nil {
@@ -251,11 +285,12 @@ func (c *Cache) Remove(fileID int64) {
 			break
 		}
 	}
-	p, ok := c.ready[fileID]
+	ci, ok := c.ready[fileID]
 	delete(c.ready, fileID)
+	delete(c.touched, fileID)
 	c.mu.Unlock()
 	if ok {
-		os.Remove(p)
+		os.Remove(ci.path)
 	}
 	c.db().Exec(`DELETE FROM cache_entries WHERE file_id=?`, fileID)
 }
@@ -283,18 +318,18 @@ func (c *Cache) used() int64 {
 	return n
 }
 
-func diskSpace(dir string) (free, total int64) {
+func diskSpace(dir string) (free, total int64, ok bool) {
 	t, f, _, _, ok := sysstats.DiskUsage(dir)
 	if !ok {
-		return 0, 0
+		return 0, 0, false
 	}
-	return int64(f), int64(t)
+	return int64(f), int64(t), true
 }
 
 func (c *Cache) Status() Status {
 	cfg := c.st.Config()
 	dir := c.Dir()
-	free, total := diskSpace(dir)
+	free, total, _ := c.disk(dir)
 	st := Status{Enabled: cfg.CacheEnabled, Dir: dir, UsedBytes: c.used(), MaxBytes: int64(cfg.CacheMaxGB) << 30, DiskFree: free, DiskTotal: total, Queued: []Job{}}
 	c.mu.Lock()
 	st.Files = len(c.ready)
@@ -334,26 +369,35 @@ func (c *Cache) Entries() ([]Entry, error) {
 	return out, rows.Err()
 }
 
-// makeRoom evicts least-recently-used entries until need bytes fit.
+// makeRoom evicts least-recently-used entries until need bytes fit. Entries
+// used within keepRecent are kept, and nothing is evicted unless evicting
+// everything else would make the file fit.
 func (c *Cache) makeRoom(need int64) error {
 	cfg := c.st.Config()
 	max := int64(cfg.CacheMaxGB) << 30
 	minFree := int64(cfg.CacheMinFreeGB) << 30
+	if need > max {
+		return fmt.Errorf("file is larger than the cache")
+	}
 	for {
 		used := c.used()
-		free, _ := diskSpace(c.Dir())
-		if used+need <= max && free-need >= minFree {
+		free, _, diskOK := c.disk(c.Dir())
+		if used+need <= max && (!diskOK || free-need >= minFree) {
 			return nil
 		}
-		var id int64
-		err := c.db().QueryRow(`SELECT file_id FROM cache_entries ORDER BY last_access ASC LIMIT 1`).Scan(&id)
-		if errors.Is(err, sql.ErrNoRows) {
-			if used+need > max {
-				return fmt.Errorf("file is larger than the cache")
-			}
+		cutoff := time.Now().Add(-keepRecent).Unix()
+		var evictable int64
+		if err := c.db().QueryRow(`SELECT COALESCE(SUM(size),0) FROM cache_entries WHERE last_access < ?`, cutoff).Scan(&evictable); err != nil {
+			return err
+		}
+		if used-evictable+need > max {
+			return fmt.Errorf("the cache is full of recently played files")
+		}
+		if diskOK && free+evictable-need < minFree {
 			return fmt.Errorf("not enough free space on the cache disk (keeping %d GB free)", cfg.CacheMinFreeGB)
 		}
-		if err != nil {
+		var id int64
+		if err := c.db().QueryRow(`SELECT file_id FROM cache_entries WHERE last_access < ? ORDER BY last_access ASC LIMIT 1`, cutoff).Scan(&id); err != nil {
 			return err
 		}
 		c.log.Infof("cache: evicting file %d to make room", id)
@@ -362,11 +406,25 @@ func (c *Cache) makeRoom(need int64) error {
 }
 
 func (c *Cache) worker() {
+	t := time.NewTicker(reconcileEvery)
+	defer t.Stop()
 	for {
 		c.mu.Lock()
+		if c.recheck {
+			c.recheck = false
+			c.mu.Unlock()
+			c.reconcile()
+			continue
+		}
 		if len(c.queue) == 0 {
 			c.mu.Unlock()
-			<-c.wake
+			select {
+			case <-c.wake:
+			case <-t.C:
+				c.mu.Lock()
+				c.recheck = true
+				c.mu.Unlock()
+			}
 			continue
 		}
 		job := c.queue[0]
@@ -397,6 +455,16 @@ func (c *Cache) copy(ctx context.Context, job *Job) error {
 	f, err := c.st.File(job.FileID)
 	if err != nil {
 		return err
+	}
+	// A copy of an older version of this file goes first (Remove would
+	// cancel this very job).
+	c.mu.Lock()
+	old, had := c.ready[f.ID]
+	delete(c.ready, f.ID)
+	c.mu.Unlock()
+	if had {
+		os.Remove(old.path)
+		c.db().Exec(`DELETE FROM cache_entries WHERE file_id=?`, f.ID)
 	}
 	if err := c.makeRoom(f.Size); err != nil {
 		return err
@@ -445,7 +513,7 @@ func (c *Cache) copy(ctx context.Context, job *Job) error {
 		return err
 	}
 	c.mu.Lock()
-	c.ready[f.ID] = dst
+	c.ready[f.ID] = copyInfo{path: dst, size: f.Size, mtime: f.Mtime}
 	c.mu.Unlock()
 	secs := time.Since(start).Seconds()
 	c.log.Infof("cache: cached %s in %.0fs (%.1f MB/s)", job.Name, secs, float64(f.Size)/1e6/max(secs, 0.001))
@@ -507,10 +575,14 @@ func (c *Cache) OnDisable() {
 	c.mu.Unlock()
 }
 
-// Reconcile re-reads the directory (e.g. after the cache dir changed).
+// Reconcile re-reads the directory (e.g. after the cache dir changed). The
+// worker does it between copies, so a copy finishing meanwhile isn't lost.
 func (c *Cache) Reconcile() {
 	c.mu.Lock()
-	c.ready = map[int64]string{}
+	c.recheck = true
 	c.mu.Unlock()
-	c.reconcile()
+	select {
+	case c.wake <- struct{}{}:
+	default:
+	}
 }

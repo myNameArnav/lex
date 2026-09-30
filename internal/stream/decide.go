@@ -34,6 +34,9 @@ type PlanRequest struct {
 	Caps       Caps    `json:"caps"`
 	SessionID  string  `json:"sessionId"`
 	Start      float64 `json:"start"`
+	// HLSCopy is set by the server: HLS can copy this file's video (it
+	// knows the keyframe times to cut at; see HLS.CanCopy).
+	HLSCopy bool `json:"-"`
 }
 
 type Plan struct {
@@ -326,6 +329,10 @@ func Decide(cfg store.Config, f *store.File, req PlanRequest, remote bool) (*Pla
 		if videoCopy {
 			reasons = append(reasons, "burning in "+burn.Codec+" subtitles")
 		}
+		videoCopy = false
+	}
+	if hls && videoCopy && !req.HLSCopy {
+		reasons = append(reasons, "HLS can only remux files with a keyframe index (MKV)")
 		videoCopy = false
 	}
 	if !videoCopy && !cfg.EnableTranscode {

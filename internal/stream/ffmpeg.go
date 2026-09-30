@@ -84,6 +84,7 @@ type Progress struct {
 }
 
 type Job struct {
+	slot    string // transcode slot held until ffmpeg exits
 	Params  Params
 	Args    []string
 	Started time.Time

@@ -43,6 +43,10 @@ type Scanner struct {
 	OnDone func()
 	// OnProbed is invoked after each file is probed.
 	OnProbed func(f *store.File, info *store.MediaInfo)
+	// OnFileChanged is invoked with the id of a file that was removed from
+	// the library or whose contents changed, so copies derived from it (the
+	// SSD cache) can be dropped.
+	OnFileChanged func(id int64)
 
 	run    sync.Mutex // one scan at a time
 	mu     sync.Mutex
@@ -157,6 +161,11 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 	}
 	var entries []entry
 	okRoots := map[string]bool{}
+	// Directories and files that couldn't be read this time (permissions, a
+	// flaky network share): their existing records are kept, not treated as
+	// deleted — removing them would also drop watch progress and favorites.
+	var unreadableDirs []string
+	unreadable := map[string]bool{}
 	for _, root := range lib.Paths {
 		root = filepath.Clean(root)
 		fi, err := os.Stat(root)
@@ -171,9 +180,14 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 					return err
 				}
 				s.log.Warnf("scan: %s: %v", p, err)
-				if d != nil && d.IsDir() {
-					return fs.SkipDir
+				if d == nil || d.IsDir() {
+					unreadableDirs = append(unreadableDirs, p)
+					if d != nil {
+						return fs.SkipDir
+					}
+					return nil
 				}
+				unreadable[p] = true
 				return nil
 			}
 			if ctx.Err() != nil {
@@ -191,6 +205,7 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 			}
 			info, err := d.Info()
 			if err != nil {
+				unreadable[p] = true
 				return nil
 			}
 			if IsSample(name, info.Size()) {
@@ -223,11 +238,8 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 	}
 	s.update(func(st *Status) { st.Found += len(entries) })
 
-	// Count videos per directory to decide between folder- and file-named movies.
-	perDir := map[string]int{}
-	for _, e := range entries {
-		perDir[filepath.Dir(e.path)]++
-	}
+	// Decide per directory between folder- and file-named movies.
+	oneMovie := movieFolders(entries)
 	hints := &hintCache{m: map[string]store.Hint{}}
 	cache := map[string]int64{}
 	seen := map[string]bool{}
@@ -239,13 +251,13 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 	type fkey struct{ size, mtime int64 }
 	vanished := map[fkey][]*store.File{}
 	for p, f := range byPath {
-		if !seen[p] {
+		if !seen[p] && !unreadable[p] && !underAny(p, unreadableDirs) {
 			k := fkey{f.Size, f.Mtime}
 			vanished[k] = append(vanished[k], f)
 		}
 	}
 	for _, e := range entries {
-		t := classify(lib, e, perDir, hints)
+		t := classify(lib, e, oneMovie, hints)
 		itemID, err := s.ensureItem(lib, t, cache)
 		if err != nil {
 			s.log.Errorf("scan: %s: %v", e.path, err)
@@ -254,10 +266,13 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 		if f := byPath[e.path]; f != nil {
 			if f.Size != e.size || f.Mtime != e.mtime {
 				s.st.MarkFileChanged(f.ID, e.size, e.mtime)
+				s.fileChanged(f.ID)
 				s.update(func(st *Status) { st.Changed++ })
 			}
 			if f.ItemID != itemID {
-				s.st.MoveFile(f.ID, itemID)
+				if err := s.st.MoveFile(f.ID, f.ItemID, itemID); err != nil {
+					s.log.Errorf("scan: move %s to another item: %v", e.path, err)
+				}
 			}
 			continue
 		}
@@ -280,7 +295,7 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 	}
 	removed := 0
 	for p, f := range byPath {
-		if seen[p] {
+		if seen[p] || unreadable[p] || underAny(p, unreadableDirs) {
 			continue
 		}
 		inOkRoot := false
@@ -298,7 +313,11 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 			}
 		}
 		if inOkRoot || !inAnyRoot {
-			s.st.DeleteFile(f.ID)
+			if err := s.st.DeleteFile(f.ID); err != nil {
+				s.log.Errorf("scan: remove %s: %v", p, err)
+				continue
+			}
+			s.fileChanged(f.ID)
 			removed++
 		}
 	}
@@ -307,6 +326,22 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 	}
 	s.update(func(st *Status) { st.Removed += removed })
 	return s.st.SetLibraryScanned(lib.ID)
+}
+
+func (s *Scanner) fileChanged(id int64) {
+	if s.OnFileChanged != nil {
+		s.OnFileChanged(id)
+	}
+}
+
+// underAny reports whether path is one of dirs or inside one of them.
+func underAny(path string, dirs []string) bool {
+	for _, d := range dirs {
+		if path == d || strings.HasPrefix(path, d+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Scanner) ensureItem(lib store.Library, t target, cache map[string]int64) (int64, error) {
@@ -380,7 +415,7 @@ func (s *Scanner) ensureItem(lib store.Library, t target, cache map[string]int64
 
 var reEpMarker = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:s\d{1,3}[ ._-]*e\d{1,4}(?:[ ._-]*-?[ ._-]*e\d{1,4})*(?:-\d{1,4})?|\d{1,2}x\d{2,3})`)
 
-func classify(lib store.Library, e entry, perDir map[string]int, hints *hintCache) target {
+func classify(lib store.Library, e entry, oneMovie map[string]*movieDir, hints *hintCache) target {
 	rel, _ := filepath.Rel(e.root, e.path)
 	parts := strings.Split(filepath.ToSlash(rel), "/")
 	dirs := parts[:len(parts)-1]
@@ -406,7 +441,7 @@ func classify(lib store.Library, e entry, perDir map[string]int, hints *hintCach
 		}
 	}
 	if !isEpisode {
-		return classifyMovie(e, dirs, stem, perDir, hints)
+		return classifyMovie(e, dirs, stem, oneMovie, hints)
 	}
 
 	t := target{kind: "episode"}
@@ -470,16 +505,16 @@ func episodeTitle(stem string) string {
 	return norm
 }
 
-func classifyMovie(e entry, dirs []string, stem string, perDir map[string]int, hints *hintCache) target {
+func classifyMovie(e entry, dirs []string, stem string, oneMovie map[string]*movieDir, hints *hintCache) target {
 	t := target{kind: "movie"}
 	dir := filepath.Dir(e.path)
 	fileTitle, fileYear := CleanTitle(stem)
-	if len(dirs) > 0 && perDir[dir] == 1 {
+	if md := oneMovie[dir]; len(dirs) > 0 && md != nil {
 		dirName := dirs[len(dirs)-1]
 		dt, dy := CleanTitle(dirName)
 		t.title, t.year = dt, dy
-		if dy == 0 && fileYear > 0 {
-			t.title, t.year = fileTitle, fileYear
+		if dy == 0 && md.year > 0 {
+			t.title, t.year = md.title, md.year
 		}
 		t.key = dir
 		t.hint = hints.get(dir, "movie")
@@ -496,6 +531,62 @@ func classifyMovie(e entry, dirs []string, stem string, perDir map[string]int, h
 	}
 	t.hint.Title, t.hint.Year = t.title, t.year
 	return t
+}
+
+// movieDir describes a folder whose videos are all one movie. title and year
+// come from the file names, for folders whose own name has no year.
+type movieDir struct {
+	title string
+	year  int
+}
+
+// movieFolders finds the directories whose videos are one movie: a single
+// file, or versions of the same film (Movie.1080p.mkv next to
+// Movie.2160p.mkv). Those are keyed by the folder, so adding or removing a
+// version never changes the movie's item (and with it watch progress,
+// favorites and a manual match); folders holding different films are keyed
+// per file.
+func movieFolders(entries []entry) map[string]*movieDir {
+	type parsed struct {
+		raw   string
+		title string
+		year  int
+	}
+	byDir := map[string][]parsed{}
+	for _, e := range entries {
+		base := filepath.Base(e.path)
+		t, y := CleanTitle(strings.TrimSuffix(base, filepath.Ext(base)))
+		dir := filepath.Dir(e.path)
+		byDir[dir] = append(byDir[dir], parsed{t, Normalize(t), y})
+	}
+	out := make(map[string]*movieDir, len(byDir))
+	for dir, files := range byDir {
+		// Versions parse to the same title (quality, edition and release
+		// tags are dropped) and, where they carry one, the same year as
+		// each other and the folder.
+		_, year := CleanTitle(filepath.Base(dir))
+		same := true
+		md := &movieDir{}
+		for _, f := range files {
+			same = same && f.title == files[0].title
+			if f.year == 0 {
+				continue
+			}
+			if year == 0 {
+				year = f.year
+			} else if f.year != year {
+				same = false
+			}
+			// The same name whichever versions are present.
+			if md.year == 0 || f.raw < md.title {
+				md.title, md.year = f.raw, f.year
+			}
+		}
+		if len(files) == 1 || same {
+			out[dir] = md
+		}
+	}
+	return out
 }
 
 // ---- sidecar hints (.plexmatch, NFO) ----
@@ -646,8 +737,12 @@ func (s *Scanner) probeAll(ctx context.Context) {
 				s.update(func(st *Status) { st.Current = filepath.Base(f.Path) })
 				info, err := s.ProbeFile(ctx, f.Path)
 				if err != nil {
-					s.log.Warnf("probe %s: %v", f.Path, err)
-					s.st.SaveProbe(f.ID, nil, err.Error())
+					// Failures are retried later with a growing delay (see
+					// FilesNeedingProbe); shutting down isn't the file's fault.
+					if ctx.Err() == nil {
+						s.log.Warnf("probe %s: %v", f.Path, err)
+						s.st.SaveProbe(f.ID, nil, err.Error())
+					}
 				} else {
 					s.st.SaveProbe(f.ID, info, "")
 					if s.OnProbed != nil {

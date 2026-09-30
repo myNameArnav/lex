@@ -113,7 +113,8 @@ CREATE TABLE IF NOT EXISTS files (
 	info TEXT NOT NULL DEFAULT '',
 	probed_at INTEGER NOT NULL DEFAULT 0,
 	probe_error TEXT NOT NULL DEFAULT '',
-	added_at INTEGER NOT NULL
+	added_at INTEGER NOT NULL,
+	probe_attempts INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS files_item ON files(item_id);
 
@@ -180,7 +181,8 @@ CREATE TABLE IF NOT EXISTS downloaded_subs (
 	path TEXT NOT NULL,
 	provider TEXT NOT NULL DEFAULT '',
 	hearing_impaired INTEGER NOT NULL DEFAULT 0,
-	created_at INTEGER NOT NULL
+	created_at INTEGER NOT NULL,
+	user_id INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS intro_scans (
@@ -219,12 +221,42 @@ func Open(dataDir string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err := migrateDownloadedSubs(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+	if err := addLateColumns(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
 	s := &Store{db: db}
 	if err := s.loadConfig(); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return s, nil
+}
+
+// lateColumns were added after their table first shipped. CREATE TABLE IF
+// NOT EXISTS leaves existing tables alone, so they're added here when missing.
+var lateColumns = []struct{ table, column, def string }{
+	{"files", "probe_attempts", "INTEGER NOT NULL DEFAULT 0"},
+}
+
+func addLateColumns(db *sql.DB) error {
+	for _, c := range lateColumns {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, c.table, c.column).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, c.table, c.column, c.def)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }

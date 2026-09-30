@@ -102,13 +102,17 @@ func main() {
 	agent := meta.NewAgent(st, images, log)
 	scanner := library.NewScanner(st, *ffprobe, log)
 	sessions := stream.NewManager(st, log)
-	subs := stream.NewSubs(filepath.Join(abs, "subs"), *ffmpeg, log)
+	subs := stream.NewSubs(filepath.Join(abs, "subs"), *ffmpeg, *ffprobe, log)
 	mediaCache := cache.New(st, log, abs)
-	subs.Resolve = mediaCache.Resolve
+	// Background readers use the cached copy when there is one but don't
+	// count as playback (hit statistics, eviction order).
+	subs.Resolve = mediaCache.Peek
 	intros := intro.New(st, log, *ffmpeg)
-	intros.Resolve = mediaCache.Resolve
+	intros.Resolve = mediaCache.Peek
+	scanner.OnFileChanged = mediaCache.Remove
 	hls := stream.NewHLS(filepath.Join(abs, "hls"), *ffmpeg, log)
 	sessions.OnEnd = hls.Stop
+	hls.Slots = sessions.Slots // one transcode limit across MSE and HLS
 	tricks := trickplay.New(st, log, *ffmpeg, filepath.Join(abs, "trickplay"))
 	tricks.Resolve = mediaCache.Peek
 	tricks.Busy = func() bool { return sessions.Active() > 0 }

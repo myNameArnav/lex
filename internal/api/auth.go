@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -162,7 +163,17 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := userOf(r)
+	// Share the login limiter so a stolen session can't brute-force the
+	// current password. Keyed per account as well as per address.
+	ip, account := s.clientIP(r), "user:"+strconv.FormatInt(u.ID, 10)
+	if !s.loginAllowed(ip) || !s.loginAllowed(account) {
+		writeErr(w, 429, "too many failed attempts; try again in a few minutes")
+		return
+	}
 	if _, err := s.St.Authenticate(u.Name, req.Current); err != nil {
+		s.loginFailed(ip)
+		s.loginFailed(account)
+		s.Log.Warnf("failed password change for %q from %s", u.Name, ip)
 		writeErr(w, 403, "current password is incorrect")
 		return
 	}
