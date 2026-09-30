@@ -6,7 +6,7 @@ const KEY = 'lex.prefs.v1';
 export const DEFAULTS = {
   quality: 0,          // max kbps, 0 = original
   mode: 'auto',        // auto | direct | remux | transcode
-  forwardBuffer: 90,   // seconds to buffer ahead (remux/transcode)
+  bufferAhead: 0,      // seconds to buffer ahead (remux/transcode); 0 = as much as the browser allows
   backBuffer: 30,      // seconds kept behind the playhead
   audioLang: '',       // preferred audio language (ISO 639-2), '' = file default
   subLang: 'eng',      // preferred subtitle language

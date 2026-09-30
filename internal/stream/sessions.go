@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"crypto/subtle"
 	"errors"
 	"strings"
 	"sync"
@@ -56,6 +57,8 @@ type Session struct {
 	Job        *Progress   `json:"job,omitempty"`
 	Restarts   int         `json:"restarts"`
 	Cached     bool        `json:"cached"`
+	HLS        bool        `json:"hls"`
+	streamKey  string
 
 	bytes     int64
 	lastBytes int64
@@ -69,10 +72,12 @@ type Session struct {
 }
 
 type Manager struct {
-	st  *store.Store
-	log *logx.Logger
-	mu  sync.Mutex
-	m   map[string]*Session
+	// OnEnd is called when a session ends (player closed or expired).
+	OnEnd func(id string)
+	st    *store.Store
+	log   *logx.Logger
+	mu    sync.Mutex
+	m     map[string]*Session
 }
 
 func NewManager(st *store.Store, log *logx.Logger) *Manager {
@@ -96,11 +101,12 @@ func (m *Manager) Open(s *Session) (*Session, error) {
 		// Plan changed mid-playback (quality/audio switch): keep counters.
 		old.Method, old.Reasons, old.VideoOut, old.AudioOut, old.OutBitrate = s.Method, s.Reasons, s.VideoOut, s.AudioOut, s.OutBitrate
 		old.FileID, old.VideoIn, old.AudioIn, old.Container, old.SrcBitrate = s.FileID, s.VideoIn, s.AudioIn, s.Container, s.SrcBitrate
-		old.Cached = s.Cached
+		old.Cached, old.HLS = s.Cached, s.HLS
 		old.LastSeen = now.Unix()
 		return old, nil
 	}
 	s.StartedAt, s.LastSeen = now.Unix(), now.Unix()
+	s.streamKey = store.RandomToken(16)
 	s.lastTick, s.lastBeat = now, now
 	s.jobMu = &sync.Mutex{}
 	m.m[s.ID] = s
@@ -260,6 +266,9 @@ func (m *Manager) Stop(id string, uid int64) {
 }
 
 func (m *Manager) finish(s *Session) {
+	if m.OnEnd != nil {
+		go m.OnEnd(s.ID)
+	}
 	m.mu.Lock()
 	copy := *s
 	m.mu.Unlock()
@@ -291,7 +300,7 @@ func (m *Manager) Snapshot() []Session {
 			Method: s.Method, Reasons: s.Reasons, VideoIn: s.VideoIn, AudioIn: s.AudioIn, VideoOut: s.VideoOut, AudioOut: s.AudioOut,
 			Container: s.Container, SrcBitrate: s.SrcBitrate, OutBitrate: s.OutBitrate, Client: s.Client, IP: s.IP, Remote: s.Remote,
 			StartedAt: s.StartedAt, LastSeen: s.LastSeen, Position: s.Position, Duration: s.Duration, Paused: s.Paused,
-			Bytes: s.bytes, Rate: s.Rate, Watched: s.Watched, Client_: s.Client_, Restarts: s.Restarts, Cached: s.Cached,
+			Bytes: s.bytes, Rate: s.Rate, Watched: s.Watched, Client_: s.Client_, Restarts: s.Restarts, Cached: s.Cached, HLS: s.HLS,
 		}
 		if s.job != nil {
 			p := s.job.Progress()
@@ -322,6 +331,37 @@ func (m *Manager) ActiveJobs() (remux, transcode int) {
 		}
 	}
 	return
+}
+
+// StreamKey returns the per-session key that authorises HLS requests from
+// native players that don't send cookies.
+func (m *Manager) StreamKey(id string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s := m.m[id]; s != nil {
+		return s.streamKey
+	}
+	return ""
+}
+
+// KeyUser resolves a stream key to its session's user.
+func (m *Manager) KeyUser(sid, key string) int64 {
+	if key == "" {
+		return 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s := m.m[sid]; s != nil && s.streamKey != "" && subtle.ConstantTimeCompare([]byte(s.streamKey), []byte(key)) == 1 {
+		return s.UserID
+	}
+	return 0
+}
+
+// Active returns the number of playback sessions.
+func (m *Manager) Active() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.m)
 }
 
 // TotalRate is the summed outbound streaming rate in bytes/s.

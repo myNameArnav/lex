@@ -24,5 +24,5 @@ Describe the problem, resulting behavior and checks in pull requests. Include
 regression tests for authentication, authorization, file handling and concurrency
 changes. Check the browser when changing UI or playback behavior.
 
-The project currently has no license; no open-source license grant is provided.
-Review the license status before contributing or redistributing the code.
+Lex is licensed under the [MIT License](LICENSE). By contributing, you agree
+that your contributions are licensed under the same terms.

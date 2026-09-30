@@ -177,6 +177,24 @@ func (c *Cache) Resolve(f *store.File) string {
 	return p
 }
 
+// Peek is Resolve without side effects (no hit counting or LRU touch), for
+// background jobs.
+func (c *Cache) Peek(f *store.File) string {
+	if !c.enabled() {
+		return f.Path
+	}
+	c.mu.Lock()
+	p, ok := c.ready[f.ID]
+	c.mu.Unlock()
+	if !ok {
+		return f.Path
+	}
+	if st, err := os.Stat(p); err != nil || st.Size() != f.Size {
+		return f.Path
+	}
+	return p
+}
+
 // IsCached reports whether a complete copy exists.
 func (c *Cache) IsCached(fileID int64) bool {
 	c.mu.Lock()

@@ -27,10 +27,20 @@ in the binary. macOS can be used for local development.
   - Remux/transcode output keeps the file's own timestamps and is fed to the browser
     via Media Source Extensions: seeking restarts ffmpeg at the target, and once the
     client's forward buffer is full it stops reading, TCP backpressure pauses ffmpeg,
-    and nothing touches the SD card (no HLS segments on disk).
+    and nothing is written to disk.
+  - **HLS** for browsers without Media Source Extensions (older iOS, some TVs,
+    AirPlay) or on request: 6-second segments written to the data folder and
+    deleted as playback moves on.
+- **Subtitles** – embedded, external and downloaded text subtitles with size,
+  position, background and timing offset (`g`/`h`); styled ASS/SSA (anime fansubs)
+  rendered with libass in the browser using the file's attached fonts; search and
+  download from OpenSubtitles.com (free API key); image subtitles are burned in.
+  Large subtitle tracks load progressively while they're extracted.
+- **Seek previews** – thumbnail sprites generated in the background from keyframes
+  at the lowest priority, shown while hovering or dragging the seek bar.
 - **Player** – resume, next-episode autoplay with countdown, subtitle/audio switching,
-  quality & method menus, speed, buffer size, PiP, Media Session keys, keyboard
-  shortcuts (`space/k`, `←/→`, `f`, `m`, `c`, `i`, `n`, `0-9`), touch double-tap seek,
+  quality & method menus, speed, PiP, Media Session keys, keyboard
+  shortcuts (`space/k`, `←/→`, `f`, `m`, `c`, `i`, `n`, `g/h`, `0-9`), touch double-tap seek,
   and a **stats for nerds** overlay (codecs in/out, reasons, buffer health graph,
   download speed, dropped frames, stalls, server ffmpeg speed/fps/CPU/throttling).
 - **Dashboard** – live CPU (per core), RAM/swap, SoC temperature, clock, Pi
@@ -204,9 +214,10 @@ appears in Settings → About.
 
 ## License
 
-No license is granted at this time. The project is currently unlicensed.
-Third-party dependencies and bundled public Raspberry Pi archive verification
-keys retain their respective upstream terms.
+Lex is released under the [MIT License](LICENSE).
+Third-party dependencies, the bundled subtitle renderer (see
+[third-party notices](THIRD_PARTY_NOTICES.md)) and bundled public Raspberry Pi
+archive verification keys retain their respective upstream terms.
 
 ## Layout
 
@@ -216,11 +227,14 @@ internal/store     SQLite schema and queries
 internal/library   scanner, filename parser, ffprobe
 internal/meta      TMDB, TVmaze, Radarr, artwork and metadata
 internal/stream    playback decisions, ffmpeg jobs, sessions, subtitles
+internal/subsearch OpenSubtitles.com search and download
+internal/trickplay seek-bar preview thumbnails
 internal/cache     optional media disk cache
 internal/intro     optional intro detection
 internal/sysstats  host/container statistics
 internal/api       HTTP API, auth, images, static files
 web/static         vanilla JavaScript UI (no build step)
+web/static/vendor  prebuilt third-party browser code (JASSUB subtitle renderer)
 deploy             Linux deployment examples
 scripts            publication privacy checks
 ```

@@ -77,8 +77,8 @@ OpenPGP verification certificates, not private keys.
 - The privacy guard detects specific patterns and file types. It does not prove
   the absence of every possible form of PII. Future screenshots, media fixtures
   and issue reports still need review.
-- No license was added, as requested. The repository is unlicensed.
-- Publication preparation is local. No GitHub repository was created or pushed.
-  Push only the cleaned `main` branch; avoid mirror pushes of application refs.
+- The repository is licensed under the MIT License (`LICENSE`); bundled
+  third-party components are listed in `THIRD_PARTY_NOTICES.md`.
+- Push only the cleaned `main` branch; avoid mirror pushes of application refs.
 
 Scanner reference: [Go vulnerability management](https://go.dev/doc/security/vuln/).

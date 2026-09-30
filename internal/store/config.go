@@ -21,8 +21,18 @@ type Config struct {
 	RadarrKey        string `json:"radarrKey"`
 	RadarrDetectDone bool   `json:"radarrDetectDone"`
 	HWAutoDone       bool   `json:"hwAutoDone"`
-	UseLocalMetadata bool   `json:"useLocalMetadata"`
-	GenerateThumbs   bool   `json:"generateThumbs"`
+
+	// Subtitle downloads (OpenSubtitles.com)
+	OpenSubtitlesKey  string `json:"openSubtitlesKey"`
+	OpenSubtitlesUser string `json:"openSubtitlesUser"`
+	OpenSubtitlesPass string `json:"openSubtitlesPass"`
+
+	// Seek-bar previews
+	TrickplayEnabled  bool `json:"trickplayEnabled"`
+	TrickplayInterval int  `json:"trickplayInterval"` // seconds between thumbnails
+	TrickplayWidth    int  `json:"trickplayWidth"`
+	UseLocalMetadata  bool `json:"useLocalMetadata"`
+	GenerateThumbs    bool `json:"generateThumbs"`
 
 	// Scanning
 	ScanIntervalMin   int  `json:"scanIntervalMin"`
@@ -111,6 +121,9 @@ func DefaultConfig() Config {
 		CacheSpeedMBs:      40,
 		CacheMaxFileGB:     25,
 		IntroDetect:        true,
+		TrickplayEnabled:   true,
+		TrickplayInterval:  10,
+		TrickplayWidth:     240,
 		IntroScanSecs:      600,
 		IntroMinSecs:       12,
 		IntroMaxSecs:       130,
@@ -206,6 +219,12 @@ func (c *Config) normalize() {
 	}
 	if c.IntroMaxSecs < c.IntroMinSecs+10 || c.IntroMaxSecs > 300 {
 		c.IntroMaxSecs = d.IntroMaxSecs
+	}
+	if c.TrickplayInterval < 2 || c.TrickplayInterval > 60 {
+		c.TrickplayInterval = d.TrickplayInterval
+	}
+	if c.TrickplayWidth < 120 || c.TrickplayWidth > 480 {
+		c.TrickplayWidth = d.TrickplayWidth
 	}
 	if c.WebhookToken == "" {
 		c.WebhookToken = RandomToken(12)

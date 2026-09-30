@@ -29,6 +29,8 @@ type PlanRequest struct {
 	Mode       string  `json:"mode"`       // auto | direct | remux | transcode
 	MaxBitrate int     `json:"maxBitrate"` // kbps, 0 = original
 	AudioLang  string  `json:"audioLang"`
+	SWEncode   bool    `json:"swEncode"` // force the software encoder (fallback)
+	ForceHLS   bool    `json:"forceHls"` // HLS instead of MSE (AirPlay, testing)
 	Caps       Caps    `json:"caps"`
 	SessionID  string  `json:"sessionId"`
 	Start      float64 `json:"start"`
@@ -54,6 +56,7 @@ type Plan struct {
 	SessionID string   `json:"sessionId"`
 	Remote    bool     `json:"remote"`
 	LimitKbps int      `json:"limitKbps"`
+	HLS       bool     `json:"hls"`
 }
 
 // Params are the ffmpeg job parameters, carried in the stream URL.
@@ -68,6 +71,7 @@ type Params struct {
 	Height    int // max output height when transcoding
 	Channels  int
 	Start     float64
+	SW        bool   // force software encoding (client fallback)
 	HW        bool   // use hardware decoding (set by the server, not the URL)
 	Input     string // path to read (SSD cache copy or original)
 }
@@ -82,6 +86,9 @@ func (p Params) Query() url.Values {
 	q.Set("br", strconv.Itoa(p.Bitrate))
 	q.Set("h", strconv.Itoa(p.Height))
 	q.Set("ch", strconv.Itoa(p.Channels))
+	if p.SW {
+		q.Set("sw", "1")
+	}
 	return q
 }
 
@@ -106,6 +113,7 @@ func ParseParams(fileID int64, q url.Values) Params {
 	return Params{
 		FileID: fileID, SessionID: q.Get("sid"), VideoCopy: q.Get("vc") == "1", AudioCopy: q.Get("ac") == "1",
 		Audio: atoi("a", -1), Burn: atoi("burn", -1), Bitrate: atoi("br", 4000), Height: atoi("h", 720), Channels: atoi("ch", 2), Start: start,
+		SW: q.Get("sw") == "1",
 	}
 }
 
@@ -287,8 +295,14 @@ func Decide(cfg store.Config, f *store.File, req PlanRequest, remote bool) (*Pla
 		return plan, nil
 	}
 
-	if !req.Caps.MSE {
-		return nil, fmt.Errorf("this browser can't play this file directly and doesn't support Media Source Extensions for remuxing/transcoding")
+	// Browsers without Media Source Extensions (older iOS) get HLS; so does
+	// anyone who asks for it (AirPlay). Codec support then comes from what
+	// the native player can decode.
+	hls := !req.Caps.MSE || req.ForceHLS
+	videoCaps, audioCaps := req.Caps.Video, req.Caps.Audio
+	if hls {
+		videoCaps, audioCaps = req.Caps.NativeVideo, req.Caps.NativeAudio
+		plan.HLS = true
 	}
 	if !cfg.EnableRemux && !cfg.EnableTranscode {
 		return nil, fmt.Errorf("direct play isn't possible (%s) and remuxing/transcoding are disabled", strings.Join(reasons, ", "))
@@ -296,7 +310,7 @@ func Decide(cfg store.Config, f *store.File, req PlanRequest, remote bool) (*Pla
 
 	// ---- video: copy or transcode ----
 	videoCopy := cfg.EnableRemux && mode != "transcode"
-	if !req.Caps.Video[vkey] {
+	if !videoCaps[vkey] {
 		if videoCopy {
 			reasons = append(reasons, fmt.Sprintf("video codec %s not supported", vkey))
 		}
@@ -322,7 +336,11 @@ func Decide(cfg store.Config, f *store.File, req PlanRequest, remote bool) (*Pla
 	audioCopy := false
 	channels := cfg.AudioChannels
 	if a != nil {
-		audioCopy = req.Caps.Audio[a.Codec] && a.CodecString != ""
+		audioCopy = audioCaps[a.Codec] && a.CodecString != ""
+		// MPEG-TS segments (HLS transcodes) can't carry FLAC/ALAC/Vorbis/Opus.
+		if hls && audioCopy && (a.Codec == "flac" || a.Codec == "alac" || a.Codec == "vorbis" || a.Codec == "opus") {
+			audioCopy = false
+		}
 		if !audioCopy {
 			reasons = append(reasons, fmt.Sprintf("audio codec %s not supported", a.Codec))
 		}
@@ -336,7 +354,10 @@ func Decide(cfg store.Config, f *store.File, req PlanRequest, remote bool) (*Pla
 	if !videoCopy && cfg.VideoEncoder == "h264_v4l2m2m" && audioCopy && a != nil && (a.Codec == "flac" || a.Codec == "alac" || a.Codec == "vorbis") {
 		audioCopy = false
 	}
-	p := Params{FileID: f.ID, SessionID: req.SessionID, VideoCopy: videoCopy, AudioCopy: audioCopy, Audio: plan.Audio, Burn: -1, Channels: channels}
+	if req.SWEncode {
+		cfg.VideoEncoder = "libx264"
+	}
+	p := Params{FileID: f.ID, SessionID: req.SessionID, VideoCopy: videoCopy, AudioCopy: audioCopy, Audio: plan.Audio, Burn: -1, Channels: channels, SW: req.SWEncode}
 	if burn != nil {
 		p.Burn = burn.Index
 		plan.BurnSubs = true
@@ -396,6 +417,10 @@ func Decide(cfg store.Config, f *store.File, req PlanRequest, remote bool) (*Pla
 	}
 	plan.Mime = fmt.Sprintf(`video/mp4; codecs="%s"`, codecs)
 	plan.URL = fmt.Sprintf("/api/files/%d/stream?%s", f.ID, p.Query().Encode())
+	if hls {
+		plan.URL = fmt.Sprintf("/api/files/%d/hls/index.m3u8?%s", f.ID, p.Query().Encode())
+		plan.Mime = "application/vnd.apple.mpegurl"
+	}
 	plan.Reasons = dedupe(reasons)
 	return plan, nil
 }

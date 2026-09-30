@@ -390,13 +390,48 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 @keyframes flash { from { opacity: 1; transform: scale(.8) } to { opacity: 0; transform: scale(1.25) } }
 .p-error { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.7); z-index: 5; }
 .p-error > div { max-width: 520px; text-align: center; padding: 20px; display: grid; gap: 14px; justify-items: center; }
-.p-menu { position: absolute; right: 20px; bottom: 90px; width: 330px; max-height: 60vh; overflow: auto; background: rgba(22,23,28,.97); border: 1px solid rgba(255,255,255,.1); border-radius: 12px; box-shadow: var(--shadow); padding: 6px; z-index: 4; }
-.p-menu h4 { margin: 8px 10px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: rgba(255,255,255,.5); }
-.p-menu button { display: flex; width: 100%; align-items: center; gap: 10px; padding: 8px 10px; background: none; border: none; color: #fff; border-radius: 7px; cursor: pointer; text-align: left; font-size: 13.5px; }
-.p-menu button:hover { background: rgba(255,255,255,.08); }
-.p-menu button .ck { width: 16px; flex: none; color: var(--accent); }
-.p-menu button .ck svg { width: 16px; height: 16px; }
-.p-menu button small { color: rgba(255,255,255,.5); margin-left: auto; font-size: 11.5px; text-align: right; }
+.p-menu { position: absolute; right: 20px; bottom: 90px; width: 320px; max-height: min(70vh, calc(100% - 120px)); overflow: auto; overscroll-behavior: contain; background: rgba(24,25,30,.94); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,.1); border-radius: 14px; box-shadow: 0 16px 48px rgba(0,0,0,.55); padding: 6px; z-index: 4; font-size: 14px; animation: pm-in .14s ease-out; }
+@keyframes pm-in { from { opacity: 0; transform: translateY(6px) scale(.98) } to { opacity: 1; transform: none } }
+.p-menu .pm-title { padding: 10px 12px 6px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: rgba(255,255,255,.5); }
+.p-menu .pm-sep { height: 1px; margin: 6px 8px; background: rgba(255,255,255,.08); }
+.p-menu .pm-row, .p-menu .pm-opt { display: flex; width: 100%; min-height: 42px; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; background: none; border: none; color: #fff; border-radius: 9px; cursor: pointer; text-align: left; font: inherit; }
+.p-menu .pm-row:hover, .p-menu .pm-opt:hover { background: rgba(255,255,255,.08); }
+.p-menu .pm-label { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.p-menu .pm-label small, .p-menu .pm-opt-l small { color: rgba(255,255,255,.45); font-size: 11.5px; }
+.p-menu .pm-val { color: rgba(255,255,255,.6); font-size: 13px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p-menu .pm-chev { width: 16px; height: 16px; flex: none; color: rgba(255,255,255,.4); display: inline-flex; }
+.p-menu .pm-chev svg { width: 16px; height: 16px; }
+.p-menu .pm-toggle { cursor: pointer; }
+.p-menu .pm-head { display: flex; align-items: center; gap: 4px; padding: 2px 2px 6px; margin-bottom: 4px; border-bottom: 1px solid rgba(255,255,255,.08); position: sticky; top: -6px; background: rgba(24,25,30,.98); z-index: 1; }
+.p-menu .pm-head b { font-size: 14.5px; }
+.p-menu .pm-back { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; background: none; border: none; color: #fff; cursor: pointer; }
+.p-menu .pm-back:hover { background: rgba(255,255,255,.08); }
+.p-menu .pm-back svg { width: 18px; height: 18px; }
+.p-menu .pm-opt .ck { width: 18px; flex: none; color: var(--accent); display: inline-flex; }
+.p-menu .pm-opt .ck svg { width: 18px; height: 18px; }
+.p-menu .pm-opt.on { font-weight: 600; }
+.p-menu .pm-opt-l { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; overflow-wrap: anywhere; }
+.p-menu .pm-stepper { cursor: default; flex-wrap: wrap; row-gap: 8px; }
+.p-menu .pm-stepper .pm-label { flex-direction: row; align-items: baseline; justify-content: space-between; flex-basis: 100%; }
+.p-menu .pm-stepper:hover { background: none; }
+.p-menu .pm-steps { display: grid; grid-template-columns: 1fr 1fr 1.3fr 1fr 1fr; gap: 4px; width: 100%; }
+.p-menu .pm-step { min-width: 34px; height: 30px; padding: 0 6px; border-radius: 7px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.05); color: #fff; font: 12px/1 inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
+.p-menu .pm-step:hover { background: rgba(255,255,255,.14); }
+.p-menu .pm-zero { min-width: 52px; color: var(--accent); font-weight: 700; }
+.seek .tip .thumb { display: none; margin: -1px -5px 5px; border-radius: 4px; background-color: #000; background-repeat: no-repeat; box-shadow: 0 0 0 1px rgba(255,255,255,.18); }
+.seek .tip { text-align: center; }
+.player canvas.JASSUB { z-index: 2; }
+.player .modal-bg { position: absolute; z-index: 10; }
+.player .modal { color: var(--text); user-select: text; -webkit-user-select: text; }
+.sub-results { display: grid; gap: 6px; }
+.sub-res { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg3); }
+.sub-res-main { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.sub-res-main b { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text2); }
+.sub-tags .tag { padding: 1px 7px; border-radius: 10px; background: rgba(255,255,255,.08); color: #ddd; font-size: 11px; }
+.sub-tags .tag.ok { background: rgba(80,200,120,.18); color: #7be09e; }
+.sub-tags .tag.warn { background: rgba(242,179,61,.16); color: #f2c46a; }
+.sub-err { padding: 12px 14px; border-radius: 10px; background: rgba(255,90,90,.1); border: 1px solid rgba(255,90,90,.25); color: #ffb3b3; }
 .p-stats { position: absolute; top: 76px; left: 20px; width: 400px; max-width: calc(100% - 40px); max-height: calc(100% - 190px); overflow: auto; background: rgba(0,0,0,.78); border: 1px solid rgba(255,255,255,.1); border-radius: 10px; padding: 12px 14px; font: 11.5px/1.55 ui-monospace, Menlo, Consolas, monospace; z-index: 3; pointer-events: auto; }
 .p-stats table { width: 100%; border-collapse: collapse; }
 .p-stats td { padding: 1px 0; vertical-align: top; }

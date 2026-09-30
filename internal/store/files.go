@@ -30,6 +30,7 @@ type Stream struct {
 	Forced        bool    `json:"forced,omitempty"`
 	TextSub       bool    `json:"textSub,omitempty"`
 	External      bool    `json:"external,omitempty"`
+	Downloaded    bool    `json:"downloaded,omitempty"`
 	ExternalPath  string  `json:"-"`
 	CodecString   string  `json:"codecString,omitempty"` // RFC 6381 codec id for MSE
 }

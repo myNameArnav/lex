@@ -25,10 +25,11 @@ import (
 	"lex/internal/store"
 	"lex/internal/stream"
 	"lex/internal/sysstats"
+	"lex/internal/trickplay"
 	"lex/web"
 )
 
-var version = "1.0.0"
+var version = "0.0.1"
 
 func env(k, d string) string {
 	if v := os.Getenv(k); v != "" {
@@ -105,9 +106,16 @@ func main() {
 	subs.Resolve = mediaCache.Resolve
 	intros := intro.New(st, log, *ffmpeg)
 	intros.Resolve = mediaCache.Resolve
+	hls := stream.NewHLS(filepath.Join(abs, "hls"), *ffmpeg, log)
+	sessions.OnEnd = hls.Stop
+	tricks := trickplay.New(st, log, *ffmpeg, filepath.Join(abs, "trickplay"))
+	tricks.Resolve = mediaCache.Peek
+	tricks.Busy = func() bool { return sessions.Active() > 0 }
+	tricks.HWDecode = func() bool { return st.Config().HWDecode && ff.HEVCHWDecode }
 	scanner.OnDone = func() {
 		agent.Trigger()
 		intros.Trigger()
+		tricks.Trigger()
 	}
 	sampler := sysstats.New(3*time.Second, time.Hour, func() []string {
 		paths := []string{abs, mediaCache.Dir()}
@@ -123,7 +131,7 @@ func main() {
 
 	srv := &api.Server{
 		Version: version, DataDir: abs, St: st, Log: log, Scanner: scanner, Agent: agent, Images: images,
-		Subs: subs, Sess: sessions, Stats: sampler, FF: ff, Web: web.FS(), Cache: mediaCache, Intro: intros,
+		Subs: subs, Sess: sessions, Stats: sampler, FF: ff, Web: web.FS(), Cache: mediaCache, Intro: intros, Trick: tricks, HLS: hls,
 	}
 	handler, err := srv.Handler()
 	if err != nil {

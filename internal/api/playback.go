@@ -102,8 +102,8 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 	}
 	cached := s.Cache.IsCached(f.ID)
 	_, err = s.Sess.Open(&stream.Session{
-		Cached: cached,
-		ID:     plan.SessionID, UserID: u.ID, UserName: u.Name, ItemID: it.ID, FileID: f.ID, Title: title, Subtitle: sub,
+		Cached: cached, HLS: plan.HLS,
+		ID: plan.SessionID, UserID: u.ID, UserName: u.Name, ItemID: it.ID, FileID: f.ID, Title: title, Subtitle: sub,
 		Method: plan.Method, Reasons: plan.Reasons, VideoIn: vin, AudioIn: ain, VideoOut: plan.VideoOut, AudioOut: plan.AudioOut,
 		Container: stream.ContainerKey(f.Path), SrcBitrate: int(f.Info.Bitrate / 1000), OutBitrate: plan.Bitrate,
 		Client: clientName(r.UserAgent()), IP: ip, Remote: remote, Duration: f.Info.Duration, Position: req.Start,
@@ -114,7 +114,11 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Subs.Prefetch(f)
 	s.cacheAround(it, f)
-	s.Log.Infof("play: %s — %s %s via %s %v (%s)", u.Name, title, sub, plan.Method, plan.Reasons, ip)
+	s.Trick.Prioritize(f.ID)
+	if plan.HLS {
+		plan.URL += "&k=" + s.Sess.StreamKey(plan.SessionID)
+	}
+	s.Log.Infof("play: %s — %s %s via %s%s %v (%s)", u.Name, title, sub, plan.Method, map[bool]string{true: " (HLS)"}[plan.HLS], plan.Reasons, ip)
 	writeJSON(w, map[string]any{
 		"plan":     plan,
 		"item":     it,
@@ -412,7 +416,9 @@ func (s *Server) subtitle(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad id")
 		return
 	}
-	idx, err := strconv.Atoi(strings.TrimSuffix(r.PathValue("idx"), ".vtt"))
+	raw := r.PathValue("idx")
+	wantASS := strings.HasSuffix(raw, ".ass")
+	idx, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSuffix(raw, ".vtt"), ".ass"))
 	if err != nil {
 		writeErr(w, 400, "bad index")
 		return
@@ -422,15 +428,47 @@ func (s *Server) subtitle(w http.ResponseWriter, r *http.Request) {
 		notFoundOr500(w, err)
 		return
 	}
-	p, err := s.Subs.Get(r.Context(), f, idx)
+	var p string
+	var partial []byte
+	format := "vtt"
+	if wantASS {
+		format = "ass"
+	}
+	switch {
+	case idx < 1000:
+		// Embedded: may still be extracting; then send what's ready and let
+		// the player come back for the rest.
+		p, partial, err = s.Subs.Serve(r.Context(), f, idx, format, 3*time.Second)
+	case wantASS:
+		p, err = s.Subs.GetASS(r.Context(), f, idx)
+	case idx >= store.DownloadedSubBase:
+		var d *store.DownloadedSub
+		if d, err = s.St.DownloadedSub(int64(idx - store.DownloadedSubBase)); err == nil && d.FileID == f.ID {
+			p, err = s.Subs.GetFile(r.Context(), f, idx, d.Path)
+		} else if err == nil {
+			err = store.ErrNotFound
+		}
+	default:
+		p, err = s.Subs.Get(r.Context(), f, idx)
+	}
 	if err != nil {
 		if r.Context().Err() == nil {
-			s.Log.Errorf("subtitle file %d: %v", f.ID, err)
+			s.Log.Errorf("subtitle file %d/%d: %v", f.ID, idx, err)
 			writeErr(w, 500, "could not extract subtitles; see admin logs")
 		}
 		return
 	}
-	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+	if wantASS {
+		w.Header().Set("Content-Type", "text/x-ssa; charset=utf-8")
+	} else {
+		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+	}
+	if partial != nil {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Lex-Partial", "1")
+		w.Write(partial)
+		return
+	}
 	w.Header().Set("Cache-Control", "private, max-age=86400")
 	http.ServeFile(w, r, p)
 }

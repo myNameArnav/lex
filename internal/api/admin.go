@@ -41,6 +41,9 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 	if c.IntroDetect && !old.IntroDetect {
 		s.Intro.Trigger()
 	}
+	if c.TrickplayEnabled && !old.TrickplayEnabled {
+		s.Trick.Trigger()
+	}
 	// New metadata credentials: retry everything that failed.
 	if c.TMDBKey != old.TMDBKey || c.EnableTMDB != old.EnableTMDB || c.MetadataLanguage != old.MetadataLanguage ||
 		c.RadarrURL != old.RadarrURL || c.RadarrKey != old.RadarrKey || c.EnableTVmaze != old.EnableTVmaze {
@@ -178,7 +181,7 @@ func (s *Server) scan(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) tasks(w http.ResponseWriter, r *http.Request) {
 	remux, tx := s.Sess.ActiveJobs()
-	writeJSON(w, map[string]any{"scan": s.Scanner.Status(), "metadata": s.Agent.Status(), "intro": s.Intro.Status(), "cache": s.Cache.Status(), "remuxJobs": remux, "transcodeJobs": tx})
+	writeJSON(w, map[string]any{"scan": s.Scanner.Status(), "metadata": s.Agent.Status(), "intro": s.Intro.Status(), "cache": s.Cache.Status(), "trickplay": s.Trick.Status(), "remuxJobs": remux, "transcodeJobs": tx})
 }
 
 func (s *Server) refreshAllMetadata(w http.ResponseWriter, r *http.Request) {

@@ -27,24 +27,30 @@ import (
 	"lex/internal/meta"
 	"lex/internal/store"
 	"lex/internal/stream"
+	"lex/internal/subsearch"
 	"lex/internal/sysstats"
+	"lex/internal/trickplay"
 )
 
 type Server struct {
-	Version string
-	DataDir string
-	St      *store.Store
-	Log     *logx.Logger
-	Scanner *library.Scanner
-	Agent   *meta.Agent
-	Images  *meta.ImageCache
-	Subs    *stream.Subs
-	Sess    *stream.Manager
-	Stats   *sysstats.Sampler
-	FF      stream.FFInfo
-	Cache   *cache.Cache
-	Intro   *intro.Detector
-	Web     fs.FS
+	Version    string
+	DataDir    string
+	St         *store.Store
+	Log        *logx.Logger
+	Scanner    *library.Scanner
+	Agent      *meta.Agent
+	Images     *meta.ImageCache
+	Subs       *stream.Subs
+	Sess       *stream.Manager
+	Stats      *sysstats.Sampler
+	FF         stream.FFInfo
+	subMu      sync.Mutex
+	subsClient *subsearch.Client
+	Cache      *cache.Cache
+	Intro      *intro.Detector
+	Trick      *trickplay.Generator
+	HLS        *stream.HLS
+	Web        fs.FS
 
 	static    map[string]*asset
 	loginMu   sync.Mutex
@@ -107,6 +113,16 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("HEAD /api/files/{id}/direct", u(s.direct))
 	mux.Handle("GET /api/files/{id}/stream", u(s.streamFile))
 	mux.Handle("GET /api/files/{id}/subs/{idx}", u(s.subtitle))
+	mux.Handle("GET /api/files/{id}/subsearch", u(s.subSearch))
+	mux.Handle("POST /api/files/{id}/subsearch", u(s.subDownload))
+	mux.Handle("DELETE /api/files/{id}/subs/{idx}", u(s.subDelete))
+	mux.Handle("GET /api/files/{id}/fonts", u(s.fonts))
+	mux.Handle("GET /api/files/{id}/trickplay", u(s.trickMeta))
+	mux.Handle("GET /api/files/{id}/hls/index.m3u8", s.hlsAuth(s.hlsPlaylist))
+	mux.Handle("GET /api/files/{id}/hls/init.mp4", s.hlsAuth(s.hlsSegment))
+	mux.Handle("GET /api/files/{id}/hls/seg/{n}", s.hlsAuth(s.hlsSegment))
+	mux.Handle("GET /api/files/{id}/trickplay/{n}", u(s.trickSheet))
+	mux.Handle("GET /api/files/{id}/fonts/{name}", u(s.font))
 
 	// Admin
 	a := func(h http.HandlerFunc) http.Handler { return s.auth(h, true) }
@@ -165,7 +181,7 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "same-origin")
 		h.Set("X-Frame-Options", "SAMEORIGIN")
-		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'")
+		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'")
 		defer func() {
 			if rec := recover(); rec != nil {
 				if rec == http.ErrAbortHandler {

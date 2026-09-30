@@ -11,6 +11,10 @@ import { mediaSourceClass } from './caps.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Automatic buffering: fill whatever the browser will hold (Chrome's quota is
+// ~150 MB), up to this many seconds.
+const AUTO_AHEAD = 1200;
+
 export class MseEngine {
   constructor(video, plan, opts) {
     this.video = video;
@@ -18,7 +22,7 @@ export class MseEngine {
     this.mime = plan.mime;
     this.duration = plan.duration;
     this.offset = -(plan.startTime || 0);
-    this.opts = { forward: 90, back: 30, onError: () => {}, onEnded: () => {}, ...opts };
+    this.opts = { forward: 0, back: 30, onError: () => {}, onEnded: () => {}, ...opts };
     this.gen = 0;
     this.ctrl = null;
     this.bytes = 0;
@@ -130,9 +134,11 @@ export class MseEngine {
     }
   }
 
-  // Effective forward target: the user's setting, capped by what the
-  // browser's MSE memory quota turned out to hold.
-  target() { return Math.min(this.opts.forward, this.quotaAhead || Infinity); }
+  // Effective forward target: the user's setting (0 = automatic), capped by
+  // what the browser's MSE memory quota turned out to hold.
+  wanted() { return this.opts.forward > 0 ? this.opts.forward : AUTO_AHEAD; }
+
+  target() { return Math.min(this.wanted(), this.quotaAhead || Infinity); }
 
   async append(data, gen) {
     for (;;) {
@@ -339,7 +345,7 @@ export class MseEngine {
     return {
       ahead: this.ahead(),
       target: this.target(),
-      quotaLimited: !!this.quotaAhead && this.quotaAhead < this.opts.forward,
+      quotaLimited: !!this.quotaAhead && this.quotaAhead < this.wanted(),
       bandwidth: this.bandwidth,
       bytes: this.bytes,
       restarts: Math.max(0, this.restarts),

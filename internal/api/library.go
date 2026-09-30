@@ -148,6 +148,7 @@ func (s *Server) fileViews(itemID int64, admin bool) []fileView {
 			}
 		}
 		fv.Subtitles = append(fv.Subtitles, library.ExternalSubs(f.Path)...)
+		fv.Subtitles = append(fv.Subtitles, s.downloadedStreams(f.ID)...)
 		fv.File = fileForUser(f, admin)
 		out = append(out, fv)
 	}

@@ -176,11 +176,14 @@ type Command struct {
 
 // HWEncode reports whether a transcode uses the V4L2 hardware encoder.
 func HWEncode(cfg store.Config, p Params) bool {
-	return !p.VideoCopy && cfg.VideoEncoder == "h264_v4l2m2m"
+	return !p.VideoCopy && !p.SW && cfg.VideoEncoder == "h264_v4l2m2m"
 }
 
 // BuildArgs creates the ffmpeg command line(s) for a job.
 func BuildArgs(cfg store.Config, ff FFInfo, f *store.File, p Params) (Command, error) {
+	if p.SW {
+		cfg.VideoEncoder = "libx264"
+	}
 	args, err := buildArgs(cfg, ff, f, p)
 	if err != nil || !HWEncode(cfg, p) {
 		return Command{Args: args}, err
@@ -199,8 +202,11 @@ func BuildArgs(cfg store.Config, ff FFInfo, f *store.File, p Params) (Command, e
 	if a := f.Info.StreamByIndex(p.Audio); a != nil && (!p.AudioCopy || a.Codec == "aac") {
 		stage2 = append(stage2, "-bsf:a", "aac_adtstoasc")
 	}
+	// delay_moov: the AAC AudioSpecificConfig only exists once
+	// aac_adtstoasc has seen a packet; writing the moov earlier leaves an
+	// esds without it, which Chrome's MSE parser rejects.
 	stage2 = append(stage2, "-avoid_negative_ts", "disabled",
-		"-f", "mp4", "-movflags", "+frag_keyframe+empty_moov+default_base_moof+frag_discont",
+		"-f", "mp4", "-movflags", "+frag_keyframe+empty_moov+delay_moov+default_base_moof+frag_discont",
 		"-frag_duration", strconv.Itoa(cfg.FragmentMs*1000), "pipe:1")
 	return Command{Args: out, Stage2: stage2}, nil
 }

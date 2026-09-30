@@ -1,7 +1,7 @@
 // Full-screen player: picks a playback plan from the server, plays it via
 // direct <video src> or the MSE engine, and renders controls + stats.
 
-import { h, icons, resLabel, fmtTime, fmtBitrate, fmtBytes, streamLabel, toast, clear, langName, channelName } from './ui.js';
+import { h, icons, resLabel, fmtTime, fmtBitrate, fmtBytes, streamLabel, toast, clear, langName, channelName, modal } from './ui.js';
 import { api, img } from './api.js';
 import { detectCaps } from './caps.js';
 import { prefs, QUALITIES } from './prefs.js';
@@ -19,7 +19,11 @@ export function isPlayerOpen() { return !!current; }
 
 const METHOD_LABEL = { direct: 'Direct Play', remux: 'Direct Stream', transcode: 'Transcode' };
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
-const BUFFERS = [30, 60, 90, 180, 300, 600];
+const DEFAULT_FONT = '/vendor/jassub/default.woff2';
+const LANG_CHOICES = ['eng', 'spa', 'fre', 'ger', 'ita', 'por', 'hin', 'jpn', 'kor', 'chi', 'ara', 'rus', 'dut', 'swe', 'nor', 'dan', 'fin', 'pol', 'tur', 'tam', 'tel', 'ukr', 'heb', 'gre', 'cze', 'hun', 'rum', 'tha', 'vie', 'ind', 'may']
+  .map((k) => [k, langName(k)]).sort((a, b) => a[1].localeCompare(b[1]));
+const LANG1 = { en: 'eng', es: 'spa', fr: 'fre', de: 'ger', it: 'ita', pt: 'por', 'pt-pt': 'por', 'pt-br': 'por', hi: 'hin', ja: 'jpn', ko: 'kor', zh: 'chi', 'zh-cn': 'chi', 'zh-tw': 'chi', ar: 'ara', ru: 'rus', nl: 'dut', sv: 'swe', no: 'nor', da: 'dan', fi: 'fin', pl: 'pol', tr: 'tur', ta: 'tam', te: 'tel', uk: 'ukr', he: 'heb', el: 'gre', cs: 'cze', hu: 'hun', ro: 'rum', th: 'tha', vi: 'vie', id: 'ind', ms: 'may' };
+const lang1to3 = (l) => LANG1[(l || '').toLowerCase()] || l;
 
 function pickAudio(file, lang) {
   const auds = (file.info?.streams || []).filter((s) => s.type === 'audio');
@@ -49,6 +53,54 @@ function pickSubtitle(file, audio) {
   return -1;
 }
 
+// Style names used for signs, songs and effects rather than dialogue.
+const ASS_SIGN_STYLE = /sign|^ts\b|title|kara|romaji|kanji|song|lyric|^op\b|^ed\d*\b|opening|ending|screen|insert|note|logo/i;
+
+// Applies the viewer's subtitle size, position and background preferences to
+// an ASS script's dialogue styles (signs and karaoke keep the release's look,
+// since they're positioned over the picture on purpose).
+function styleASS(text) {
+  const size = { small: 0.8, medium: 1, large: 1.3 }[prefs.get('subSize')] || 1;
+  const pos = prefs.get('subPos');
+  const box = prefs.get('subBg');
+  const end = text.indexOf('[Events]');
+  if (end < 0) return text;
+  const head = text.slice(0, end);
+  const resY = +(head.match(/^PlayResY:\s*(\d+)/m) || [])[1] || 288;
+  let format = null;
+  const out = head.split('\n').map((line) => {
+    const m = line.match(/^(Format|Style):\s*(.*)$/);
+    if (!m) return line;
+    const fields = m[2].split(',').map((f) => f.trim());
+    if (m[1] === 'Format') { format = fields.map((f) => f.toLowerCase()); return line; }
+    if (!format || fields.length < format.length) return line;
+    const at = (k) => format.indexOf(k);
+    const align = +fields[at('alignment')];
+    // Only bottom-aligned (numpad 1-3) dialogue styles.
+    if (ASS_SIGN_STYLE.test(fields[at('name')]) || !(align >= 1 && align <= 3)) return line;
+    const set = (k, v) => { if (at(k) >= 0) fields[at(k)] = String(v); };
+    set('fontsize', Math.round(+fields[at('fontsize')] * size * 10) / 10);
+    const mv = +fields[at('marginv')] || Math.round(resY * 0.04);
+    set('marginv', Math.round(pos === 'low' ? mv * 0.4 : pos === 'high' ? mv + resY * 0.1 : mv));
+    if (box) {
+      // BorderStyle 3 draws an opaque box in the outline colour.
+      set('borderstyle', 3);
+      set('outlinecolour', '&H60000000');
+      set('outline', Math.max(1, Math.round(resY / 150)));
+      set('shadow', 0);
+    }
+    return `Style: ${fields.join(',')}`;
+  });
+  return out.join('\n') + text.slice(end);
+}
+
+// Fetches a subtitle track; partial means the server is still extracting it.
+async function fetchSub(url) {
+  const res = await fetch(url, { credentials: 'same-origin' });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+  return { text: await res.text(), partial: res.headers.get('X-Lex-Partial') === '1' };
+}
+
 class Player {
   constructor({ itemId, start = null, onClose }) {
     this.itemId = itemId;
@@ -66,6 +118,7 @@ class Player {
     this.bufHist = [];
     this.closed = false;
     this.upNextShown = false;
+    this.subOffset = 0;
     this.build();
     this.bind();
     this.start(itemId, start);
@@ -184,9 +237,20 @@ class Player {
     let dragging = false;
     const showTip = (e) => {
       const { t, x } = seekAt(e);
-      if (!this.tip) { this.tip = h('div', { class: 'tip' }); this.seek.appendChild(this.tip); }
-      this.tip.textContent = fmtTime(t);
-      this.tip.style.left = `${x}px`;
+      if (!this.tip) {
+        this.tipTime = h('span');
+        this.tipThumb = h('div', { class: 'thumb' });
+        this.tip = h('div', { class: 'tip' }, this.tipThumb, this.tipTime);
+        this.seek.appendChild(this.tip);
+        if (!this.trick && Date.now() - (this.trickTried || 0) > 60000) this.loadTrickplay();
+      }
+      const chap = [...(this.file?.info?.chapters || [])].reverse().find((c) => c.start <= t && c.title && !/^chapter \d+$/i.test(c.title));
+      this.tipTime.textContent = chap ? `${fmtTime(t)} · ${chap.title}` : fmtTime(t);
+      const w = this.renderThumb(t);
+      // Keep the preview inside the player.
+      const half = Math.max(w, this.tip.offsetWidth) / 2;
+      const r = this.seek.getBoundingClientRect();
+      this.tip.style.left = `${Math.min(Math.max(x, half + 4 - r.left), window.innerWidth - r.left - half - 4)}px`;
       return t;
     };
     this.seek.addEventListener('pointerdown', (e) => {
@@ -229,6 +293,7 @@ class Player {
       const aud = pickAudio(this.file, prefs.get('audioLang'));
       this.audio = aud === -1 ? -1 : aud.index;
       this.subtitle = pickSubtitle(this.file, aud);
+      this.subOffset = 0;
       this.renderTitle();
       this.nextBtn.classList.toggle('hidden', !d.next);
       if (start == null) {
@@ -261,9 +326,21 @@ class Player {
     this.hideError();
     this.showSpinner(true);
     const caps = detectCaps();
+    let mode = overrides.mode || this.mode;
+    // "HLS" isn't a server mode: it asks for HLS delivery with automatic
+    // direct/remux/transcode choice. Only browsers with native HLS can use it.
+    const forceHls = mode === 'hls';
+    if (forceHls) {
+      mode = 'auto';
+      if (!this.video.canPlayType('application/vnd.apple.mpegurl')) {
+        toast("This browser can't play HLS natively (Safari and iOS can) — using the normal stream");
+        this.mode = 'auto';
+        prefs.set('mode', 'auto');
+      }
+    }
     const req = {
       itemId: this.item.id, fileId: this.file.id, audio: this.audio, subtitle: this.subtitle,
-      mode: overrides.mode || this.mode, maxBitrate: this.quality, audioLang: prefs.get('audioLang'),
+      mode, forceHls: forceHls && this.mode === 'hls', maxBitrate: this.quality, audioLang: prefs.get('audioLang'), swEncode: !!this.swEncode,
       caps, sessionId: this.sessionId, start,
     };
     const res = await api('/api/playback/plan', { method: 'POST', body: req });
@@ -274,9 +351,10 @@ class Player {
     this.sessionId = res.plan.sessionId;
     this.audio = res.plan.audio;
     this.file = { ...this.file, ...res.file, subtitles: this.file.subtitles };
-    this.methodEl.textContent = METHOD_LABEL[this.plan.method];
+    this.methodEl.textContent = METHOD_LABEL[this.plan.method] + (this.plan.hls ? ' · HLS' : '');
     this.methodEl.className = `p-method hide-mobile ${this.plan.method}`;
     this.methodEl.title = (this.plan.reasons || []).join('; ') || 'Playing the original file';
+    if (this.trick?.fileId !== this.file.id) this.loadTrickplay();
     await this.attach(start);
   }
 
@@ -293,14 +371,19 @@ class Player {
     this.teardown();
     const v = this.video;
     this.started = false;
-    if (this.plan.method === 'direct') {
+    if (this.plan.hls) {
+      // Native HLS (Safari, iOS, AirPlay): the playlist covers the whole file,
+      // with segment N starting at N x segment length, so seek like a file.
+      v.src = this.plan.url;
+      if (start > 0) v.addEventListener('loadedmetadata', () => { v.currentTime = start; }, { once: true });
+    } else if (this.plan.method === 'direct') {
       v.src = this.plan.url + (start > 0 ? `#t=${start.toFixed(2)}` : '');
       if (start > 0) {
         v.addEventListener('loadedmetadata', () => { if (Math.abs(v.currentTime - start) > 2) v.currentTime = start; }, { once: true });
       }
     } else {
       this.engine = new MseEngine(v, this.plan, {
-        forward: prefs.get('forwardBuffer'),
+        forward: prefs.get('bufferAhead'),
         back: prefs.get('backBuffer'),
         onError: (msg, status, decode) => this.onStreamError(msg, status, decode),
       });
@@ -338,8 +421,17 @@ class Player {
   }
 
   async fallback(reason) {
+    if (this.plan.hls && this.mode === 'hls') { this.showError(`HLS playback failed: ${reason}`); return; }
     const order = ['direct', 'remux', 'transcode'];
     const idx = order.indexOf(this.plan.method);
+    // A hardware-encoded transcode the browser can't parse: retry once with
+    // the server's software encoder before giving up.
+    if (idx === 2 && /hardware/.test(this.plan.videoOut || '') && !this.swEncode) {
+      this.swEncode = true;
+      toast('Hardware transcode failed in this browser — retrying with the software encoder');
+      await this.replan({ mode: 'transcode' });
+      return;
+    }
     if (this.fallbacks >= 2 || idx >= 2) { this.showError(`Playback failed: ${reason}`); return; }
     this.fallbacks++;
     const next = order[idx + 1];
@@ -376,29 +468,210 @@ class Player {
     for (const tt of v.textTracks) tt.mode = 'disabled';
     this.subTrack = null;
     this.renderCues(null);
+    this.destroyASS();
     if (this.subBlob) { URL.revokeObjectURL(this.subBlob); this.subBlob = null; }
     const s = this.subById(idx);
     if (!s || !s.textSub) return;
+    // Styled (ASS/SSA) subtitles are rendered with libass so positioning,
+    // fonts and karaoke survive; anything else goes through our overlay.
+    if (/^(ass|ssa)$/.test(s.codec) && !s.downloaded && prefs.get('assRender') !== false && await this.setASS(s, token)) return;
+    if (token !== this.subToken) return;
     const slow = setTimeout(() => { if (token === this.subToken) toast('Extracting subtitles from the file… they will appear shortly'); }, 1500);
-    try {
-      const res = await fetch(`/api/files/${this.file.id}/subs/${idx}.vtt`, { credentials: 'same-origin' });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
-      const text = await res.text();
-      if (token !== this.subToken || this.closed) return;
+    const install = (text) => {
+      const old = this.subBlob;
       this.subBlob = URL.createObjectURL(new Blob([text], { type: 'text/vtt' }));
       const track = h('track', { kind: 'subtitles', label: streamLabel(s), srclang: (s.language || 'und').slice(0, 2), src: this.subBlob, default: true });
+      for (const t of [...v.querySelectorAll('track')]) t.remove();
       v.appendChild(track);
       const tt = track.track;
       tt.mode = 'hidden';
       const render = () => this.renderCues(tt);
       tt.addEventListener('cuechange', render);
-      track.addEventListener('load', render);
+      track.addEventListener('load', () => { this.cueKey = null; render(); });
       this.subTrack = tt;
+      if (old) URL.revokeObjectURL(old);
+    };
+    try {
+      const url = `/api/files/${this.file.id}/subs/${idx}.vtt?v=${this.file.mtime || 0}`;
+      const { text, partial } = await fetchSub(url);
+      if (token !== this.subToken || this.closed) return;
+      install(text);
+      if (partial) this.pollSub(token, url, install);
     } catch (e) {
       if (token === this.subToken) toast(`Could not load subtitles: ${e.message}`, 'error');
     } finally {
       clearTimeout(slow);
     }
+  }
+
+  // The server is still extracting this track (big file, slow disk) and sent
+  // what it has so far: keep fetching until it's complete.
+  async pollSub(token, url, apply) {
+    for (let wait = 3000; ; wait = Math.min(wait * 1.5, 15000)) {
+      await new Promise((r) => setTimeout(r, wait));
+      if (token !== this.subToken || this.closed) return;
+      try {
+        const { text, partial } = await fetchSub(url);
+        if (token !== this.subToken || this.closed) return;
+        await apply(text);
+        if (!partial) return;
+      } catch (e) {
+        if (token === this.subToken) toast(`Could not load subtitles: ${e.message}`, 'error');
+        return;
+      }
+    }
+  }
+
+  static assSupported() {
+    return typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined' && typeof WebAssembly !== 'undefined' &&
+      'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+  }
+
+  async setASS(s, token) {
+    if (!Player.assSupported()) return false;
+    try {
+      const [{ default: JASSUB }, fonts] = await Promise.all([
+        import('/vendor/jassub/jassub.js'),
+        api(`/api/files/${this.file.id}/fonts`).catch(() => []),
+      ]);
+      if (token !== this.subToken || this.closed) return true;
+      const url = `/api/files/${this.file.id}/subs/${s.index}.ass?v=${this.file.mtime || 0}`;
+      const { text, partial } = await fetchSub(url);
+      this.assRaw = text;
+      const subContent = styleASS(text);
+      if (token !== this.subToken || this.closed) return true;
+      this.jassub = new JASSUB({
+        video: this.video, subContent, fonts,
+        workerUrl: '/vendor/jassub/worker.js',
+        wasmUrl: '/vendor/jassub/jassub-worker.wasm',
+        modernWasmUrl: '/vendor/jassub/jassub-worker-modern.wasm',
+        // Liberation Sans is metric-compatible with Arial, the usual ASS default.
+        availableFonts: { 'liberation sans': DEFAULT_FONT, arial: DEFAULT_FONT, helvetica: DEFAULT_FONT, 'arial unicode ms': DEFAULT_FONT },
+        queryFonts: false, // querying the OS font list can stall rendering for seconds
+        timeOffset: -this.subOffset,
+        prescaleHeightLimit: 1080, maxRenderHeight: 1440,
+      });
+      await this.jassub.ready;
+      if (partial) {
+        const j = this.jassub;
+        this.pollSub(token, url, async (text) => {
+          if (this.jassub !== j) return;
+          this.assRaw = text;
+          await j.renderer.setTrack(styleASS(text));
+          if (this.video.paused && j._lastDemandTime) j.manualRender(j._lastDemandTime, true).catch(() => {});
+        });
+      }
+      return true;
+    } catch (e) {
+      console.warn('ASS renderer unavailable, using plain subtitles', e);
+      this.destroyASS();
+      return false;
+    }
+  }
+
+  destroyASS() {
+    if (this.jassub) { this.jassub.destroy().catch(() => {}); this.jassub = null; }
+  }
+
+  // Positive offset = subtitles appear later.
+  setSubOffset(v) {
+    this.subOffset = Math.max(-600, Math.min(600, Math.round(v * 10) / 10));
+    if (this.jassub) {
+      this.jassub.timeOffset = -this.subOffset;
+      if (this.jassub._lastDemandTime) this.jassub.manualRender(this.jassub._lastDemandTime, true).catch(() => {});
+    }
+    this.cueKey = null;
+    this.renderCues(this.subTrack);
+    if (this.menu && this.menuName === 'tracks' && !this.menuPage) this.renderMenu();
+  }
+
+  nudgeSubs(d) {
+    if (!this.subById(this.subtitle)?.textSub) return;
+    this.setSubOffset(this.subOffset + d);
+    toast(`Subtitle timing ${this.subOffset > 0 ? '+' : ''}${this.subOffset.toFixed(1)}s`);
+  }
+
+  // Find subtitles on OpenSubtitles.com and add them to this file.
+  searchSubtitles() {
+    const wasPlaying = !this.video.paused;
+    const langSel = h('select', { class: 'input' }, LANG_CHOICES.map(([k, l]) => h('option', { value: k, selected: k === (prefs.get('subLang') || 'eng') }, l)));
+    const list = h('div', { class: 'sub-results' });
+    const status = h('div', { class: 'muted small' });
+    const downloaded = h('div', { class: 'sub-results' });
+    const renderDownloaded = () => {
+      clear(downloaded);
+      const mine = (this.file.subtitles || []).filter((x) => x.downloaded);
+      if (!mine.length) return;
+      downloaded.append(h('div', { class: 'small muted', style: { margin: '2px 0 4px' } }, 'Downloaded for this file'));
+      for (const d of mine) {
+        downloaded.append(h('div', { class: 'sub-res' },
+          h('div', { class: 'sub-res-main' }, h('b', null, d.title || 'Downloaded'), h('span', { class: 'muted small' }, langName(d.language))),
+          h('button', { class: 'btn sm danger', onclick: async () => {
+            try {
+              await api(`/api/files/${this.file.id}/subs/${d.index}`, { method: 'DELETE' });
+              this.file.subtitles = this.file.subtitles.filter((x) => x.index !== d.index);
+              this.syncFileSubs();
+              if (this.subtitle === d.index) this.chooseSubtitle(-1);
+              renderDownloaded();
+            } catch (e) { toast(e.message, 'error'); }
+          } }, 'Remove')));
+      }
+    };
+    const search = async () => {
+      clear(list);
+      status.textContent = 'Searching OpenSubtitles…';
+      try {
+        const res = await api(`/api/files/${this.file.id}/subsearch?lang=${encodeURIComponent(langSel.value)}`);
+        status.textContent = res.length ? `${res.length} result${res.length === 1 ? '' : 's'} · exact-release matches first` : 'No subtitles found for this language.';
+        for (const r of res.slice(0, 40)) {
+          const tags = [
+            r.hashMatch ? h('span', { class: 'tag ok' }, 'Exact match') : null,
+            r.trusted ? h('span', { class: 'tag' }, 'Trusted') : null,
+            r.hearingImpaired ? h('span', { class: 'tag' }, 'SDH') : null,
+            r.ai ? h('span', { class: 'tag warn' }, 'Machine translated') : null,
+          ];
+          const btn = h('button', { class: 'btn sm primary' }, 'Use');
+          btn.onclick = async () => {
+            btn.disabled = true; btn.textContent = 'Downloading…';
+            try {
+              const st = await api(`/api/files/${this.file.id}/subsearch`, { method: 'POST', body: { fileId: r.fileId, language: r.language, release: r.release || r.fileName, hearingImpaired: r.hearingImpaired } });
+              this.file.subtitles = [...(this.file.subtitles || []), st];
+              this.syncFileSubs();
+              m.close();
+              await this.chooseSubtitle(st.index);
+              toast('Subtitles added');
+            } catch (e) {
+              toast(e.message, 'error');
+              btn.disabled = false; btn.textContent = 'Use';
+            }
+          };
+          list.append(h('div', { class: 'sub-res' },
+            h('div', { class: 'sub-res-main' },
+              h('b', { title: r.fileName }, r.release || r.fileName || 'Untitled'),
+              h('div', { class: 'sub-tags' }, langName(lang1to3(r.language)), ` · ${r.downloads.toLocaleString()} downloads`, ...tags)),
+            btn));
+        }
+      } catch (e) {
+        status.textContent = '';
+        list.append(h('div', { class: 'sub-err' }, e.message));
+      }
+    };
+    langSel.onchange = () => { prefs.set('subLang', langSel.value); search(); };
+    if (wasPlaying) this.video.pause();
+    const m = modal({
+      title: 'Search subtitles', wide: true,
+      body: [h('div', { class: 'row', style: { gap: '10px', alignItems: 'center' } }, h('span', { class: 'muted' }, 'Language'), langSel, h('div', { class: 'spacer' }), status), downloaded, list],
+      onClose: () => { if (wasPlaying) this.video.play().catch(() => {}); },
+    });
+    this.root.appendChild(m.el); // stay visible in fullscreen
+    renderDownloaded();
+    search();
+  }
+
+  // Keep the item's file list in sync so switching versions keeps new subs.
+  syncFileSubs() {
+    const f = (this.files || []).find((x) => x.id === this.file.id);
+    if (f) f.subtitles = this.file.subtitles;
   }
 
   async chooseSubtitle(idx) {
@@ -429,6 +702,16 @@ class Player {
     r.dataset.subSize = prefs.get('subSize');
     r.dataset.subPos = prefs.get('subPos');
     r.classList.toggle('subs-nobg', !prefs.get('subBg'));
+    // Styled subtitles: apply the same preferences to the dialogue styles.
+    const j = this.jassub;
+    if (j && this.assRaw) {
+      clearTimeout(this.assRestyle);
+      this.assRestyle = setTimeout(async () => {
+        if (this.jassub !== j) return;
+        await j.renderer.setTrack(styleASS(this.assRaw));
+        if (j._lastDemandTime) j.manualRender(j._lastDemandTime, true).catch(() => {});
+      }, 50);
+    }
   }
 
   // Called on cuechange and every timeupdate: Chrome doesn't always fire
@@ -436,8 +719,10 @@ class Player {
   renderCues(tt) {
     const el = this.subsEl;
     if (!el) return;
-    const t = this.video.currentTime;
-    const cues = tt && tt.activeCues ? [...tt.activeCues].filter((c) => c.startTime <= t + 0.05 && c.endTime > t).sort((a, b) => a.startTime - b.startTime) : [];
+    const off = this.subOffset || 0;
+    const t = this.video.currentTime - off;
+    const src = off ? tt?.cues : tt?.activeCues;
+    const cues = src ? [...src].filter((c) => c.startTime <= t + 0.05 && c.endTime > t).sort((a, b) => a.startTime - b.startTime) : [];
     const key = cues.map((c) => `${c.startTime}:${c.text}`).join('|');
     if (key === this.cueKey) return;
     this.cueKey = key;
@@ -500,7 +785,8 @@ class Player {
   }
 
   key(e) {
-    if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
+    if ((e.target.tagName === 'INPUT' && e.target.type !== 'range') || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+    if (this.root.querySelector('.modal-bg')) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const v = this.video;
     const k = e.key.toLowerCase();
@@ -513,11 +799,44 @@ class Player {
       f: () => this.toggleFullscreen(), m: () => { v.muted = !v.muted; },
       i: () => this.toggleStats(), c: () => this.toggleMenu('tracks'),
       n: () => this.playNext(),
+      g: () => this.nudgeSubs(-0.1), h: () => this.nudgeSubs(0.1),
       escape: () => { if (this.menu) this.closeMenu(); else if (!document.fullscreenElement) this.close(); },
       home: () => this.seekTo(0), end: () => this.seekTo(this.duration() - 5),
     };
     if (/^[0-9]$/.test(k)) { this.seekTo((this.duration() * +k) / 10); e.preventDefault(); return; }
     if (map[k]) { e.preventDefault(); map[k](); this.poke(); }
+  }
+
+  // ---------- trickplay (seek previews) ----------
+  async loadTrickplay() {
+    const fileId = this.file?.id;
+    this.trickTried = Date.now();
+    this.trick = null;
+    try {
+      const m = await api(`/api/files/${fileId}/trickplay`);
+      if (this.file?.id !== fileId || !m || !m.count) return;
+      this.trick = { ...m, fileId };
+      // Warm the first sheet so the first hover is instant.
+      new Image().src = `/api/files/${fileId}/trickplay/1`;
+    } catch {}
+  }
+
+  // Draws the preview for time t; returns its displayed width (0 if none).
+  renderThumb(t) {
+    const m = this.trick, el = this.tipThumb;
+    if (!m || m.fileId !== this.file?.id) { el.style.display = 'none'; return 0; }
+    const per = m.cols * m.rows;
+    const i = Math.max(0, Math.min(m.count - 1, Math.floor(t / m.interval)));
+    const sheet = Math.floor(i / per) + 1, k = i % per;
+    const scale = Math.min(1, (window.innerWidth < 600 ? 160 : 240) / m.width);
+    const w = Math.round(m.width * scale), ht = Math.round(m.height * scale);
+    Object.assign(el.style, {
+      display: 'block', width: `${w}px`, height: `${ht}px`,
+      backgroundImage: `url(/api/files/${m.fileId}/trickplay/${sheet})`,
+      backgroundSize: `${m.cols * w}px auto`,
+      backgroundPosition: `-${(k % m.cols) * w}px -${Math.floor(k / m.cols) * ht}px`,
+    });
+    return w;
   }
 
   // ---------- time / seek bar ----------
@@ -634,14 +953,14 @@ class Player {
     if (as) r('Source', `${as.codec.toUpperCase()} ${channelName(as.channels)} ${as.sampleRate ? as.sampleRate / 1000 + 'kHz' : ''} ${langName(as.language)}`);
     r('Output', p.audioOut || 'none');
     hd('Stream');
-    r('Container', `${(f.name || '').split('.').pop()} → ${p.method === 'direct' ? 'original file (range requests)' : 'fragmented MP4 (MSE)'}`);
+    r('Container', `${(f.name || '').split('.').pop()} → ${p.hls ? `HLS (${p.mime})` : p.method === 'direct' ? 'original file (range requests)' : 'fragmented MP4 (MSE)'}`);
     r('Read from', this.cached ? 'SSD cache' : 'library disk');
     const seg = this.intro();
     if (seg) r('Intro', `${fmtTime(seg.start)}–${fmtTime(seg.end)} (${seg.source})`);
     r('Source bitrate', fmtBitrate((info.bitrate || 0)));
     if (p.method === 'transcode') r('Target bitrate', fmtBitrate(p.bitrate * 1000));
     if (p.limitKbps) r('Bitrate limit', fmtBitrate(p.limitKbps * 1000));
-    r('Buffer ahead', `${cs.bufferAhead.toFixed(1)}s${es ? ` / target ${Math.round(es.target)}s${es.quotaLimited ? ` (browser memory limit; setting ${prefs.get('forwardBuffer')}s)` : ''} · back ${prefs.get('backBuffer')}s` : ' (browser managed)'}`);
+    r('Buffer ahead', `${cs.bufferAhead.toFixed(1)}s${es ? ` / target ${Math.round(es.target)}s${prefs.get('bufferAhead') ? (es.quotaLimited ? ` (browser memory limit; setting ${prefs.get('bufferAhead')}s)` : '') : ' (auto: as much as the browser holds)'} · back ${prefs.get('backBuffer')}s` : ' (browser managed)'}`);
     const canvas = h('canvas', { width: 360, height: 36 });
     rows.push(h('tr', null, h('td', { colspan: 2 }, canvas)));
     if (es) {
@@ -670,70 +989,110 @@ class Player {
   }
 
   // ---------- menus ----------
-  closeMenu() { if (this.menu) { this.menu.remove(); this.menu = null; this.menuName = null; } }
+  // Two-level menus: a main list of "Label  value ›" rows and toggles; a row
+  // opens a sub-page of choices with a back button.
+  closeMenu() { if (this.menu) { this.menu.remove(); this.menu = null; this.menuName = null; this.menuPage = null; } }
 
   toggleMenu(name) {
     if (this.menuName === name) { this.closeMenu(); return; }
     this.closeMenu();
     this.menuName = name;
+    this.menuPage = null;
     this.menu = h('div', { class: 'p-menu', onclick: (e) => e.stopPropagation() });
     this.renderMenu();
     this.root.appendChild(this.menu);
     this.showUI(true);
   }
 
+  openPage(page) { this.menuPage = page; this.renderMenu(); }
+
+  qualityLabel(k) {
+    const q = QUALITIES.find(([v]) => v === k);
+    return q ? q[1].split(' · ')[0] : 'Original';
+  }
+
   renderMenu() {
     const m = clear(this.menu);
-    const item = (label, on, active, small) => h('button', { onclick: on }, h('span', { class: 'ck', html: active ? icons.check : '' }), h('span', null, label), small ? h('small', null, small) : null);
-    if (this.menuName === 'tracks') {
-      m.appendChild(h('h4', null, 'Subtitles'));
-      m.appendChild(item('Off', () => { this.chooseSubtitle(-1); this.closeMenu(); }, this.subtitle < 0));
-      for (const s of this.file.subtitles || []) m.appendChild(item(streamLabel(s), () => { this.chooseSubtitle(s.index); this.closeMenu(); }, this.subtitle === s.index));
-      const auds = (this.file.info?.streams || []).filter((s) => s.type === 'audio');
-      if (auds.length) {
-        m.appendChild(h('h4', null, 'Audio'));
-        for (const a of auds) m.appendChild(item(streamLabel(a), () => { if (a.index !== this.audio) this.chooseAudio(a.index); this.closeMenu(); }, this.audio === a.index));
+    const row = (label, value, page) => h('button', { class: 'pm-row', onclick: () => this.openPage(page) },
+      h('span', { class: 'pm-label' }, label), h('span', { class: 'pm-val' }, value), h('span', { class: 'pm-chev', html: icons.chevR }));
+    const sw = (label, on, set, hint) => h('label', { class: 'pm-row pm-toggle' },
+      h('span', { class: 'pm-label' }, label, hint ? h('small', null, hint) : null),
+      h('span', { class: 'switch' }, h('input', { type: 'checkbox', checked: on, onchange: (e) => set(e.target.checked) }), h('i')));
+    const page = (title, items) => {
+      m.append(h('div', { class: 'pm-head' },
+        h('button', { class: 'pm-back', html: icons.chevL, 'aria-label': 'Back', onclick: () => this.openPage(null) }), h('b', null, title)));
+      const list = h('div', { class: 'pm-list' });
+      for (const it of items) {
+        list.appendChild(h('button', { class: `pm-opt ${it.active ? 'on' : ''}`, onclick: it.on },
+          h('span', { class: 'ck', html: it.active ? icons.check : '' }),
+          h('span', { class: 'pm-opt-l' }, it.label, it.sub ? h('small', null, it.sub) : null),
+          it.right ? h('span', { class: 'pm-val' }, it.right) : null));
       }
-      m.appendChild(h('h4', null, 'Subtitle style'));
-      for (const [k, l] of [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']]) m.appendChild(item(l, () => { prefs.set('subSize', k); this.applySubStyle(); this.renderMenu(); }, prefs.get('subSize') === k));
-      m.appendChild(h('h4', null, 'Subtitle position'));
-      for (const [k, l] of [['low', 'Low'], ['normal', 'Normal'], ['high', 'High']]) m.appendChild(item(l, () => { prefs.set('subPos', k); this.applySubStyle(); this.renderMenu(); }, prefs.get('subPos') === k));
-      m.appendChild(item('Background box', () => { prefs.set('subBg', !prefs.get('subBg')); this.applySubStyle(); this.renderMenu(); }, prefs.get('subBg')));
+      m.append(list);
+    };
+    const auds = (this.file.info?.streams || []).filter((s) => s.type === 'audio');
+    const subs = this.file.subtitles || [];
+
+    if (this.menuName === 'tracks') {
+      switch (this.menuPage) {
+        case 'subs':
+          return page('Subtitles', [
+            { label: 'Off', active: this.subtitle < 0, on: () => { this.chooseSubtitle(-1); this.closeMenu(); } },
+            ...subs.map((s) => ({ label: streamLabel(s), active: this.subtitle === s.index, on: () => { this.chooseSubtitle(s.index); this.closeMenu(); } })),
+            { label: 'Search online…', sub: 'OpenSubtitles.com', on: () => { this.closeMenu(); this.searchSubtitles(); } },
+          ]);
+        case 'audio':
+          return page('Audio', auds.map((a) => ({ label: streamLabel(a), active: this.audio === a.index, on: () => { if (a.index !== this.audio) this.chooseAudio(a.index); this.closeMenu(); } })));
+        case 'size':
+          return page('Subtitle size', [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']].map(([k, l]) => ({ label: l, active: prefs.get('subSize') === k, on: () => { prefs.set('subSize', k); this.applySubStyle(); this.openPage(null); } })));
+        case 'pos':
+          return page('Subtitle position', [['low', 'Low'], ['normal', 'Normal'], ['high', 'High']].map(([k, l]) => ({ label: l, active: prefs.get('subPos') === k, on: () => { prefs.set('subPos', k); this.applySubStyle(); this.openPage(null); } })));
+      }
+      const cur = this.subById(this.subtitle);
+      m.append(h('div', { class: 'pm-title' }, 'Subtitles & audio'));
+      m.append(row('Subtitles', cur ? streamLabel(cur).split(' · ')[0] : 'Off', 'subs'));
+      if (auds.length) m.append(row('Audio', streamLabel(auds.find((a) => a.index === this.audio) || auds[0]).split(' · ').slice(0, 2).join(' · '), 'audio'));
+      if (cur && cur.textSub) {
+        const off = this.subOffset || 0;
+        const step = (d) => h('button', { class: 'pm-step', onclick: () => this.setSubOffset(Math.round((off + d) * 10) / 10) }, d > 0 ? `+${d}` : `${d}`);
+        m.append(h('div', { class: 'pm-row pm-stepper' },
+          h('span', { class: 'pm-label' }, 'Timing', h('small', null, 'keys G / H')),
+          h('div', { class: 'pm-steps' }, step(-0.5), step(-0.1),
+            h('button', { class: 'pm-step pm-zero', title: 'Reset', onclick: () => this.setSubOffset(0) }, `${off > 0 ? '+' : ''}${off.toFixed(1)}s`),
+            step(0.1), step(0.5))));
+      }
+      m.append(h('div', { class: 'pm-sep' }));
+      m.append(row('Size', { small: 'Small', medium: 'Medium', large: 'Large' }[prefs.get('subSize')] || 'Medium', 'size'));
+      m.append(row('Position', { low: 'Low', normal: 'Normal', high: 'High' }[prefs.get('subPos')] || 'Normal', 'pos'));
+      m.append(sw('Background box', prefs.get('subBg'), (v) => { prefs.set('subBg', v); this.applySubStyle(); }));
       return;
     }
+
     // settings
-    m.appendChild(h('h4', null, 'Quality'));
-    for (const [k, l] of QUALITIES) {
-      const src = this.file?.info?.bitrate ? Math.round(this.file.info.bitrate / 1000) : 0;
-      if (k && src && k > src * 1.5 && k !== this.quality) continue;
-      m.appendChild(item(l, () => { this.quality = k; prefs.set('quality', k); this.closeMenu(); this.replan(); }, this.quality === k, k === 0 && src ? fmtBitrate(src * 1000) : ''));
+    const src = this.file?.info?.bitrate ? Math.round(this.file.info.bitrate / 1000) : 0;
+    const modes = [['auto', 'Automatic', 'Direct play, then remux, then transcode'], ['direct', 'Direct play', 'Original file'], ['remux', 'Direct stream', 'Remux; video untouched'], ['transcode', 'Transcode', 'Re-encode on the server'], ['hls', 'HLS', 'For AirPlay and older devices']];
+    switch (this.menuPage) {
+      case 'quality':
+        return page('Quality', QUALITIES.filter(([k]) => !k || !src || k <= src * 1.5 || k === this.quality).map(([k, l]) => ({
+          label: l, active: this.quality === k, right: k === 0 && src ? fmtBitrate(src * 1000) : '',
+          on: () => { this.quality = k; prefs.set('quality', k); this.closeMenu(); this.replan(); },
+        })));
+      case 'method':
+        return page('Playback method', modes.map(([k, l, d]) => ({ label: l, sub: d, active: this.mode === k, on: () => { this.mode = k; prefs.set('mode', k); this.fallbacks = 0; this.swEncode = false; this.closeMenu(); this.replan(); } })));
+      case 'speed':
+        return page('Speed', SPEEDS.map((sp) => ({ label: sp === 1 ? 'Normal' : `${sp}x`, active: this.video.playbackRate === sp, on: () => { this.video.playbackRate = sp; this.openPage(null); } })));
+      case 'version':
+        return page('Version', this.files.map((f) => ({ label: `${resLabel(f.width, f.height)} ${(f.vcodec || '').toUpperCase()}`, right: fmtBytes(f.size), active: this.file.id === f.id, on: () => { this.file = { ...f, subtitles: f.subtitles }; this.chaptersDrawn = false; this.closeMenu(); this.replan(); } })));
     }
-    m.appendChild(h('h4', null, 'Playback method'));
-    for (const [k, l, d] of [['auto', 'Automatic', 'direct → remux → transcode'], ['direct', 'Force direct play', ''], ['remux', 'Force direct stream (remux)', ''], ['transcode', 'Force transcode', '']]) {
-      m.appendChild(item(l, () => { this.mode = k; prefs.set('mode', k); this.fallbacks = 0; this.closeMenu(); this.replan(); }, this.mode === k, d));
-    }
-    m.appendChild(h('h4', null, 'Speed'));
-    m.appendChild(h('div', { class: 'row wrap', style: { padding: '2px 8px 6px', gap: '4px' } }, SPEEDS.map((s) => h('button', {
-      class: `btn sm ${this.video.playbackRate === s ? 'primary' : ''}`, style: { width: 'auto' },
-      onclick: () => { this.video.playbackRate = s; this.renderMenu(); },
-    }, `${s}x`))));
-    if (this.plan?.method !== 'direct') {
-      m.appendChild(h('h4', null, 'Buffer ahead'));
-      m.appendChild(h('div', { class: 'row wrap', style: { padding: '2px 8px 6px', gap: '4px' } }, BUFFERS.map((s) => h('button', {
-        class: `btn sm ${prefs.get('forwardBuffer') === s ? 'primary' : ''}`, style: { width: 'auto' },
-        onclick: () => { prefs.set('forwardBuffer', s); if (this.engine) this.engine.opts.forward = s; this.renderMenu(); },
-      }, s >= 60 ? `${s / 60}m` : `${s}s`))));
-    }
-    m.appendChild(h('h4', null, 'Options'));
-    m.appendChild(item('Stats for nerds', () => { this.toggleStats(); this.renderMenu(); }, !!this.statsEl, 'i'));
-    m.appendChild(item('Autoplay next episode', () => { prefs.set('autoplayNext', !prefs.get('autoplayNext')); this.renderMenu(); }, prefs.get('autoplayNext')));
-    m.appendChild(item('Skip intros automatically', () => { prefs.set('autoSkipIntro', !prefs.get('autoSkipIntro')); this.renderMenu(); }, prefs.get('autoSkipIntro')));
-    if (this.files.length > 1) {
-      m.appendChild(h('h4', null, 'Version'));
-      for (const f of this.files) m.appendChild(item(`${f.height ? f.height + 'p ' : ''}${(f.vcodec || '').toUpperCase()} · ${fmtBytes(f.size)}`, () => {
-        this.file = f; this.chaptersDrawn = false; this.closeMenu(); this.replan();
-      }, this.file.id === f.id));
-    }
+    m.append(h('div', { class: 'pm-title' }, 'Settings'));
+    m.append(row('Quality', this.qualityLabel(this.quality), 'quality'));
+    m.append(row('Playback', (modes.find(([k]) => k === this.mode) || modes[0])[1], 'method'));
+    m.append(row('Speed', this.video.playbackRate === 1 ? 'Normal' : `${this.video.playbackRate}x`, 'speed'));
+    if (this.files.length > 1) m.append(row('Version', `${resLabel(this.file.width, this.file.height)} ${(this.file.vcodec || '').toUpperCase()}`, 'version'));
+    m.append(h('div', { class: 'pm-sep' }));
+    m.append(sw('Stats for nerds', !!this.statsEl, () => this.toggleStats(), 'Shortcut: I'));
+    m.append(sw('Autoplay next episode', prefs.get('autoplayNext'), (v) => prefs.set('autoplayNext', v)));
+    m.append(sw('Skip intros automatically', prefs.get('autoSkipIntro'), (v) => prefs.set('autoSkipIntro', v)));
   }
 
   // ---------- intro skipping ----------
@@ -852,6 +1211,7 @@ class Player {
     window.removeEventListener('pagehide', this.onHide);
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     this.teardown();
+    this.destroyASS();
     this.root.remove();
     document.body.style.overflow = '';
     if (current === this) current = null;
