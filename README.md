@@ -290,7 +290,8 @@ gh repo create REPOSITORY_NAME --public --source=. --remote=origin --push
 ```
 
 Do not use `git push --mirror`: application checkpoint refs are local metadata.
-The initial publication history uses neutral contributor attribution. Keep
+Commits use the neutral "Lex contributors" identity; pull requests merged on
+GitHub record the maintainer's GitHub no-reply address, which the check allows. Keep
 personal data, logs, media and credentials out of future commits, screenshots
 and issues. See [contributing](CONTRIBUTING.md) and the
 [publication audit](docs/PUBLISH_AUDIT.md) for validation and remaining limits.

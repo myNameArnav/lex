@@ -60,7 +60,14 @@ for ref in refs:
             if kind == b"blob":
                 check(path.decode(), git("cat-file", "blob", object_id.decode()), commit[:12])
         identities = git("show", "-s", "--format=%an%n%ae%n%cn%n%ce", commit).decode().splitlines()
-        if identities != ["Lex contributors", "contributors@example.invalid", "Lex contributors", "contributors@example.invalid"]:
+        neutral = identities == ["Lex contributors", "contributors@example.invalid", "Lex contributors", "contributors@example.invalid"]
+        # Pull requests merged on GitHub are committed by GitHub for the
+        # maintainer's account. Allowed as long as only GitHub's no-reply
+        # address is recorded, never a personal email.
+        # (Addresses are split so this file doesn't trip its own email scan.)
+        github_merge = (identities[1].endswith("@" "users.noreply.github.com")
+                        and identities[2:] == ["GitHub", "noreply" "@" "github.com"])
+        if not (neutral or github_merge):
             violations.append((commit[:12], "commit metadata", "non-neutral author/committer identity"))
 
 if violations:
