@@ -8,7 +8,10 @@ After=network-online.target lex-hwcodec.service
 Wants=network-online.target lex-hwcodec.service
 
 [Container]
-Image=localhost/lex:latest
+# Published image; `podman auto-update` (daily timer) pulls new releases and
+# restarts Lex. Use localhost/lex:latest for images you build and load yourself.
+Image=ghcr.io/mynamearnav/lex:latest
+AutoUpdate=registry
 ContainerName=lex
 Network=host
 User=1000:1000

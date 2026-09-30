@@ -140,12 +140,28 @@ clients to connect. See [security and privacy](SECURITY.md) before remote access
 Flags override environment settings. FFmpeg/FFprobe must be on `PATH` or supplied
 as explicit paths. Debug logs can include private filenames and paths.
 
-## Docker Compose
+## Docker
+
+Images for `linux/amd64` and `linux/arm64` (including 64-bit Raspberry Pi OS)
+are published to GitHub Container Registry:
+
+| Tag | Updated |
+|---|---|
+| `ghcr.io/mynamearnav/lex:latest`, `:<major.minor>`, `:<version>` (e.g. `:0.0.3`) | with each release |
+| `ghcr.io/mynamearnav/lex:edge` | with every change on `main` |
+
+```sh
+docker run -d --name lex -p 127.0.0.1:8420:8420 --user 1000:1000 \
+  -v lex-data:/data -v /path/to/media:/media:ro ghcr.io/mynamearnav/lex:latest
+```
+
+### Docker Compose
 
 Edit `/path/to/media` in `docker-compose.yml` to your media directory:
 
 ```sh
-docker compose up -d --build
+docker compose up -d            # published image
+docker compose up -d --build    # or build from this checkout
 ```
 
 The UI is available at <http://localhost:8420>. Compose publishes port 8420 only
@@ -171,7 +187,7 @@ On a Raspberry Pi, review the hardware devices and group IDs in the override,
 then run:
 
 ```sh
-docker compose -f docker-compose.yml -f docker-compose.rpi.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.rpi.yml up -d
 ```
 
 The override requires the listed devices to exist. Use the base configuration
@@ -180,25 +196,29 @@ for software playback if your kernel does not expose them.
 ## Linux service deployment
 
 `deploy/lex.service` is a binary systemd example; `deploy/lex.container` is a
-Podman Quadlet example. Both bind to loopback. Review paths, permissions, device
+Podman Quadlet example that runs the published image with `AutoUpdate=registry`,
+so Podman's daily `podman-auto-update.timer` installs new releases (enable it
+with `systemctl enable --now podman-auto-update.timer`). Both bind to loopback. Review paths, permissions, device
 availability, and the `video`/`render` group IDs for your host. Quadlet mounts
 `/srv/media` at `/media` and `/var/lib/lex` at `/data`. Binary mode runs as the
 `lex` system user and stores data in `/var/lib/lex`.
 
 The optional deployment script requires an **explicit SSH target with root
-privileges**, systemd on the destination, and Go (binary mode) or Docker
-(container mode) locally. Container mode also needs Podman and Quadlet support
-on the destination. It replaces the destination's existing Lex service; back up
+privileges** and systemd on the destination. Container modes need Podman with
+Quadlet support there; `container-local` builds the image locally with Docker
+(for unreleased changes) and binary mode needs Go. It replaces the destination's existing Lex service; back up
 its data and adapt the templates before using it.
 
 ```sh
 # Replace the example SSH target with your configured host.
-deploy/deploy.sh root@media-host arm64 container
+deploy/deploy.sh root@media-host arm64 container        # published image
+deploy/deploy.sh root@media-host arm64 container-local  # build here and copy
 deploy/deploy.sh root@media-host amd64 binary
 ```
 
 The helper `deploy/lex-hwcodec.service` attempts to load Raspberry Pi codec
-modules. Hardware configuration varies by board, kernel and distribution;
+modules, then reloads systemd so the Quadlet unit picks up the codec devices
+(Quadlet generates the unit early in boot, before they exist). Hardware configuration varies by board, kernel and distribution;
 consult the board's documentation before modifying boot settings. Lex tests
 available hardware at startup and can use hardware HEVC decoding and
 `h264_v4l2m2m` encoding when supported. Software fallback and transcode settings
@@ -232,7 +252,7 @@ viewing, and in the player `space`, `←`/`→`, `f`, `m`, `c` and `i`.
 ## Versions and releases
 
 The version number lives in `internal/version/VERSION`; builds add the commit
-they came from (`lex -version` prints e.g. `lex 0.0.2 (0ac9413)`, and it's shown
+they came from (`lex -version` prints e.g. `lex 0.0.3 (0ac9413)`, and it's shown
 in Settings → About and the account menu). To release, bump that file, commit,
 and push a matching tag:
 

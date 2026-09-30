@@ -1,11 +1,12 @@
 # Generic Docker Compose setup. Media is mounted read-only; Lex only reads it.
-#   docker compose up -d --build
+#   docker compose up -d                 (published image from ghcr.io)
+#   docker compose up -d --build         (build from this checkout instead)
 # On a Raspberry Pi add the hardware override:
-#   docker compose -f docker-compose.yml -f docker-compose.rpi.yml up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.rpi.yml up -d
 services:
   lex:
+    image: ghcr.io/mynamearnav/lex:latest
     build: .
-    image: lex:latest
     container_name: lex
     ports:
       - "127.0.0.1:8420:8420"

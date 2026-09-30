@@ -1,0 +1,70 @@
+name: Container image
+# Multi-arch image (linux/amd64 + linux/arm64) on GitHub Container Registry:
+#   v1.2.3 tag   -> :1.2.3, :1.2, :latest
+#   main         -> :edge
+#   every build  -> :sha-<commit>
+# Pull requests build both architectures without pushing.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Tags
+        id: meta
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/lex"
+          commit=$(git rev-parse --short HEAD)
+          tags="$image:sha-$commit"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            if [ "$version" != "$(cat internal/version/VERSION)" ]; then
+              echo "tag $GITHUB_REF_NAME does not match internal/version/VERSION" >&2
+              exit 1
+            fi
+            tags="$tags,$image:$version,$image:${version%.*},$image:latest"
+          elif [ "$GITHUB_REF" = refs/heads/main ]; then
+            tags="$tags,$image:edge"
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "$tags" | tr , '\n'
+      - name: Set up emulation and builder
+        run: |
+          docker run --privileged --rm tonistiigi/binfmt:qemu-v9.2.2@sha256:1b804311fe87047a4c96d38b4b3ef6f62fca8cd125265917a9e3dc3c996c39e6 --install arm64
+          docker buildx create --use --name lex-builder
+      - name: Log in to ghcr.io
+        if: github.event_name != 'pull_request'
+        env:
+          TOKEN: ${{ github.token }}
+        run: echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - name: Build and push
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          COMMIT: ${{ steps.meta.outputs.commit }}
+        run: |
+          args=()
+          for t in ${TAGS//,/ }; do args+=(-t "$t"); done
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            args+=(--output type=cacheonly)
+          else
+            args+=(--push)
+          fi
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --build-arg COMMIT="$COMMIT" \
+            --label org.opencontainers.image.revision="$GITHUB_SHA" \
+            --label org.opencontainers.image.version="$(cat internal/version/VERSION)" \
+            "${args[@]}" .
