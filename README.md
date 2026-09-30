@@ -5,6 +5,23 @@ built for small Linux hosts, including Raspberry Pi. A Go binary with SQLite,
 `ffmpeg`/`ffprobe` for media processing, and a dependency-free web UI embedded
 in the binary. macOS can be used for local development.
 
+![Lex home screen](docs/screenshots/home.webp)
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Movie details](docs/screenshots/movie.webp) **Details** – artwork, overview, file and stream info | ![Player with stats for nerds](docs/screenshots/player-stats.webp) **Stats for nerds** – why a file is remuxed, buffer health, server ffmpeg state |
+| ![Subtitles and audio menu](docs/screenshots/player-subtitles.webp) **Subtitles & audio** – track choice, timing offset, size, position | ![Player settings menu](docs/screenshots/player-settings.webp) **Player settings** – quality, playback method, speed |
+| ![Seek-bar preview](docs/screenshots/seek-preview.webp) **Seek previews** – thumbnails while hovering the seek bar | ![Dashboard](docs/screenshots/dashboard.webp) **Dashboard** – host load, live streams and what each one costs |
+| ![Transcoding settings](docs/screenshots/settings.webp) **Settings** – playback methods, encoder and limits | |
+
+<sub>Screenshots use the Blender Foundation's open movies *Sintel*, *Tears of
+Steel*, *Big Buck Bunny*, *Elephants Dream* and *Caminandes: Gran Dillama*
+(© Blender Foundation, [blender.org](https://www.blender.org/about/projects/)),
+released under Creative Commons Attribution licenses. Posters and backdrops are
+frames from the films.</sub>
+
 ## Features
 
 - **Libraries** – Movies, TV Shows, or Mixed (auto-detects episodes vs films, good
