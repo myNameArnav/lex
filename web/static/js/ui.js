@@ -116,8 +116,12 @@ export function streamLabel(s) {
 // ---------- toasts & modals ----------
 
 let toastBox;
+// An open dialog is drawn over everything in <body>, so toasts go inside the topmost one.
+const toastHost = () => [...document.querySelectorAll('dialog[open]')].at(-1) || document.body;
 export function toast(msg, kind = '') {
-  if (!toastBox) { toastBox = h('div', { class: 'toasts' }); document.body.appendChild(toastBox); }
+  if (!toastBox) toastBox = h('div', { class: 'toasts' });
+  const host = toastHost();
+  if (toastBox.parentNode !== host) host.appendChild(toastBox);
   const t = h('div', { class: `toast ${kind}` }, msg);
   toastBox.appendChild(t);
   setTimeout(() => t.remove(), kind === 'error' ? 6000 : 3000);
@@ -145,6 +149,7 @@ export function modal({ title, body, actions = [], wide = false, onClose, parent
     if (closed) return;
     closed = true;
     bg.close();
+    if (toastBox && bg.contains(toastBox)) toastHost().appendChild(toastBox);
     bg.remove();
     onClose && onClose();
   };

@@ -170,7 +170,8 @@ class Player {
     this.background = document.getElementById('app');
     this.backgroundWasInert = this.background?.inert;
     if (this.background) this.background.inert = true;
-    this.root.querySelector('.p-top button').focus();
+    // Focus the player itself, not a control: Space must pause, not press a button.
+    this.root.focus();
     document.body.style.overflow = 'hidden';
     this.video.volume = prefs.get('volume');
     this.video.muted = prefs.get('muted');
@@ -821,8 +822,12 @@ class Player {
       this.poke();
       return;
     }
-    if ((/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) || e.target.isContentEditable) && e.key !== 'Escape') return;
-    if (e.target.closest('button') && (e.key === ' ' || e.key === 'Enter')) return;
+    if (e.target.tagName === 'INPUT' && e.target.type === 'range') {
+      // A slider keeps its own keys; the rest stay shortcuts after it was dragged.
+      if (/^(Arrow|Home|End|Page)/.test(e.key)) return;
+    } else if ((/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) || e.target.isContentEditable) && e.key !== 'Escape') return;
+    // Only a button reached by keyboard takes Space/Enter; after a mouse click Space still pauses.
+    if (e.target.closest('button')?.matches(':focus-visible') && (e.key === ' ' || e.key === 'Enter')) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const v = this.video;
     const k = e.key.toLowerCase();

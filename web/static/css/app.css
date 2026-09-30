@@ -396,7 +396,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .task { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text2); }
 
 /* ---------- player ---------- */
-.player { position: fixed; inset: 0; z-index: 500; background: #000; color: #fff; user-select: none; -webkit-user-select: none; }
+.player { position: fixed; inset: 0; z-index: 500; background: #000; color: #fff; user-select: none; -webkit-user-select: none; outline: none; }
 .player video { position: absolute; inset: 0; width: 100%; height: 100%; background: #000; object-fit: contain; }
 .player.hide-ui { cursor: none; }
 .player .shade-top, .player .shade-bot { position: absolute; left: 0; right: 0; pointer-events: none; transition: opacity .3s; }
