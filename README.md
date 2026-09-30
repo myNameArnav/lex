@@ -1,0 +1,226 @@
+# Lex
+
+A lightweight, self-hosted media server in the spirit of Plex / Emby / Jellyfin,
+built for small Linux hosts, including Raspberry Pi. A Go binary with SQLite,
+`ffmpeg`/`ffprobe` for media processing, and a dependency-free web UI embedded
+in the binary. macOS can be used for local development.
+
+## Features
+
+- **Libraries** – Movies, TV Shows, or Mixed (auto-detects episodes vs films, good
+  for anime folders). Release-style names (`Dune.Part.Two.2024.1080p...`,
+  `The Office (US) - S06E17-E18 - ...`, `www.site.com - Title 2021 ...`) are parsed,
+  plus `.plexmatch` / `.nfo` ids and local `poster.jpg` / `fanart.jpg` / `-thumb.jpg`.
+  Periodic rescans only `stat` files; a Sonarr/Radarr webhook triggers instant rescans.
+- **Metadata** – TMDB (with a free API key), TVmaze for shows (no key), and a local
+  **Radarr** as a keyless TMDB source for movies (auto-detected). Artwork is fetched
+  lazily, cached on disk and resized for the grid. Manual "Fix match" and refresh.
+- **Playback**
+  - **Direct play**: the original file with HTTP range requests (zero CPU).
+  - **Direct stream (remux)**: ffmpeg repackages to fragmented MP4 without touching
+    video; unsupported audio (EAC3, DTS, TrueHD…) becomes AAC. Performance depends on the file and hardware.
+  - **Transcode**: H.264 via libx264 (or `h264_v4l2m2m`), bitrate/resolution caps,
+    image-subtitle (PGS/VobSub) burn-in, optional HDR→SDR tone mapping.
+  - The browser reports its codecs; the server picks the cheapest method and records
+    *why* (e.g. "audio codec eac3 not supported"). If the browser fails anyway, the
+    player falls back direct → remux → transcode automatically.
+  - Remux/transcode output keeps the file's own timestamps and is fed to the browser
+    via Media Source Extensions: seeking restarts ffmpeg at the target, and once the
+    client's forward buffer is full it stops reading, TCP backpressure pauses ffmpeg,
+    and nothing touches the SD card (no HLS segments on disk).
+- **Player** – resume, next-episode autoplay with countdown, subtitle/audio switching,
+  quality & method menus, speed, buffer size, PiP, Media Session keys, keyboard
+  shortcuts (`space/k`, `←/→`, `f`, `m`, `c`, `i`, `n`, `0-9`), touch double-tap seek,
+  and a **stats for nerds** overlay (codecs in/out, reasons, buffer health graph,
+  download speed, dropped frames, stalls, server ffmpeg speed/fps/CPU/throttling).
+- **Dashboard** – live CPU (per core), RAM/swap, SoC temperature, clock, Pi
+  under-voltage/throttle flags, network & disk I/O, storage, process memory, and every
+  active stream with client buffer, bandwidth, stalls and ffmpeg state (kill button).
+  Playback analytics (watch time per day, methods, stall rate by method, top titles,
+  users, clients, conversion reasons, time of day), library breakdowns (codecs,
+  resolutions, HDR, containers, sizes) and full play history.
+- **Users** – multiple accounts, per-user watch state, admin roles, device sign-out,
+  login rate limiting, bcrypt passwords, HttpOnly cookies, and cross-origin
+  protection for browser mutations.
+- **Settings** – everything above is toggleable: methods, transcode limits, encoder,
+  preset/CRF/threads/nice, audio channels/bitrate, tone mapping, fragment & keyframe
+  sizes, remote bitrate cap, local networks, scanning, metadata providers. Per-device
+  playback prefs (quality, method, buffer ahead/behind, languages, subtitle style).
+
+- **Media cache & intros** – optional disk cache with size/free-space limits,
+  next-episode prefetch, and intro detection when FFmpeg supports Chromaprint.
+
+## Quick start
+
+Install Go **1.26.8 or newer**, FFmpeg and FFprobe. Run from the repository root:
+
+```sh
+go build -trimpath -o lex ./cmd/lex
+./lex -addr 127.0.0.1:8420 -data ./data
+```
+
+Open <http://localhost:8420>, create the first administrator, then add a library
+in Settings → Libraries. Library paths must be absolute and readable by Lex.
+New passwords must be 12–72 bytes. Use your own media files.
+
+The default address is loopback. To allow trusted LAN clients, explicitly use
+`-addr :8420` and configure a firewall. Complete setup before allowing other
+clients to connect. See [security and privacy](SECURITY.md) before remote access.
+
+| Flag | Environment | Default |
+| --- | --- | --- |
+| `-addr` | `LEX_ADDR` | `127.0.0.1:8420` |
+| `-data` | `LEX_DATA` | `./data` |
+| `-ffmpeg` | `LEX_FFMPEG` | `ffmpeg` |
+| `-ffprobe` | `LEX_FFPROBE` | `ffprobe` |
+| `-debug` | `LEX_DEBUG=1` | off |
+| `-version` | — | print version and exit |
+| `-healthcheck` | — | probe `/api/public/info` on `-addr` and exit |
+
+Flags override environment settings. FFmpeg/FFprobe must be on `PATH` or supplied
+as explicit paths. Debug logs can include private filenames and paths.
+
+## Docker Compose
+
+Edit `/path/to/media` in `docker-compose.yml` to your media directory:
+
+```sh
+docker compose up -d --build
+```
+
+The UI is available at <http://localhost:8420>. Compose publishes port 8420 only
+on loopback, mounts media read-only at `/media`, and stores application data in a
+named `lex-data` volume owned by UID 1000. In Lex, add `/media` as a library path.
+Back up the volume; `docker compose down -v` deletes it.
+
+To allow LAN access, explicitly change the port mapping to `8420:8420`. Docker
+uses bridge networking, so local Radarr is not available at `127.0.0.1` inside
+this container: configure a reachable Radarr URL and API key in Settings.
+Host network/disk statistics reflect the container's environment.
+
+The multi-stage Dockerfile builds a static Go binary and runs as UID 1000 in
+Debian trixie with FFmpeg. The container has a `lex -healthcheck` health check.
+On arm64, it uses the Raspberry Pi archive for hardware-capable FFmpeg by default.
+For other arm64 boards or generic software decoding:
+
+```sh
+docker build --build-arg RPI_FFMPEG=no -t lex:latest .
+```
+
+On a Raspberry Pi, review the hardware devices and group IDs in the override,
+then run:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.rpi.yml up -d --build
+```
+
+The override requires the listed devices to exist. Use the base configuration
+for software playback if your kernel does not expose them.
+
+## Linux service deployment
+
+`deploy/lex.service` is a binary systemd example; `deploy/lex.container` is a
+Podman Quadlet example. Both bind to loopback. Review paths, permissions, device
+availability, and the `video`/`render` group IDs for your host. Quadlet mounts
+`/srv/media` at `/media` and `/var/lib/lex` at `/data`. Binary mode runs as the
+`lex` system user and stores data in `/var/lib/lex`.
+
+The optional deployment script requires an **explicit SSH target with root
+privileges**, systemd on the destination, and Go (binary mode) or Docker
+(container mode) locally. Container mode also needs Podman and Quadlet support
+on the destination. It replaces the destination's existing Lex service; back up
+its data and adapt the templates before using it.
+
+```sh
+# Replace the example SSH target with your configured host.
+deploy/deploy.sh root@media-host arm64 container
+deploy/deploy.sh root@media-host amd64 binary
+```
+
+The helper `deploy/lex-hwcodec.service` attempts to load Raspberry Pi codec
+modules. Hardware configuration varies by board, kernel and distribution;
+consult the board's documentation before modifying boot settings. Lex tests
+available hardware at startup and can use hardware HEVC decoding and
+`h264_v4l2m2m` encoding when supported. Software fallback and transcode settings
+are available in the UI. Performance depends on codec, resolution and hardware.
+
+## Remote access and webhooks
+
+Use an HTTPS reverse proxy or a private VPN. Lex itself speaks HTTP. Keep direct
+access to the backend restricted. If you enable **Trust reverse-proxy headers**,
+set **Trusted proxy peers** to the proxy's exact addresses/CIDRs. The proxy must
+replace forwarding headers and preserve the public `Host` header. Proxy trust is
+disabled for new installations and its allowlist defaults to loopback.
+
+Clients outside **Local networks** receive the configured **Remote bitrate
+limit** during playback planning. All signed-in users can access all libraries;
+admin roles control server settings and account management.
+
+For Sonarr/Radarr, configure a POST webhook using the URL shown in Settings →
+Server. It carries a separate scan token; keep the URL private and redact query
+strings in proxy logs. GET webhooks are unsupported. API authentication accepts
+cookies, `Authorization: Bearer`, or `X-Lex-Token`; URL authentication tokens are
+unsupported.
+
+## Development and publication
+
+```sh
+go test -race ./...
+go vet ./...
+python3 scripts/check-publication.py
+go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --no-banner --log-opts="HEAD" .
+go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+```
+
+CI checks formatting, module consistency, race tests, Go vet, JavaScript/shell
+syntax, Compose configuration, publication privacy, secrets, vulnerabilities,
+Linux builds and the generic container build. The privacy script checks working
+files and branch/tag history for private deployment addresses, home paths,
+runtime/configuration files and personal commit attribution. It complements
+manual review and secret scanning; it cannot detect every form of PII.
+
+Before a first GitHub publication, use a fresh repository, run the checks, and
+push only the cleaned `main` branch. For example, after choosing a repository
+name and signing in to GitHub CLI:
+
+```sh
+gh repo create REPOSITORY_NAME --public --source=. --remote=origin --push
+```
+
+Do not use `git push --mirror`: application checkpoint refs are local metadata.
+The initial publication history uses neutral contributor attribution. Keep
+personal data, logs, media and credentials out of future commits, screenshots
+and issues. See [contributing](CONTRIBUTING.md) and the
+[publication audit](docs/PUBLISH_AUDIT.md) for validation and remaining limits.
+
+## AI disclosure
+
+This project has been developed and reviewed with generative AI assistance,
+including code, documentation, and publication-audit work. AI-assisted output
+can contain errors; the checks and audit are not an independent security
+certification. Maintainers remain responsible for reviewing and validating
+changes. Lex does not call an AI model service at runtime. A disclosure also
+appears in Settings → About.
+
+## License
+
+No license is granted at this time. The project is currently unlicensed.
+Third-party dependencies and bundled public Raspberry Pi archive verification
+keys retain their respective upstream terms.
+
+## Layout
+
+```text
+cmd/lex            flags, wiring, periodic scans
+internal/store     SQLite schema and queries
+internal/library   scanner, filename parser, ffprobe
+internal/meta      TMDB, TVmaze, Radarr, artwork and metadata
+internal/stream    playback decisions, ffmpeg jobs, sessions, subtitles
+internal/cache     optional media disk cache
+internal/intro     optional intro detection
+internal/sysstats  host/container statistics
+internal/api       HTTP API, auth, images, static files
+web/static         vanilla JavaScript UI (no build step)
+deploy             Linux deployment examples
+scripts            publication privacy checks
+```

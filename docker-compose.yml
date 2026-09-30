@@ -1,0 +1,22 @@
+# Generic Docker Compose setup. Media is mounted read-only; Lex only reads it.
+#   docker compose up -d --build
+# On a Raspberry Pi add the hardware override:
+#   docker compose -f docker-compose.yml -f docker-compose.rpi.yml up -d --build
+services:
+  lex:
+    build: .
+    image: lex:latest
+    container_name: lex
+    ports:
+      - "127.0.0.1:8420:8420"
+    user: "1000:1000"
+    environment:
+      - TZ=Etc/UTC
+      - LEX_DATA=/data
+    volumes:
+      - lex-data:/data
+      - /path/to/media:/media:ro
+    restart: unless-stopped
+
+volumes:
+  lex-data:

@@ -1,0 +1,17 @@
+# Raspberry Pi 4 hardware video: HEVC decoder (/dev/video19), H.264
+# encoder (/dev/video10-12), DMA heaps and vchiq (for vcgencmd stats).
+# Needs dtoverlay=vc4-kms-v3d, gpu_mem >= 128 and the codec modules loaded.
+services:
+  lex:
+    group_add:
+      - "44"   # video
+      - "109"  # example render GID; replace with: getent group render
+    devices:
+      - /dev/video10
+      - /dev/video11
+      - /dev/video12
+      - /dev/video19
+      - /dev/dri
+      - /dev/dma_heap
+      - /dev/vchiq
+      - /dev/vcio

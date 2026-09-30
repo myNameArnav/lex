@@ -1,0 +1,12 @@
+build/
+data/
+.git/
+*.db*
+deploy/
+lex
+.env
+.env.*
+*.log
+*.pem
+*.key
+.DS_Store

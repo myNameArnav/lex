@@ -1,0 +1,41 @@
+# Podman Quadlet unit for Lex on the Raspberry Pi (install to
+# /etc/containers/systemd/). Paths inside the container match the host so the
+# library media is available under /media. Adjust volumes and device groups
+# for the destination host before installing.
+[Unit]
+Description=Lex media server (container)
+After=network-online.target lex-hwcodec.service
+Wants=network-online.target lex-hwcodec.service
+
+[Container]
+Image=localhost/lex:latest
+ContainerName=lex
+Network=host
+User=1000:1000
+GroupAdd=44
+# Replace with the destination host's render group ID (getent group render).
+GroupAdd=109
+# "-" prefix: optional, so the container still starts (in software mode) if
+# the codec drivers didn't load.
+AddDevice=-/dev/video10
+AddDevice=-/dev/video11
+AddDevice=-/dev/video12
+AddDevice=-/dev/video19
+AddDevice=-/dev/dri
+AddDevice=-/dev/dma_heap
+AddDevice=-/dev/vchiq
+AddDevice=-/dev/vcio
+Volume=/srv/media:/media:ro
+Volume=/var/lib/lex:/data
+Environment=LEX_DATA=/data
+Environment=LEX_ADDR=127.0.0.1:8420
+Environment=TZ=Etc/UTC
+HealthCmd=lex -healthcheck
+HealthInterval=60s
+
+[Service]
+Restart=always
+TimeoutStartSec=180
+
+[Install]
+WantedBy=multi-user.target default.target

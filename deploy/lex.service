@@ -1,0 +1,25 @@
+[Unit]
+Description=Lex media server
+After=network-online.target local-fs.target lex-hwcodec.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lex
+Group=lex
+# video: vcgencmd (throttle stats) and V4L2 hardware codecs
+SupplementaryGroups=video render
+ExecStart=/opt/lex/lex -addr 127.0.0.1:8420 -data /var/lib/lex
+# Soft heap limit for the Go runtime; ffmpeg children are separate processes.
+Environment=GOMEMLIMIT=96MiB GOGC=50
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=/var/lib/lex
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
