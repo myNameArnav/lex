@@ -46,9 +46,7 @@ export function showShortcuts() {
   const body = h('div', { class: 'shortcuts' }, sections.map(([title, rows]) => h('section', null,
     h('h3', null, title),
     h('dl', null, rows.map(([ks, what, join]) => [h('dt', null, keys(ks, join)), h('dd', null, what)])))));
-  const m = modal({ title: 'Keyboard shortcuts', body, wide: true, onClose: () => { open = null; } });
-  const player = document.querySelector('.player');
-  if (player) player.appendChild(m.el); // keep it visible over (fullscreen) playback
+  const m = modal({ title: 'Keyboard shortcuts', body, wide: true, parent: document.querySelector('.player') || document.body, onClose: () => { open = null; } });
   open = m;
 }
 

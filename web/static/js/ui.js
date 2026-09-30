@@ -123,18 +123,42 @@ export function toast(msg, kind = '') {
   setTimeout(() => t.remove(), kind === 'error' ? 6000 : 3000);
 }
 
-export function modal({ title, body, actions = [], wide = false, onClose }) {
-  const bg = h('div', { class: 'modal-bg' });
-  const close = () => { bg.remove(); document.removeEventListener('keydown', onKey); onClose && onClose(); };
-  const onKey = (e) => { if (e.key === 'Escape') close(); };
-  document.addEventListener('keydown', onKey);
+// Keep keyboard focus in an overlay while allowing native controls to handle
+// their own keys. Hidden and disabled controls do not participate in the loop.
+export function containTab(e, root) {
+  if (e.key !== 'Tab') return;
+  const controls = [...root.querySelectorAll('a[href], button, input, select, textarea, [tabindex]')].filter((el) => el.tabIndex >= 0 && !el.disabled && el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden');
+  const first = controls[0], last = controls.at(-1);
+  const active = document.activeElement;
+  if (first && ((!e.shiftKey && (active === last || active === root)) || (e.shiftKey && (active === first || active === root)))) {
+    e.preventDefault();
+    (e.shiftKey ? last : first).focus();
+  }
+}
+
+let modalId = 0;
+export function modal({ title, body, actions = [], wide = false, onClose, parent = document.body }) {
+  const titleId = `dialog-title-${++modalId}`;
+  const bg = h('dialog', { class: 'modal-bg', 'aria-labelledby': titleId, 'aria-modal': 'true' });
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    bg.close();
+    bg.remove();
+    onClose && onClose();
+  };
+  bg.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+  bg.addEventListener('close', close);
+  bg.addEventListener('keydown', (e) => { if (e.target.closest('dialog') === bg) containTab(e, bg); });
   bg.addEventListener('mousedown', (e) => { if (e.target === bg) close(); });
   const foot = actions.length ? h('div', { class: 'modal-foot' }, actions) : null;
   bg.appendChild(h('div', { class: `modal ${wide ? 'wide' : ''}` },
-    h('div', { class: 'modal-head' }, h('h2', null, title), h('button', { class: 'btn icon ghost sm', onclick: close, html: icons.close })),
+    h('div', { class: 'modal-head' }, h('h2', { id: titleId }, title), h('button', { class: 'btn icon ghost sm', 'aria-label': 'Close dialog', onclick: close, html: icons.close })),
     h('div', { class: 'modal-body' }, body),
     foot));
-  document.body.appendChild(bg);
+  parent.appendChild(bg);
+  bg.showModal(); // Native focus containment, background inertness and focus restoration.
   return { close, el: bg };
 }
 
@@ -157,7 +181,7 @@ export function popupMenu(anchor, items) {
   const r = anchor.getBoundingClientRect();
   const menu = h('div', { class: 'menu popup', style: { position: 'fixed', top: `${r.bottom + 6}px`, right: `${Math.max(8, window.innerWidth - r.right)}px` } },
     items.map((it) => it === '-' ? h('hr') : it.note ? h('div', { class: 'menu-note' }, it.note)
-      : h('button', { onclick: () => { menu.remove(); it.onClick(); } }, it.icon ? h('span', { html: icons[it.icon] }) : null, it.label)));
+      : h('button', { onclick: () => { menu.remove(); anchor.focus(); it.onClick(); } }, it.icon ? h('span', { html: icons[it.icon] }) : null, it.label)));
   document.body.appendChild(menu);
   const off = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('mousedown', off, true); } };
   setTimeout(() => document.addEventListener('mousedown', off, true));
@@ -174,9 +198,9 @@ export function lazyImg(src, alt = '', onFail) {
   return img;
 }
 
-export function toggle(checked, onchange) {
-  const input = h('input', { type: 'checkbox', checked, onchange: (e) => onchange && onchange(e.target.checked) });
-  return h('label', { class: 'switch' }, input, h('i'));
+export function toggle(checked, onchange, label) {
+  const input = h('input', { type: 'checkbox', checked, 'aria-label': label, onchange: (e) => onchange && onchange(e.target.checked) });
+  return h('span', { class: 'switch' }, input, h('i'));
 }
 
 // ---------- icons (inline SVG, stroke-based) ----------
