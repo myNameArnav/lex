@@ -29,6 +29,8 @@ export class MseEngine {
     this.bandwidth = 0; // bits/s while actually downloading
     this.restarts = -1;
     this.retries = 0;
+    this.stalls = 0; // consecutive resumes that added nothing
+    this.resumeAfter = 0;
     this.streamFrom = 0;
     this.fetching = false;
     this.ended = false;
@@ -179,6 +181,7 @@ export class MseEngine {
     this.fetching = true;
     this.lastData = performance.now();
     this.streamFrom = t;
+    if (!keep) { this.stalls = 0; this.resumeAfter = 0; }
     await this.whenIdle();
     if (gen !== this.gen) return;
     try { if (this.ms.readyState === 'open') this.sb.abort(); } catch {}
@@ -199,7 +202,6 @@ export class MseEngine {
       if (gen === this.gen) { this.fetching = false; this.opts.onError(msg, res.status); }
       return;
     }
-    this.retries = 0;
     const reader = res.body.getReader();
     let pending = [], pendingBytes = 0, lastFlush = performance.now();
     const flush = async () => {
@@ -208,7 +210,11 @@ export class MseEngine {
       let off = 0;
       for (const c of pending) { buf.set(c, off); off += c.byteLength; }
       pending = []; pendingBytes = 0; lastFlush = performance.now();
-      return this.append(buf, gen);
+      const ok = await this.append(buf, gen);
+      // Only media that actually arrived counts as a recovered connection;
+      // a 200 that dies before any data must keep counting toward the cap.
+      if (ok) this.retries = 0;
+      return ok;
     };
     try {
       while (gen === this.gen) {
@@ -256,6 +262,7 @@ export class MseEngine {
       if (gen === this.gen && this.fetching) {
         this.fetching = false;
         this.ended = true;
+        this.stopped(gen);
       }
     }
   }
@@ -280,19 +287,43 @@ export class MseEngine {
     this.fetching = false;
     this.ended = true;
     const end = this.bufferedEnd();
-    if (this.duration && end >= this.duration - 2) {
-      this.eos = true;
-      this.whenIdle().then(() => {
-        if (gen !== this.gen) return;
-        try { if (this.ms.readyState === 'open') this.ms.endOfStream(); } catch {}
-      });
-    }
+    if (this.duration && end >= this.duration - 2) this.finish(gen);
     // Otherwise the stream stopped early; tick() resumes it when needed.
+    else this.stopped(gen);
+  }
+
+  // A stream stopped before the end. If it added nothing past where it
+  // started (a truncated or still-downloading file whose probed duration is
+  // too long, ffmpeg failing at a damaged spot), back off before tick()
+  // resumes it, and after a few such attempts treat what's buffered as the
+  // whole file so the video still fires `ended`.
+  stopped(gen) {
+    if (this.producingEnd() > this.streamFrom + 1) {
+      this.stalls = 0;
+      this.resumeAfter = 0;
+      return;
+    }
+    this.stalls++;
+    if (this.stalls >= 3) {
+      if (this.ranges().length) this.finish(gen);
+      else { this.resumeAfter = Infinity; this.opts.onError('The stream ended without any playable media.', 0); }
+      return;
+    }
+    this.resumeAfter = performance.now() + 1000 * 2 ** this.stalls;
+  }
+
+  finish(gen) {
+    this.eos = true;
+    this.whenIdle().then(() => {
+      if (gen !== this.gen) return;
+      try { if (this.ms.readyState === 'open') this.ms.endOfStream(); } catch {}
+    });
   }
 
   networkError(gen, e) {
+    // The retry scheduled below owns the resume; leaving `ended` unset keeps
+    // tick() from racing it and skipping the backoff.
     this.fetching = false;
-    this.ended = true;
     this.retries++;
     if (this.retries > 6) {
       this.opts.onError('Lost connection to the server while streaming.', 0);
@@ -324,8 +355,10 @@ export class MseEngine {
       }
     }
     // Resume a stream that stopped before the end of the file (server
-    // closed it while we weren't reading, network hiccup, quota…).
-    if (this.ended && !this.eos && !this.fetching && this.ahead() < Math.min(20, this.target() / 2)) {
+    // closed it while we weren't reading, quota…), unless stopped() is
+    // backing off after a resume that added nothing.
+    if (this.ended && !this.eos && !this.fetching && performance.now() >= this.resumeAfter &&
+        this.ahead() < Math.min(20, this.target() / 2)) {
       this.load(this.bufferedEnd(), true);
     }
     // Watchdog: a connection that stays silent while we're starving (e.g. a
