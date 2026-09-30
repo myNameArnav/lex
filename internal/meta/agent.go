@@ -104,11 +104,24 @@ func (a *Agent) Run(ctx context.Context) {
 			a.mu.Unlock()
 			var ok bool
 			switch it.Kind {
-			case "movie":
-				ok, err = a.refreshMovie(ctx, it)
-			case "show":
-				ok, err = a.refreshShow(ctx, it)
-				doneShows[it.ID] = true
+			case "movie", "show":
+				// Re-read the item: the list is a snapshot, and a manual
+				// match or refresh may have handled it since.
+				var cur *store.Item
+				if cur, err = a.st.Item(it.ID); err != nil || cur.MetaStatus != store.MetaPending {
+					if errors.Is(err, store.ErrNotFound) {
+						err = nil
+					}
+					ok = err == nil
+					break
+				}
+				g := store.GuardOf(cur)
+				if it.Kind == "movie" {
+					ok, err = a.refreshMovie(ctx, cur, &g)
+				} else {
+					ok, err = a.refreshShow(ctx, cur, &g)
+					doneShows[it.ID] = true
+				}
 			case "season", "episode":
 				if doneShows[it.ShowID] {
 					a.bump(true)
@@ -118,9 +131,14 @@ func (a *Agent) Run(ctx context.Context) {
 				var show *store.Item
 				show, err = a.st.Item(it.ShowID)
 				if err == nil {
-					err = a.refreshChildren(ctx, show, true)
+					g := store.GuardOf(show)
+					err = a.refreshChildren(ctx, show, true, &g)
 					ok = err == nil
 				}
+			}
+			if errors.Is(err, errSuperseded) {
+				a.log.Infof("metadata %q: match changed while refreshing; keeping the newer one", it.Title)
+				ok, err = true, nil
 			}
 			if err != nil && !errors.Is(err, ErrNoMatch) {
 				a.log.Warnf("metadata %q: %v", it.Title, err)
@@ -255,9 +273,27 @@ func searchBest(ctx context.Context, fn searcher, title string, year int) (*Cand
 	return nil, ErrNoMatch
 }
 
+// errSuperseded means an item's match changed (e.g. a manual "Fix match")
+// while an automatic refresh was working on it; that refresh's result is
+// dropped.
+var errSuperseded = errors.New("match changed meanwhile")
+
+// save writes an item's metadata. g is nil for user-initiated refreshes; for
+// automatic ones it pins the match the refresh started from.
+func (a *Agent) save(it *store.Item, g *store.MatchGuard) error {
+	if g == nil {
+		return a.st.SaveMetadata(it)
+	}
+	ok, err := a.st.SaveMetadataIf(it, *g)
+	if err == nil && !ok {
+		err = errSuperseded
+	}
+	return err
+}
+
 // ---- movies ----
 
-func (a *Agent) refreshMovie(ctx context.Context, it *store.Item) (bool, error) {
+func (a *Agent) refreshMovie(ctx context.Context, it *store.Item, g *store.MatchGuard) (bool, error) {
 	cfg := a.st.Config()
 	files, _ := a.st.ItemFiles(it.ID)
 	var localPoster, localBackdrop string
@@ -315,7 +351,7 @@ func (a *Agent) refreshMovie(ctx context.Context, it *store.Item) (bool, error) 
 	if res == nil {
 		it.Poster, it.Backdrop = localPoster, localBackdrop
 		it.MetaStatus = missingStatus(err, localPoster)
-		if e := a.st.SaveMetadata(it); e != nil {
+		if e := a.save(it, g); e != nil {
 			return false, e
 		}
 		if err == nil {
@@ -330,7 +366,7 @@ func (a *Agent) refreshMovie(ctx context.Context, it *store.Item) (bool, error) 
 	if localBackdrop != "" {
 		it.Backdrop = localBackdrop
 	}
-	return true, a.st.SaveMetadata(it)
+	return true, a.save(it, g)
 }
 
 // missingStatus keeps items pending after transient (network) failures so
@@ -400,7 +436,7 @@ type showSource interface {
 	Season(ctx context.Context, id string, season int) (*SeasonMeta, error)
 }
 
-func (a *Agent) refreshShow(ctx context.Context, it *store.Item) (bool, error) {
+func (a *Agent) refreshShow(ctx context.Context, it *store.Item, g *store.MatchGuard) (bool, error) {
 	cfg := a.st.Config()
 	title, year := it.Hint.Title, it.Hint.Year
 	if title == "" {
@@ -459,8 +495,10 @@ func (a *Agent) refreshShow(ctx context.Context, it *store.Item) (bool, error) {
 	if res == nil {
 		it.Poster, it.Backdrop = localPoster, localBackdrop
 		it.MetaStatus = missingStatus(err, localPoster)
-		a.st.SaveMetadata(it)
-		a.refreshChildren(ctx, it, false)
+		if e := a.save(it, g); e != nil {
+			return false, e
+		}
+		a.refreshChildren(ctx, it, false, childGuard(it, g))
 		if err == nil {
 			err = ErrNoMatch
 		}
@@ -473,10 +511,20 @@ func (a *Agent) refreshShow(ctx context.Context, it *store.Item) (bool, error) {
 	if localBackdrop != "" {
 		it.Backdrop = localBackdrop
 	}
-	if err := a.st.SaveMetadata(it); err != nil {
+	if err := a.save(it, g); err != nil {
 		return false, err
 	}
-	return true, a.refreshChildren(ctx, it, false)
+	return true, a.refreshChildren(ctx, it, false, childGuard(it, g))
+}
+
+// childGuard is the guard for a show's children once the show itself was
+// saved: its (possibly new) match must still stand when they are written.
+func childGuard(show *store.Item, g *store.MatchGuard) *store.MatchGuard {
+	if g == nil {
+		return nil
+	}
+	cg := store.GuardOf(show)
+	return &cg
 }
 
 func (a *Agent) showSource(show *store.Item) (showSource, string) {
@@ -495,7 +543,7 @@ func (a *Agent) showSource(show *store.Item) (showSource, string) {
 }
 
 // refreshChildren fills season and episode metadata from the show's provider.
-func (a *Agent) refreshChildren(ctx context.Context, show *store.Item, pendingOnly bool) error {
+func (a *Agent) refreshChildren(ctx context.Context, show *store.Item, pendingOnly bool, g *store.MatchGuard) error {
 	cfg := a.st.Config()
 	seasons, err := a.st.Children(show.ID, 0)
 	if err != nil {
@@ -510,6 +558,7 @@ func (a *Agent) refreshChildren(ctx context.Context, show *store.Item, pendingOn
 		bySeason[e.ParentID] = append(bySeason[e.ParentID], e)
 	}
 	src, id := a.showSource(show)
+	var fetchErr error
 	sort.Slice(seasons, func(i, j int) bool { return seasons[i].Season < seasons[j].Season })
 	for _, season := range seasons {
 		eps := bySeason[season.ID]
@@ -526,7 +575,11 @@ func (a *Agent) refreshChildren(ctx context.Context, show *store.Item, pendingOn
 		if src != nil && id != "" {
 			sm, err = src.Season(ctx, id, season.Season)
 			if err != nil && !errors.Is(err, ErrNoMatch) {
-				a.log.Warnf("metadata %s season %d: %v", show.Title, season.Season, err)
+				// A network error, not a miss: leave the season and its
+				// episodes as they are so pending ones are retried on the
+				// next run instead of being recorded as not found.
+				fetchErr = fmt.Errorf("season %d: %w", season.Season, err)
+				continue
 			}
 		}
 		poster := ""
@@ -549,7 +602,9 @@ func (a *Agent) refreshChildren(ctx context.Context, show *store.Item, pendingOn
 		if poster != "" {
 			season.Poster = poster
 		}
-		a.st.SaveMetadata(season)
+		if err := a.save(season, g); errors.Is(err, errSuperseded) {
+			return err
+		}
 		epMeta := map[int]EpisodeMeta{}
 		if sm != nil {
 			for _, em := range sm.Episodes {
@@ -582,10 +637,12 @@ func (a *Agent) refreshChildren(ctx context.Context, show *store.Item, pendingOn
 			if e.Title == "" {
 				e.Title = fmt.Sprintf("Episode %d", e.Episode)
 			}
-			a.st.SaveMetadata(e)
+			if err := a.save(e, g); errors.Is(err, errSuperseded) {
+				return err
+			}
 		}
 	}
-	return nil
+	return fetchErr
 }
 
 // ---- manual matching ----
@@ -646,15 +703,15 @@ func (a *Agent) Refresh(ctx context.Context, itemID int64) error {
 	a.tvmaze.ResetCache()
 	switch it.Kind {
 	case "movie":
-		_, err = a.refreshMovie(ctx, it)
+		_, err = a.refreshMovie(ctx, it, nil)
 	case "show":
-		_, err = a.refreshShow(ctx, it)
+		_, err = a.refreshShow(ctx, it, nil)
 	case "season", "episode":
 		show, e := a.st.Item(it.ShowID)
 		if e != nil {
 			return e
 		}
-		err = a.refreshChildren(ctx, show, false)
+		err = a.refreshChildren(ctx, show, false, nil)
 	}
 	if errors.Is(err, ErrNoMatch) {
 		return fmt.Errorf("no metadata match found for %q", it.Title)
