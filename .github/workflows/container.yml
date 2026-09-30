@@ -3,10 +3,12 @@ name: Container image
 #   v1.2.3 tag   -> :1.2.3, :1.2, :latest
 #   main         -> :edge
 #   every build  -> :sha-<commit>
+# Pull requests build both architectures without pushing.
 on:
   push:
     branches: [main]
     tags: ['v*']
+  pull_request:
   workflow_dispatch:
 permissions:
   contents: read
@@ -45,6 +47,7 @@ jobs:
           docker run --privileged --rm tonistiigi/binfmt:qemu-v9.2.2@sha256:1b804311fe87047a4c96d38b4b3ef6f62fca8cd125265917a9e3dc3c996c39e6 --install arm64
           docker buildx create --use --name lex-builder
       - name: Log in to ghcr.io
+        if: github.event_name != 'pull_request'
         env:
           TOKEN: ${{ github.token }}
         run: echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
@@ -55,8 +58,13 @@ jobs:
         run: |
           args=()
           for t in ${TAGS//,/ }; do args+=(-t "$t"); done
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            args+=(--output type=cacheonly)
+          else
+            args+=(--push)
+          fi
           docker buildx build --platform linux/amd64,linux/arm64 \
             --build-arg COMMIT="$COMMIT" \
             --label org.opencontainers.image.revision="$GITHUB_SHA" \
             --label org.opencontainers.image.version="$(cat internal/version/VERSION)" \
-            "${args[@]}" --push .
+            "${args[@]}" .
