@@ -20,6 +20,10 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags "-s -w -X lex/internal/version.Commit=$COMMIT" -o /out/lex ./cmd/lex
 
 FROM debian:trixie-slim
+LABEL org.opencontainers.image.source="https://github.com/myNameArnav/lex" \
+      org.opencontainers.image.title="Lex" \
+      org.opencontainers.image.description="Lightweight self-hosted media server for small Linux hosts such as the Raspberry Pi" \
+      org.opencontainers.image.licenses="MIT"
 ARG TARGETARCH
 ARG RPI_FFMPEG=yes
 # Raspberry Pi archive keys (from the raspberrypi-archive-keyring package;
