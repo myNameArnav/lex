@@ -1,7 +1,7 @@
 // Full-screen player: picks a playback plan from the server, plays it via
 // direct <video src> or the MSE engine, and renders controls + stats.
 
-import { h, icons, resLabel, fmtTime, fmtBitrate, fmtBytes, streamLabel, toast, clear, langName, channelName, modal } from './ui.js';
+import { h, icons, resLabel, fmtTime, fmtBitrate, fmtBytes, streamLabel, toast, clear, langName, channelName, modal, containTab } from './ui.js';
 import { api, img } from './api.js';
 import { detectCaps } from './caps.js';
 import { prefs, QUALITIES } from './prefs.js';
@@ -132,7 +132,7 @@ class Player {
     this.center = h('div', { class: 'p-center' });
     // Subtitles are drawn by us (not ::cue) so we control position and size.
     this.subsEl = h('div', { class: 'p-subs', 'aria-live': 'polite' });
-    this.seek = h('div', { class: 'seek' }, h('div', { class: 'rail' }), h('div', { class: 'knob' }));
+    this.seek = h('div', { class: 'seek', role: 'slider', tabindex: '0', 'aria-label': 'Playback position', 'aria-valuemin': '0', 'aria-valuemax': '0', 'aria-valuenow': '0', 'aria-valuetext': '0:00 of 0:00', 'aria-disabled': 'true' }, h('div', { class: 'rail' }), h('div', { class: 'knob' }));
     this.rail = this.seek.firstChild;
     this.knob = this.seek.lastChild;
     this.fill = h('div', { class: 'fill' });
@@ -140,15 +140,17 @@ class Player {
     this.timeEl = h('span', { class: 'p-time' }, '0:00 / 0:00');
     this.methodEl = h('span', { class: 'p-method hide-mobile', title: 'Playback method (click for stats)', onclick: (e) => { e.stopPropagation(); this.toggleStats(); } });
     this.playBtn = b('play', 'Play (k)', () => this.togglePlay(), 'big');
-    this.volBtn = b('volume', 'Mute (m)', () => { this.video.muted = !this.video.muted; });
-    this.volRange = h('input', { type: 'range', min: 0, max: 1, step: 0.05, value: prefs.get('volume'), oninput: (e) => { this.video.volume = +e.target.value; this.video.muted = false; }, onclick: (e) => e.stopPropagation() });
+    this.volBtn = b('volume', 'Mute (m)', () => this.toggleMute());
+    this.volRange = h('input', { type: 'range', 'aria-label': 'Volume', min: 0, max: 1, step: 0.05, value: prefs.get('volume'), oninput: (e) => { this.video.volume = +e.target.value; this.video.muted = false; }, onclick: (e) => e.stopPropagation() });
     this.nextBtn = b('next', 'Next episode (n)', () => this.playNext(), 'hidden');
     this.fsBtn = b('fullscreen', 'Fullscreen (f)', () => this.toggleFullscreen());
     this.ccBtn = b('cc', 'Subtitles & audio (c)', (e) => this.toggleMenu('tracks'));
     this.gearBtn = b('gear', 'Settings', () => this.toggleMenu('settings'));
     this.pipBtn = document.pictureInPictureEnabled ? b('pip', 'Picture in picture', () => this.togglePip(), 'hide-mobile') : null;
 
-    this.root = h('div', { class: 'player' },
+    this.titleEl.id = 'player-title';
+    this.restoreFocus = document.activeElement;
+    this.root = h('div', { class: 'player', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'player-title', tabindex: '-1' },
       this.video,
       h('div', { class: 'shade-top' }), h('div', { class: 'shade-bot' }),
       this.subsEl,
@@ -157,16 +159,19 @@ class Player {
       h('div', { class: 'p-bot' },
         this.seek,
         h('div', { class: 'p-controls' },
-          this.playBtn,
-          b('back10', `Back ${prefs.get('skipBack')}s (←)`, () => this.skip(-prefs.get('skipBack'))),
-          b('fwd30', `Forward ${prefs.get('skipFwd')}s (→)`, () => this.skip(prefs.get('skipFwd'))),
-          h('div', { class: 'vol' }, this.volBtn, this.volRange),
-          this.timeEl,
+          h('div', { class: 'p-transport' }, this.playBtn,
+            b('back10', `Back ${prefs.get('skipBack')}s (←)`, () => this.skip(-prefs.get('skipBack'))),
+            b('fwd30', `Forward ${prefs.get('skipFwd')}s (→)`, () => this.skip(prefs.get('skipFwd'))), this.timeEl),
           h('div', { class: 'spacer' }),
-          this.methodEl,
-          this.nextBtn, this.ccBtn, this.gearBtn, this.pipBtn, this.fsBtn)));
+          h('div', { class: 'p-tools' }, h('div', { class: 'vol' }, this.volBtn, this.volRange), this.methodEl,
+            this.nextBtn, this.ccBtn, this.gearBtn, this.pipBtn, this.fsBtn))));
     this.applySubStyle();
     document.body.appendChild(this.root);
+    this.background = document.getElementById('app');
+    this.backgroundWasInert = this.background?.inert;
+    if (this.background) this.background.inert = true;
+    // Focus the player itself, not a control: Space must pause, not press a button.
+    this.root.focus();
     document.body.style.overflow = 'hidden';
     this.video.volume = prefs.get('volume');
     this.video.muted = prefs.get('muted');
@@ -177,13 +182,17 @@ class Player {
     const v = this.video;
     this.onKey = (e) => this.key(e);
     document.addEventListener('keydown', this.onKey);
-    this.onFs = () => { this.fsBtn.innerHTML = document.fullscreenElement ? icons.exitfs : icons.fullscreen; };
+    this.onFs = () => {
+      const fullscreen = !!document.fullscreenElement;
+      this.fsBtn.innerHTML = fullscreen ? icons.exitfs : icons.fullscreen;
+      this.labelButton(this.fsBtn, fullscreen ? 'Exit fullscreen (f)' : 'Fullscreen (f)');
+    };
     document.addEventListener('fullscreenchange', this.onFs);
     this.onHide = () => this.sendStop(true);
     window.addEventListener('pagehide', this.onHide);
 
-    v.addEventListener('play', () => { this.playBtn.innerHTML = icons.pause; this.poke(); this.beat(); });
-    v.addEventListener('pause', () => { this.playBtn.innerHTML = icons.play; this.showUI(true); this.beat(); });
+    v.addEventListener('play', () => { this.playBtn.innerHTML = icons.pause; this.labelButton(this.playBtn, 'Pause (k)'); this.poke(); this.beat(); });
+    v.addEventListener('pause', () => { this.playBtn.innerHTML = icons.play; this.labelButton(this.playBtn, 'Play (k)'); this.showUI(true); this.beat(); });
     v.addEventListener('waiting', () => {
       this.showSpinner(true);
       if (this.started && !v.seeking) { this.stalls.count++; this.stalls.since = performance.now(); }
@@ -200,6 +209,7 @@ class Player {
     v.addEventListener('progress', () => this.renderTime());
     v.addEventListener('volumechange', () => {
       this.volBtn.innerHTML = v.muted || v.volume === 0 ? icons.mute : icons.volume;
+      this.labelButton(this.volBtn, v.muted || v.volume === 0 ? 'Unmute (m)' : 'Mute (m)');
       this.volRange.value = v.muted ? 0 : v.volume;
       prefs.set('volume', v.volume); prefs.set('muted', v.muted);
     });
@@ -208,6 +218,7 @@ class Player {
 
     // Controls visibility.
     this.root.addEventListener('mousemove', () => this.poke());
+    this.root.addEventListener('focusin', () => this.poke());
     this.root.addEventListener('click', (e) => {
       if (e.target === v || e.target === this.center) {
         if (this.menu) { this.closeMenu(); return; }
@@ -274,6 +285,16 @@ class Player {
     });
     this.seek.addEventListener('pointerleave', () => { if (!dragging && this.tip) { this.tip.remove(); this.tip = null; } });
     this.seek.addEventListener('click', (e) => e.stopPropagation());
+    this.seek.addEventListener('keydown', (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || !this.duration()) return;
+      const t = this.video.currentTime;
+      const targets = { ArrowLeft: t - prefs.get('skipBack'), ArrowDown: t - prefs.get('skipBack'), ArrowRight: t + prefs.get('skipFwd'), ArrowUp: t + prefs.get('skipFwd'), PageDown: t - 60, PageUp: t + 60, Home: 0, End: this.duration() - 0.5 };
+      if (!(e.key in targets)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.seekTo(targets[e.key]);
+      this.renderTime();
+    });
 
     this.hbTimer = setInterval(() => this.beat(), prefs.get('heartbeat') * 1000);
     this.uiTimer = setInterval(() => this.tickUI(), 1000);
@@ -659,11 +680,10 @@ class Player {
     langSel.onchange = () => { prefs.set('subLang', langSel.value); search(); };
     if (wasPlaying) this.video.pause();
     const m = modal({
-      title: 'Search subtitles', wide: true,
+      title: 'Search subtitles', wide: true, parent: this.root,
       body: [h('div', { class: 'row', style: { gap: '10px', alignItems: 'center' } }, h('span', { class: 'muted' }, 'Language'), langSel, h('div', { class: 'spacer' }), status), downloaded, list],
       onClose: () => { if (wasPlaying) this.video.play().catch(() => {}); },
     });
-    this.root.appendChild(m.el); // stay visible in fullscreen
     renderDownloaded();
     search();
   }
@@ -736,6 +756,17 @@ class Player {
   }
 
   // ---------- controls ----------
+  labelButton(button, label) {
+    button.title = label;
+    button.setAttribute('aria-label', label);
+  }
+
+  toggleMute() {
+    const v = this.video;
+    if (v.muted || v.volume === 0) { v.muted = false; if (v.volume === 0) v.volume = 1; }
+    else v.muted = true;
+  }
+
   togglePlay() {
     const v = this.video;
     if (v.paused) { v.play().catch(() => {}); this.flash('play'); }
@@ -765,7 +796,7 @@ class Player {
   poke() {
     this.showUI(true);
     clearTimeout(this.hideTimer);
-    this.hideTimer = setTimeout(() => { if (!this.video.paused && !this.menu) this.showUI(false); }, 3000);
+    this.hideTimer = setTimeout(() => { if (!this.video.paused && !this.menu && !this.root.querySelector(':focus-visible')) this.showUI(false); }, 3000);
   }
 
   showUI(on) { this.root.classList.toggle('hide-ui', !on); }
@@ -785,8 +816,18 @@ class Player {
   }
 
   key(e) {
-    if ((e.target.tagName === 'INPUT' && e.target.type !== 'range') || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
-    if (this.root.querySelector('.modal-bg')) return;
+    if (e.defaultPrevented || this.root.querySelector('.modal-bg')) return;
+    if (e.key === 'Tab') {
+      containTab(e, this.root);
+      this.poke();
+      return;
+    }
+    if (e.target.tagName === 'INPUT' && e.target.type === 'range') {
+      // A slider keeps its own keys; the rest stay shortcuts after it was dragged.
+      if (/^(Arrow|Home|End|Page)/.test(e.key)) return;
+    } else if ((/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) || e.target.isContentEditable) && e.key !== 'Escape') return;
+    // Only a button reached by keyboard takes Space/Enter; after a mouse click Space still pauses.
+    if (e.target.closest('button')?.matches(':focus-visible') && (e.key === ' ' || e.key === 'Enter')) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const v = this.video;
     const k = e.key.toLowerCase();
@@ -796,7 +837,7 @@ class Player {
       arrowright: () => this.skip(prefs.get('skipFwd')), l: () => this.skip(prefs.get('skipFwd')),
       arrowup: () => { v.volume = Math.min(1, v.volume + 0.05); v.muted = false; },
       arrowdown: () => { v.volume = Math.max(0, v.volume - 0.05); },
-      f: () => this.toggleFullscreen(), m: () => { v.muted = !v.muted; },
+      f: () => this.toggleFullscreen(), m: () => this.toggleMute(),
       i: () => this.toggleStats(), c: () => this.toggleMenu('tracks'),
       n: () => this.playNext(),
       g: () => this.nudgeSubs(-0.1), h: () => this.nudgeSubs(0.1),
@@ -854,6 +895,10 @@ class Player {
     this.fill.style.width = `${pct}%`;
     this.knob.style.left = `${pct}%`;
     this.timeEl.textContent = `${fmtTime(t)} / ${fmtTime(d)}`;
+    this.seek.setAttribute('aria-valuemax', String(Math.max(0, Math.floor(d || 0))));
+    this.seek.setAttribute('aria-valuenow', String(Math.max(0, Math.min(Math.floor(t || 0), Math.floor(d || 0)))));
+    this.seek.setAttribute('aria-valuetext', `${fmtTime(t)} of ${fmtTime(d)}`);
+    this.seek.setAttribute('aria-disabled', String(!d));
     // Buffered ranges (reuse nodes).
     const ranges = this.bufferedRanges();
     const bufs = [...this.rail.querySelectorAll('.buf')];
@@ -1220,6 +1265,8 @@ class Player {
     this.teardown();
     this.destroyASS();
     this.root.remove();
+    if (this.background?.isConnected) this.background.inert = this.backgroundWasInert;
+    if (this.restoreFocus?.isConnected) this.restoreFocus.focus();
     document.body.style.overflow = '';
     if (current === this) current = null;
     if (this.onClose) this.onClose();

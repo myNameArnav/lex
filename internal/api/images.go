@@ -127,6 +127,41 @@ func (s *Server) itemImage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	s.serveImage(w, r, p)
+}
+
+// castImage only accepts an index into stored metadata, never a client-supplied
+// URL. The existing artwork client enforces public addresses and download limits.
+func (s *Server) castImage(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeErr(w, 400, "bad id")
+		return
+	}
+	index, err := strconv.Atoi(r.PathValue("index"))
+	if err != nil || index < 0 {
+		writeErr(w, 400, "bad cast index")
+		return
+	}
+	it, err := s.St.Item(id)
+	if err != nil {
+		notFoundOr500(w, err)
+		return
+	}
+	if index >= len(it.Cast) || it.Cast[index].Image == "" {
+		http.Error(w, "no image", 404)
+		return
+	}
+	ref, err := s.Images.Fetch(r.Context(), it.Cast[index].Image)
+	if err != nil {
+		w.Header().Set("Cache-Control", "private, max-age=300")
+		http.Error(w, "no image", 404)
+		return
+	}
+	s.serveImage(w, r, s.Images.Path(ref))
+}
+
+func (s *Server) serveImage(w http.ResponseWriter, r *http.Request, p string) {
 	if wd := snapWidth(qInt(r, "w", 0)); wd > 0 {
 		if rp, err := s.resized(p, wd); err == nil {
 			p = rp

@@ -104,6 +104,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("GET /api/items/{id}", u(s.itemDetail))
 	mux.Handle("GET /api/items/{id}/children", u(s.itemChildren))
 	mux.Handle("GET /api/items/{id}/image/{kind}", u(s.itemImage))
+	mux.Handle("GET /api/items/{id}/cast/{index}/image", u(s.castImage))
 	mux.Handle("POST /api/items/{id}/played", u(s.setPlayed))
 	mux.Handle("POST /api/items/{id}/favorite", u(s.setFavorite))
 	mux.Handle("POST /api/playback/plan", u(s.plan))

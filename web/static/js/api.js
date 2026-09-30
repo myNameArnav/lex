@@ -34,3 +34,8 @@ export function img(item, kind = 'poster', w = 320) {
   if (!item) return '';
   return `/api/items/${item.id}/image/${kind}?w=${w}&v=${item.updatedAt || 0}`;
 }
+
+// Cast indices refer to the stored, unfiltered cast list; no remote URL is sent by the browser.
+export function castImg(item, index, w = 160) {
+  return `/api/items/${item.id}/cast/${index}/image?w=${w}&v=${item.updatedAt || 0}`;
+}

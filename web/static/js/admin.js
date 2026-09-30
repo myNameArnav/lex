@@ -54,8 +54,12 @@ function field(label, input, help) {
   return h('label', { class: 'field' }, h('span', null, label), input, help ? h('div', { class: 'help' }, help) : null);
 }
 
+let toggleId = 0;
 function toggleRow(label, help, checked, onchange) {
-  return h('div', { class: 'toggle-row' }, h('div', { class: 'lbl' }, h('b', null, label), help ? h('span', { class: 'help' }, help) : null), toggle(checked, onchange));
+  const control = toggle(checked, onchange, label);
+  const helpId = `toggle-help-${++toggleId}`;
+  if (help) control.firstChild.setAttribute('aria-describedby', helpId);
+  return h('label', { class: 'toggle-row' }, h('span', { class: 'lbl' }, h('b', null, label), help ? h('span', { class: 'help', id: helpId }, help) : null), control);
 }
 
 function select(value, options, onchange) {

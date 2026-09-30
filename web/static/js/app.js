@@ -1,5 +1,5 @@
 import { h, $, clear, icons, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrate, toast, modal, spinner, lazyImg, popupMenu, streamLabel, langName, channelName, confirmDialog } from './ui.js';
-import { api, img } from './api.js';
+import { api, img, castImg } from './api.js';
 import { openPlayer, isPlayerOpen } from './player.js';
 import { installShortcuts, showShortcuts, MOD } from './shortcuts.js';
 
@@ -38,27 +38,36 @@ async function boot() {
 
 function renderAuth(setup) {
   clear(app);
-  const name = h('input', { type: 'text', placeholder: 'Username', autocomplete: 'username', autofocus: true });
-  const pass = h('input', { type: 'password', placeholder: setup ? 'Password (12–72 bytes)' : 'Password', autocomplete: setup ? 'new-password' : 'current-password' });
-  const pass2 = setup ? h('input', { type: 'password', placeholder: 'Confirm password', autocomplete: 'new-password' }) : null;
-  const err = h('div', { class: 'err' });
+  const name = h('input', { id: 'auth-name', name: 'username', type: 'text', autocomplete: 'username', required: true, autofocus: true, 'aria-describedby': 'auth-error' });
+  const pass = h('input', { id: 'auth-password', name: 'password', type: 'password', autocomplete: setup ? 'new-password' : 'current-password', required: true, 'aria-describedby': setup ? 'auth-password-help auth-error' : 'auth-error' });
+  const pass2 = setup ? h('input', { id: 'auth-confirm', name: 'confirm-password', type: 'password', autocomplete: 'new-password', required: true, 'aria-describedby': 'auth-error' }) : null;
+  const err = h('div', { class: 'err', id: 'auth-error', role: 'alert', 'aria-atomic': 'true' });
+  const field = (label, input, help) => h('label', { class: 'field', for: input.id }, h('span', null, label), input, help ? h('div', { class: 'help', id: 'auth-password-help' }, help) : null);
+  const invalid = (inputs) => inputs.forEach((input) => input.setAttribute('aria-invalid', 'true'));
+  for (const input of [name, pass, pass2].filter(Boolean)) input.addEventListener('input', () => input.removeAttribute('aria-invalid'));
   const btn = h('button', { class: 'btn primary lg', type: 'submit' }, setup ? 'Create admin account' : 'Sign in');
   const form = h('form', { class: 'auth-card', onsubmit: async (e) => {
     e.preventDefault();
     err.textContent = '';
-    if (setup && pass.value !== pass2.value) { err.textContent = 'Passwords do not match'; return; }
+    [name, pass, pass2].filter(Boolean).forEach((input) => input.removeAttribute('aria-invalid'));
+    if (setup && pass.value !== pass2.value) { err.textContent = 'Passwords do not match'; invalid([pass, pass2]); pass2.focus(); return; }
     btn.disabled = true;
     try {
       const r = await api(setup ? '/api/setup' : '/api/auth/login', { method: 'POST', body: { name: name.value, password: pass.value } });
       state.me = r.user;
       await startApp();
       if (setup) location.hash = '#/settings/libraries';
-    } catch (ex) { err.textContent = ex.message; btn.disabled = false; }
+    } catch (ex) {
+      err.textContent = ex.message;
+      if (ex.status === 401) invalid([name, pass]);
+      btn.disabled = false;
+      pass.focus();
+    }
   } },
   h('div', { class: 'logo' }, h('b', null, 'L'), h('span', null, state.serverName)),
   h('h1', null, setup ? 'Welcome! Create the admin account' : 'Sign in'),
   setup ? h('p', { class: 'muted', style: { margin: 0 } }, 'This account manages libraries, users and settings.') : null,
-  name, pass, pass2, err, btn);
+  field('Username', name), field('Password', pass, setup ? 'Use 12–72 bytes.' : null), pass2 ? field('Confirm password', pass2) : null, err, btn);
   app.appendChild(h('div', { class: 'auth' }, form));
   name.focus();
 }
@@ -80,7 +89,7 @@ let navEl, searchInput;
 function renderShell() {
   clear(app);
   navEl = h('nav', { class: 'nav desktop' });
-  searchInput = h('input', { type: 'search', placeholder: 'Search movies & shows', 'aria-keyshortcuts': 'Control+K Meta+K /', oninput: debounce((e) => {
+  searchInput = h('input', { type: 'search', placeholder: 'Search movies & shows', 'aria-label': 'Search movies & shows', 'aria-keyshortcuts': 'Control+K Meta+K /', oninput: debounce((e) => {
     const q = e.target.value.trim();
     if (q) location.hash = `#/search?q=${encodeURIComponent(q)}`;
   }, 300), onkeydown: (e) => {
@@ -167,8 +176,10 @@ export function play(itemId, start = null) {
 // Re-render the current view quietly (progress bars etc.) after playback.
 async function refreshSoft() {
   const y = window.scrollY;
+  const focusKey = document.activeElement?.dataset.focusKey;
   await route();
   window.scrollTo(0, y);
+  if (focusKey) [...mainEl.querySelectorAll('[data-focus-key]')].find((el) => el.dataset.focusKey === focusKey)?.focus({ preventScroll: true });
 }
 
 // ---------- cards ----------
@@ -260,22 +271,26 @@ async function libraryView(ctx, id) {
     location.hash = `#/library/${id}${p.toString() ? '?' + p : ''}`;
   };
   const genres = await api(`/api/genres?library=${id}`).catch(() => []);
-  const sel = (value, options, on) => h('select', { onchange: (e) => on(e.target.value) }, options.map(([v, l]) => h('option', { value: v, selected: v === value }, l)));
+  const sel = (label, value, options, on) => h('select', { 'aria-label': label, onchange: (e) => on(e.target.value) }, options.map(([v, l]) => h('option', { value: v, selected: v === value }, l)));
   const count = h('span', { class: 'count' });
   const grid = h('div', { class: 'grid' });
   const sentinel = h('div', { style: { height: '40px' } });
+  const random = h('button', { class: 'btn sm', title: 'Play a random title', disabled: true, onclick: async () => {
+    const p = new URLSearchParams({ library: id, sort: 'random', limit: 1 });
+    if (opts.filter) p.set('filter', opts.filter);
+    if (opts.genre) p.set('genre', opts.genre);
+    const r = await api(`/api/items?${p}`);
+    if (r.items[0]) location.hash = `#/item/${r.items[0].id}`;
+  } }, h('span', { html: icons.shuffle }), 'Random');
   const page = h('div', { class: 'page' },
     h('div', { class: 'row' }, h('h1', { class: 'page-title' }, lib.name), count),
     h('div', { class: 'toolbar' },
-      sel(opts.sort, [['title', 'Title'], ['year', 'Year'], ['added', 'Date added'], ['latest', 'Latest episode/added'], ['rating', 'Rating'], ['played', 'Recently watched'], ['random', 'Random']], (v) => setQ({ sort: v, desc: ['added', 'latest', 'rating', 'played', 'year'].includes(v) })),
+      sel('Sort titles', opts.sort, [['title', 'Title'], ['year', 'Year'], ['added', 'Date added'], ['latest', 'Latest episode/added'], ['rating', 'Rating'], ['played', 'Recently watched'], ['random', 'Random']], (v) => setQ({ sort: v, desc: ['added', 'latest', 'rating', 'played', 'year'].includes(v) })),
       h('button', { class: 'btn sm', title: 'Reverse order', onclick: () => setQ({ desc: !opts.desc }) }, opts.desc ? '↓ Desc' : '↑ Asc'),
-      sel(opts.filter, [['', 'All'], ['unplayed', 'Unwatched'], ['played', 'Watched'], ['inprogress', 'In progress'], ['favorite', 'Favorites']], (v) => setQ({ filter: v })),
-      genres.length ? sel(opts.genre, [['', 'All genres'], ...genres.map((g) => [g, g])], (v) => setQ({ genre: v })) : null,
+      sel('Filter titles', opts.filter, [['', 'All'], ['unplayed', 'Unwatched'], ['played', 'Watched'], ['inprogress', 'In progress'], ['favorite', 'Favorites']], (v) => setQ({ filter: v })),
+      genres.length ? sel('Filter by genre', opts.genre, [['', 'All genres'], ...genres.map((g) => [g, g])], (v) => setQ({ genre: v })) : null,
       h('div', { class: 'spacer' }),
-      h('button', { class: 'btn sm', title: 'Play a random title', onclick: async () => {
-        const r = await api(`/api/items?library=${id}&sort=random&limit=1`);
-        if (r.items[0]) location.hash = `#/item/${r.items[0].id}`;
-      } }, h('span', { html: icons.shuffle }), 'Random')),
+      random),
     grid, sentinel);
   let offset = 0, total = Infinity, loading = false;
   const PAGE = 120;
@@ -290,11 +305,15 @@ async function libraryView(ctx, id) {
       const r = await api(`/api/items?${p}`);
       if (!ctx.isCurrent()) return;
       total = r.total;
+      random.disabled = total === 0;
       count.textContent = `${total} item${total === 1 ? '' : 's'}`;
       r.items.forEach((it) => grid.appendChild(posterCard(it)));
       offset += r.items.length;
       if (!r.items.length) total = offset;
-      if (total === 0) grid.replaceWith(h('div', { class: 'empty' }, h('h2', null, 'Nothing here'), h('p', null, opts.filter || opts.genre ? 'Try clearing the filters.' : 'The library is empty or still scanning.')));
+      if (total === 0) grid.replaceWith(h('div', { class: 'empty' },
+        h('h2', null, opts.filter === 'favorite' && !opts.genre ? 'No favorites yet' : 'Nothing here'),
+        h('p', null, opts.filter === 'favorite' && !opts.genre ? 'Open a title and select the heart to add it to your favorites.' : opts.filter || opts.genre ? 'No titles match these filters.' : 'The library is empty or still scanning.'),
+        opts.filter || opts.genre ? h('button', { class: 'btn', onclick: () => setQ({ filter: '', genre: '' }) }, 'Clear filters') : null));
     } finally {
       loading = false;
     }
@@ -363,10 +382,10 @@ function playButtons(it, playId = it.id, label = 'Play') {
   const ud = it.userData || {};
   const btns = [];
   if (ud.position > 0 && !ud.played) {
-    btns.push(h('button', { class: 'btn primary lg', onclick: () => play(playId, ud.position) }, h('span', { html: icons.play }), `Resume from ${fmtTime(ud.position)}`));
-    btns.push(h('button', { class: 'btn lg', onclick: () => play(playId, 0) }, 'Play from start'));
+    btns.push(h('button', { class: 'btn primary lg', dataset: { focusKey: `play-${playId}` }, onclick: () => play(playId, ud.position) }, h('span', { html: icons.play }), `Resume from ${fmtTime(ud.position)}`));
+    btns.push(h('button', { class: 'btn lg', dataset: { focusKey: `restart-${playId}` }, onclick: () => play(playId, 0) }, 'Play from start'));
   } else {
-    btns.push(h('button', { class: 'btn primary lg', onclick: () => play(playId, 0) }, h('span', { html: icons.play }), label));
+    btns.push(h('button', { class: 'btn primary lg', dataset: { focusKey: `play-${playId}` }, onclick: () => play(playId, 0) }, h('span', { html: icons.play }), label));
   }
   return btns;
 }
@@ -432,13 +451,16 @@ function moreButton(it, d) {
   } });
 }
 
-function castRow(it) {
-  if (!it.cast?.length) return null;
+function castRow(it, excludeDirectors = false) {
+  const people = (it.cast || []).map((person, index) => ({ person, index })).filter(({ person }) => !excludeDirectors || person.role !== 'Director');
+  if (!people.length) return null;
   return h('section', { class: 'shelf' },
     h('div', { class: 'shelf-head' }, h('h2', { class: 'section-title' }, 'Cast & crew')),
-    h('div', { class: 'people' }, it.cast.map((p) => h('div', { class: 'person' },
-      h('div', { class: 'ph' }, p.image ? lazyImg(p.image, p.name) : p.name.slice(0, 1)),
-      h('div', { class: 'n' }, p.name), h('div', { class: 'r' }, p.role || '')))));
+    h('div', { class: 'people' }, people.map(({ person: p, index }) => {
+      const portrait = h('div', { class: 'ph' }, p.name.slice(0, 1));
+      if (p.image) portrait.replaceChildren(lazyImg(castImg(it, index), p.name, () => { portrait.textContent = p.name.slice(0, 1); }));
+      return h('div', { class: 'person' }, portrait, h('div', { class: 'n' }, p.name), h('div', { class: 'r' }, p.role || ''));
+    })));
 }
 
 function mediaView(ctx, d) {
@@ -458,14 +480,14 @@ function mediaView(ctx, d) {
     d.segments?.find((s) => s.kind === 'intro') ? h('span', { class: 'pill', title: 'Intro detected' }, 'Intro ✓') : null,
   ]));
   if (it.genres?.length) info.push(h('div', { class: 'genres' }, it.genres.map((g) => h('span', null, g))));
-  if (it.tagline) info.push(h('div', { class: 'tagline' }, it.tagline));
-  info.push(h('p', { class: 'overview' }, it.overview || (it.metaStatus === 0 ? 'Fetching details…' : 'No description available.')));
   if (!file) info.push(h('p', { class: 'bad' }, 'No media file found for this item.'));
   info.push(h('div', { class: 'actions' },
     file ? playButtons(it) : null,
     watchedButton(it, () => route()),
     it.kind === 'movie' ? favButton(it) : null,
     moreButton(it, d)));
+  if (it.tagline) info.push(h('div', { class: 'tagline' }, it.tagline));
+  info.push(h('p', { class: 'overview' }, it.overview || (it.metaStatus === 0 ? 'Fetching details…' : 'No description available.')));
   if (file) info.push(fileSummary(file));
   if (isEp) {
     info.push(h('div', { class: 'row', style: { marginTop: '18px' } },
@@ -475,7 +497,7 @@ function mediaView(ctx, d) {
   const director = (it.cast || []).filter((p) => p.role === 'Director');
   if (director.length) info.push(h('p', { class: 'muted small' }, `Directed by ${director.map((p) => p.name).join(', ')}`));
   if (it.studios?.length) info.push(h('p', { class: 'dim small', style: { marginTop: '4px' } }, it.studios.slice(0, 4).join(' · ')));
-  return h('div', null, hero(it, poster, info, isEp && d.show ? d.show : it), castRow({ cast: (it.cast || []).filter((p) => p.role !== 'Director') }));
+  return h('div', null, hero(it, poster, info, isEp && d.show ? d.show : it), castRow(it, true));
 }
 
 function fileSummary(f) {
@@ -559,43 +581,55 @@ async function showView(ctx, d) {
   const info = [h('h1', null, it.title),
     facts(it, [h('span', null, `${seasons.filter((s) => s.season > 0).length} season${seasons.length === 1 ? '' : 's'}`), it.studios?.length ? h('span', null, it.studios[0]) : null])];
   if (it.genres?.length) info.push(h('div', { class: 'genres' }, it.genres.map((g) => h('span', null, g))));
-  info.push(h('p', { class: 'overview' }, it.overview || (it.metaStatus === 0 ? 'Fetching details…' : 'No description available.')));
   const btns = [];
   if (next) {
     const lbl = `${next.userData?.position > 0 ? 'Resume' : 'Play'} S${next.season} E${next.episode}`;
-    btns.push(h('button', { class: 'btn primary lg', onclick: () => play(next.id) }, h('span', { html: icons.play }), lbl));
+    btns.push(h('button', { class: 'btn primary lg', dataset: { focusKey: `show-play-${it.id}` }, onclick: () => play(next.id) }, h('span', { html: icons.play }), lbl));
   }
   btns.push(watchedButton(it, () => route()), favButton(it), moreButton(it, d));
   info.push(h('div', { class: 'actions' }, btns));
   if (next) info.push(h('p', { class: 'dim small' }, `Up next: ${next.title}`));
+  info.push(h('p', { class: 'overview' }, it.overview || (it.metaStatus === 0 ? 'Fetching details…' : 'No description available.')));
 
-  const tabs = h('div', { class: 'tabs' });
-  const list = h('div', { class: 'episodes' });
+  const listId = `episodes-${it.id}`;
+  const tabs = h('div', { class: 'tabs', role: 'group', 'aria-label': 'Seasons' });
+  const list = h('div', { class: 'episodes', id: listId, role: 'region', 'aria-label': 'Episodes' });
   const wanted = +ctx.query.get('season');
   let active = seasons.find((s) => s.id === wanted) || (next && seasons.find((s) => s.id === next.parentId)) || seasons.find((s) => s.season > 0) || seasons[0];
   const showSeason = async (s) => {
     active = s;
-    for (const b of tabs.children) b.classList.toggle('active', +b.dataset.id === s.id);
+    for (const b of tabs.children) {
+      const selected = +b.dataset.id === s.id;
+      b.classList.toggle('active', selected);
+      b.setAttribute('aria-pressed', String(selected));
+    }
     clear(list).appendChild(spinner());
-    const eps = await api(`/api/items/${s.id}/children`);
-    if (active !== s) return;
-    clear(list).append(...eps.map((e) => episodeRow(e)), ...(s.overview ? [h('p', { class: 'muted', style: { maxWidth: '760px' } }, s.overview)] : []));
-    history.replaceState(null, '', `#/item/${it.id}?season=${s.id}`);
+    list.setAttribute('aria-busy', 'true');
+    try {
+      const eps = await api(`/api/items/${s.id}/children`);
+      if (active !== s || !ctx.isCurrent()) return;
+      clear(list).append(...eps.map((e) => episodeRow(e)), ...(s.overview ? [h('p', { class: 'muted', style: { maxWidth: '760px' } }, s.overview)] : []));
+      history.replaceState(null, '', `#/item/${it.id}?season=${s.id}`);
+    } catch (e) {
+      if (active === s && ctx.isCurrent()) clear(list).append(h('p', { class: 'bad', role: 'alert' }, e.message), h('button', { class: 'btn', onclick: () => showSeason(s) }, 'Retry'));
+    } finally {
+      if (active === s) list.setAttribute('aria-busy', 'false');
+    }
   };
   for (const s of seasons) {
-    tabs.appendChild(h('button', { dataset: { id: s.id }, onclick: () => showSeason(s) }, s.title, s.unplayedCount ? h('span', { class: 'dim', style: { marginLeft: '6px', fontWeight: 600 } }, s.unplayedCount) : null));
+    tabs.appendChild(h('button', { dataset: { id: s.id }, 'aria-controls': listId, 'aria-pressed': 'false', 'aria-label': `${s.title}${s.unplayedCount ? `, ${s.unplayedCount} unwatched episode${s.unplayedCount === 1 ? '' : 's'}` : ''}`, onclick: () => showSeason(s) }, s.title, s.unplayedCount ? h('span', { class: 'dim', 'aria-hidden': 'true', style: { marginLeft: '6px', fontWeight: 600 } }, s.unplayedCount) : null));
   }
   const page = h('div', null, hero(it, poster, info),
     h('div', { class: 'page', style: { paddingTop: 0 } }, tabs, list),
     castRow(it));
-  if (active) showSeason(active);
+  if (active) await showSeason(active);
   return page;
 }
 
 function episodeRow(e) {
   const ud = e.userData || {};
   let busy = false;
-  const art = h('div', { class: 'art' }, lazyImg(img(e, 'thumb', 480), e.title), h('div', { class: 'ep-play', html: icons.play }));
+  const art = h('button', { class: 'art', type: 'button', dataset: { focusKey: `episode-play-${e.id}` }, 'aria-label': `${ud.position > 0 && !ud.played ? 'Resume' : 'Play'} episode ${e.episode}: ${e.title}`, onclick: () => play(e.id) }, lazyImg(img(e, 'thumb', 480), ''), h('span', { class: 'ep-play', 'aria-hidden': 'true', html: icons.play }));
   if (ud.position > 0 && e.duration) art.appendChild(h('div', { class: 'progress' }, h('i', { style: { width: `${(ud.position / e.duration) * 100}%` } })));
   const wbtn = h('button', { class: `watched-btn ${ud.played ? 'on' : ''}`, title: ud.played ? 'Mark unwatched' : 'Mark watched', html: icons.check, onclick: async (ev) => {
     ev.stopPropagation();
@@ -617,12 +651,9 @@ function episodeRow(e) {
       busy = false;
     }
   } });
-  return h('div', { class: 'episode', onclick: (ev) => {
-    if (ev.target.closest('.art')) play(e.id);
-    else location.hash = `#/item/${e.id}`;
-  } },
+  return h('div', { class: 'episode' },
   art,
-  h('div', null,
+  h('a', { class: 'episode-info', href: `#/item/${e.id}`, 'aria-label': `Episode ${e.episode}: ${e.title}` },
     h('h3', null, h('span', { class: 'num' }, `${e.episode}${e.episodeEnd ? '–' + e.episodeEnd : ''}.`), e.title),
     h('div', { class: 'dim small' }, [e.premiere ? new Date(e.premiere).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '', e.duration ? fmtDuration(e.duration) : '', ud.position > 0 && !ud.played ? `${fmtDuration(e.duration - ud.position)} left` : ''].filter(Boolean).join(' · ')),
     e.overview ? h('p', null, e.overview) : null),
