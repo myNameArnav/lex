@@ -24,6 +24,9 @@ const userAgent = "Lex v1.0"
 
 var ErrNoKey = errors.New("add an OpenSubtitles API key in Settings → Metadata to search for subtitles")
 
+// Client talks to the OpenSubtitles API. It's safe for concurrent use as
+// long as Key, User and Pass aren't changed after the first request: make a
+// new Client (see New) when the credentials change.
 type Client struct {
 	Key, User, Pass string
 
@@ -32,6 +35,11 @@ type Client struct {
 	tokenBase string
 	tokenFor  string
 	tokenAt   time.Time
+}
+
+// New returns a client for the given credentials.
+func New(key, user, pass string) *Client {
+	return &Client{Key: key, User: user, Pass: pass}
 }
 
 var http_ = &http.Client{Timeout: 30 * time.Second}

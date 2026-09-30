@@ -180,7 +180,8 @@ CREATE TABLE IF NOT EXISTS downloaded_subs (
 	path TEXT NOT NULL,
 	provider TEXT NOT NULL DEFAULT '',
 	hearing_impaired INTEGER NOT NULL DEFAULT 0,
-	created_at INTEGER NOT NULL
+	created_at INTEGER NOT NULL,
+	user_id INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS intro_scans (
@@ -216,6 +217,10 @@ func Open(dataDir string) (*Store, error) {
 	db.SetMaxIdleConns(2)
 	db.SetConnMaxIdleTime(5 * time.Minute)
 	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+	if err := migrateDownloadedSubs(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
