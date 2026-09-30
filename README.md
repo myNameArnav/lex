@@ -9,12 +9,33 @@ in the binary. macOS can be used for local development.
 
 ## Screenshots
 
-| | |
-|---|---|
-| ![Movie details](docs/screenshots/movie.webp) **Details** – artwork, overview, file and stream info | ![Player with stats for nerds](docs/screenshots/player-stats.webp) **Stats for nerds** – why a file is remuxed, buffer health, server ffmpeg state |
-| ![Subtitles and audio menu](docs/screenshots/player-subtitles.webp) **Subtitles & audio** – track choice, timing offset, size, position | ![Player settings menu](docs/screenshots/player-settings.webp) **Player settings** – quality, playback method, speed |
-| ![Seek-bar preview](docs/screenshots/seek-preview.webp) **Seek previews** – thumbnails while hovering the seek bar | ![Dashboard](docs/screenshots/dashboard.webp) **Dashboard** – host load, live streams and what each one costs |
-| ![Transcoding settings](docs/screenshots/settings.webp) **Settings** – playback methods, encoder and limits | |
+**Details** – artwork, overview, and the file's video, audio and subtitle tracks.
+
+![Movie details](docs/screenshots/movie.webp)
+
+**Player** – subtitles & audio menu with timing offset, size and position (left);
+player settings for quality, playback method and speed (right).
+
+<p>
+  <img src="docs/screenshots/player-subtitles.webp" width="49%" alt="Subtitles and audio menu">
+  <img src="docs/screenshots/player-settings.webp" width="49%" alt="Player settings menu">
+</p>
+
+**Stats for nerds** – why a file is remuxed, buffer health and the server's
+ffmpeg state (left); seek-bar thumbnails (right).
+
+<p>
+  <img src="docs/screenshots/player-stats.webp" width="49%" alt="Player with stats for nerds">
+  <img src="docs/screenshots/seek-preview.webp" width="49%" alt="Seek-bar preview">
+</p>
+
+**Admin** – live dashboard with host load and what each stream costs (left);
+transcoding settings (right).
+
+<p>
+  <img src="docs/screenshots/dashboard.webp" width="49%" alt="Dashboard">
+  <img src="docs/screenshots/settings.webp" width="49%" alt="Transcoding settings">
+</p>
 
 <sub>Screenshots use the Blender Foundation's open movies *Sintel*, *Tears of
 Steel*, *Big Buck Bunny*, *Elephants Dream* and *Caminandes: Gran Dillama*
