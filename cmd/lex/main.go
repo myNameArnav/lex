@@ -26,10 +26,11 @@ import (
 	"lex/internal/stream"
 	"lex/internal/sysstats"
 	"lex/internal/trickplay"
+	ver "lex/internal/version"
 	"lex/web"
 )
 
-var version = "0.0.1"
+var version = ver.String()
 
 func env(k, d string) string {
 	if v := os.Getenv(k); v != "" {

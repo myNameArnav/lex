@@ -105,13 +105,18 @@ func (s *Store) LibraryStats() (*LibraryStats, error) {
 	if st.VideoCodecs, err = s.buckets(`SELECT CASE vcodec WHEN '' THEN 'unknown' ELSE vcodec END, COUNT(*), SUM(size) FROM files GROUP BY 1 ORDER BY 2 DESC`); err != nil {
 		return nil, err
 	}
-	if st.AudioCodecs, err = s.buckets(`SELECT CASE acodec WHEN '' THEN 'unknown' ELSE acodec END, COUNT(*), SUM(size) FROM files GROUP BY 1 ORDER BY 2 DESC`); err != nil {
+	// Any audio track counts (a file with English AAC and a DTS track is in
+	// both), so these add up to more than the number of files.
+	if st.AudioCodecs, err = s.buckets(`SELECT c, COUNT(*), SUM(size) FROM (
+		SELECT DISTINCT f.id, f.size, COALESCE(NULLIF(json_extract(t.value,'$.codec'),''),'unknown') c
+		FROM files f, json_each(f.info,'$.streams') t WHERE json_valid(f.info) AND json_extract(t.value,'$.type')='audio')
+		GROUP BY c ORDER BY 2 DESC`); err != nil {
 		return nil, err
 	}
 	if st.Containers, err = s.extBuckets(); err != nil {
 		return nil, err
 	}
-	if st.Resolutions, err = s.buckets(`SELECT CASE WHEN width>=3200 OR height>=2000 THEN '4K' WHEN width>=1800 OR height>=1000 THEN '1080p' WHEN width>=1200 OR height>=700 THEN '720p' WHEN width>0 THEN 'SD' ELSE 'unknown' END r, COUNT(*), SUM(size) FROM files GROUP BY r ORDER BY 2 DESC`); err != nil {
+	if st.Resolutions, err = s.buckets(`SELECT ` + resolutionOf + ` r, COUNT(*), SUM(size) FROM files f GROUP BY r ORDER BY 2 DESC`); err != nil {
 		return nil, err
 	}
 	if st.HDR, err = s.buckets(`SELECT CASE hdr WHEN '' THEN 'SDR' ELSE hdr END, COUNT(*), SUM(size) FROM files GROUP BY 1 ORDER BY 2 DESC`); err != nil {
@@ -121,6 +126,60 @@ func (s *Store) LibraryStats() (*LibraryStats, error) {
 		return nil, err
 	}
 	return st, nil
+}
+
+const resolutionOf = `CASE WHEN f.width>=3200 OR f.height>=2000 THEN '4K' WHEN f.width>=1800 OR f.height>=1000 THEN '1080p' WHEN f.width>=1200 OR f.height>=700 THEN '720p' WHEN f.width>0 THEN 'SD' ELSE 'unknown' END`
+
+// LibraryTitle is a movie, or a show with its matching episodes, in a
+// Library-stats category.
+type LibraryTitle struct {
+	ItemID int64  `json:"itemId"`
+	Kind   string `json:"kind"`
+	Title  string `json:"title"`
+	Year   int    `json:"year"`
+	Files  int    `json:"files"`
+	Bytes  int64  `json:"bytes"`
+}
+
+// libraryDims are the Library-stats categories: each maps a bucket key to
+// the files in it, using the same definitions as LibraryStats.
+var libraryDims = map[string]string{
+	"library":    `(SELECT name FROM libraries WHERE id=f.library_id) = ?`,
+	"video":      `(CASE f.vcodec WHEN '' THEN 'unknown' ELSE f.vcodec END) = ?`,
+	"audio":      `EXISTS (SELECT 1 FROM json_each(f.info,'$.streams') t WHERE json_valid(f.info) AND json_extract(t.value,'$.type')='audio' AND COALESCE(NULLIF(json_extract(t.value,'$.codec'),''),'unknown') = ?)`,
+	"hdr":        `(CASE f.hdr WHEN '' THEN 'SDR' ELSE f.hdr END) = ?`,
+	"resolution": resolutionOf + ` = ?`,
+	"container":  `lower(f.path) LIKE '%.' || ? ESCAPE '\'`,
+}
+
+// LibraryTitles lists the titles with files in one Library-stats category,
+// largest first; episodes are grouped under their show.
+func (s *Store) LibraryTitles(dim, key string) ([]LibraryTitle, error) {
+	cond, ok := libraryDims[dim]
+	if !ok {
+		return nil, fmt.Errorf("unknown category %q", dim)
+	}
+	arg := key
+	if dim == "container" {
+		arg = strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(strings.ToLower(key))
+	}
+	rows, err := s.db.Query(`SELECT g.id, g.kind, g.title, g.year, x.n, x.b FROM (
+		SELECT CASE WHEN i.kind='episode' AND i.show_id>0 THEN i.show_id ELSE i.id END gid, COUNT(*) n, SUM(f.size) b
+		FROM files f JOIN items i ON i.id=f.item_id WHERE `+cond+` GROUP BY gid) x
+		JOIN items g ON g.id=x.gid ORDER BY x.b DESC LIMIT 500`, arg)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []LibraryTitle{}
+	for rows.Next() {
+		var t LibraryTitle
+		if err := rows.Scan(&t.ItemID, &t.Kind, &t.Title, &t.Year, &t.Files, &t.Bytes); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }
 
 type DayStat struct {

@@ -151,6 +151,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("GET /api/admin/stats/sessions", a(s.statsSessions))
 	mux.Handle("DELETE /api/admin/sessions/{id}", a(s.killSession))
 	mux.Handle("GET /api/admin/stats/library", a(s.statsLibrary))
+	mux.Handle("GET /api/admin/stats/library/titles", a(s.statsLibraryTitles))
 	mux.Handle("GET /api/admin/stats/playback", a(s.statsPlayback))
 	mux.Handle("GET /api/admin/history", a(s.history))
 	mux.Handle("DELETE /api/admin/history", a(s.clearHistory))

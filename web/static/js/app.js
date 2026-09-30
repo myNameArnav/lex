@@ -1,6 +1,7 @@
 import { h, $, clear, icons, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrate, toast, modal, spinner, lazyImg, popupMenu, streamLabel, langName, channelName, confirmDialog } from './ui.js';
 import { api, img } from './api.js';
 import { openPlayer, isPlayerOpen } from './player.js';
+import { installShortcuts, showShortcuts, MOD } from './shortcuts.js';
 
 export const state = { me: null, serverName: 'Lex', libraries: [], version: '' };
 const app = document.getElementById('app');
@@ -8,7 +9,16 @@ let mainEl = null;
 let routeToken = 0;
 
 // ---------- boot ----------
+let shortcutsInstalled = false;
 async function boot() {
+  if (!shortcutsInstalled) {
+    shortcutsInstalled = true;
+    installShortcuts({
+      focusSearch: () => { if (searchInput?.isConnected) { searchInput.focus(); searchInput.select(); } },
+      go: (hash) => { location.hash = hash; },
+      libraries: () => state.libraries,
+    });
+  }
   window.addEventListener('lex:unauthorized', () => { if (state.me) { state.me = null; renderAuth(false); } });
   try {
     const info = await api('/api/public/info');
@@ -69,16 +79,19 @@ let navEl, searchInput;
 function renderShell() {
   clear(app);
   navEl = h('nav', { class: 'nav desktop' });
-  searchInput = h('input', { type: 'search', placeholder: 'Search movies & shows', oninput: debounce((e) => {
+  searchInput = h('input', { type: 'search', placeholder: 'Search movies & shows', 'aria-keyshortcuts': 'Control+K Meta+K /', oninput: debounce((e) => {
     const q = e.target.value.trim();
     if (q) location.hash = `#/search?q=${encodeURIComponent(q)}`;
-  }, 300) });
+  }, 300), onkeydown: (e) => {
+    if (e.key === 'Escape') { e.target.value = ''; e.target.blur(); }
+    if (e.key === 'Enter' && e.target.value.trim()) location.hash = `#/search?q=${encodeURIComponent(e.target.value.trim())}`;
+  } });
   const avatarBtn = h('button', { class: 'avatar', title: state.me.name, onclick: (e) => userMenu(e.currentTarget) }, state.me.name.slice(0, 1).toUpperCase());
   const top = h('header', { class: 'topbar' },
     h('a', { class: 'logo', href: '#/' }, h('b', null, 'L'), h('span', null, state.serverName)),
     navEl,
     h('div', { class: 'spacer' }),
-    h('div', { class: 'search-box' }, h('span', { html: icons.search }), searchInput),
+    h('div', { class: 'search-box' }, h('span', { html: icons.search }), searchInput, h('kbd', { class: 'search-kbd hide-mobile', title: 'Keyboard shortcuts: press ?' }, `${MOD} K`)),
     state.me.isAdmin ? h('a', { class: 'btn icon ghost hide-mobile', href: '#/dashboard', title: 'Dashboard', html: icons.stats }) : null,
     avatarBtn);
   mainEl = h('main');
@@ -99,7 +112,9 @@ function userMenu(anchor) {
     { label: 'Settings', icon: 'gear', onClick: () => { location.hash = '#/settings'; } },
   ];
   if (state.me.isAdmin) items.push({ label: 'Dashboard & stats', icon: 'stats', onClick: () => { location.hash = '#/dashboard'; } });
+  items.push({ label: 'Keyboard shortcuts', icon: 'keyboard', onClick: showShortcuts });
   items.push('-', { label: 'Sign out', icon: 'logout', onClick: async () => { await api('/api/auth/logout', { method: 'POST' }).catch(() => {}); location.hash = ''; location.reload(); } });
+  if (state.version) items.push('-', { note: `Lex ${state.version}` });
   popupMenu(anchor, items);
 }
 

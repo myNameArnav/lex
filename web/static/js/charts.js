@@ -205,10 +205,11 @@ export function sparkline(canvas, values, max) {
 }
 
 // barList renders horizontal bars as HTML (label · bar · value).
+// barList: labelled horizontal bars. Items with onClick become buttons.
 export function barList(items, fmt, colorFor) {
   const max = Math.max(1, ...items.map((i) => i.value));
   if (!items.length) return h('div', { class: 'dim small' }, 'No data yet');
-  return h('div', { class: 'bar-list' }, items.map((it, idx) => h('div', { class: 'bar-item', title: `${it.label}: ${fmt(it.value)}` },
+  return h('div', { class: 'bar-list' }, items.map((it, idx) => h(it.onClick ? 'button' : 'div', { class: `bar-item${it.onClick ? ' link' : ''}`, title: `${it.label}: ${fmt(it.value)}`, onclick: it.onClick || null },
     h('span', { class: 'ellipsis' }, it.label),
     h('span', { class: 'track' }, h('i', { style: { width: `${Math.max(1, (it.value / max) * 100)}%`, background: colorFor ? colorFor(it, idx) : SERIES[0] } })),
     h('span', { class: 'muted nowrap' }, fmt(it.value)))));

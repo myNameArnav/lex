@@ -14,18 +14,19 @@ MODE=${3:-container}
 case "$ARCH" in arm64|amd64) ;; *) echo "unsupported architecture: $ARCH" >&2; exit 2 ;; esac
 case "$MODE" in container|binary) ;; *) echo "unsupported mode: $MODE" >&2; exit 2 ;; esac
 cd "$(dirname "$0")/.."
-VERSION=$(git describe --tags --always --dirty 2>/dev/null || date +%Y.%m.%d)
+VERSION=$(cat internal/version/VERSION)
+COMMIT=$(git rev-parse --short HEAD 2>/dev/null || true)
 command -v ssh >/dev/null
 if [ "$MODE" = container ]; then
   command -v docker >/dev/null
   command -v gzip >/dev/null
   echo "building lex:$VERSION image for linux/$ARCH"
-  docker build --platform "linux/$ARCH" --build-arg VERSION="$VERSION" -t lex:latest .
+  docker build --platform "linux/$ARCH" --build-arg COMMIT="$COMMIT" -t lex:latest .
 else
   command -v go >/dev/null
   mkdir -p build
   echo "building lex $VERSION binary for linux/$ARCH"
-  CGO_ENABLED=0 GOOS=linux GOARCH=$ARCH go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "build/lex-linux-$ARCH" ./cmd/lex
+  CGO_ENABLED=0 GOOS=linux GOARCH=$ARCH go build -trimpath -ldflags "-s -w -X lex/internal/version.Commit=$COMMIT" -o "build/lex-linux-$ARCH" ./cmd/lex
 fi
 # Validate the remote prerequisites before changing service files.
 ssh "$HOST" 'test "$(id -u)" = 0 && command -v systemctl >/dev/null'

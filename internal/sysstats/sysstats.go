@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -347,18 +346,12 @@ func (s *Sampler) sample() {
 		seen := map[[2]int64]bool{}
 		var disks []Disk
 		for _, pth := range s.paths() {
-			var fs syscall.Statfs_t
-			if syscall.Statfs(pth, &fs) != nil {
-				continue
-			}
-			key := [2]int64{int64(fs.Blocks), int64(fs.Bsize)}
-			if seen[key] {
+			total, free, used, key, ok := DiskUsage(pth)
+			if !ok || seen[key] {
 				continue
 			}
 			seen[key] = true
-			total := fs.Blocks * uint64(fs.Bsize)
-			free := fs.Bavail * uint64(fs.Bsize)
-			disks = append(disks, Disk{Path: pth, Total: total, Free: free, Used: total - fs.Bfree*uint64(fs.Bsize)})
+			disks = append(disks, Disk{Path: pth, Total: total, Free: free, Used: used})
 		}
 		snap.Disks = disks
 	}

@@ -425,6 +425,18 @@ func (s *Server) statsLibrary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, st)
 }
 
+// statsLibraryTitles lists the titles in one Library-stats category, e.g.
+// ?dim=hdr&key=HDR10 or ?dim=audio&key=dts.
+func (s *Server) statsLibraryTitles(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	list, err := s.St.LibraryTitles(q.Get("dim"), q.Get("key"))
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, list)
+}
+
 func (s *Server) statsPlayback(w http.ResponseWriter, r *http.Request) {
 	days := qInt(r, "days", 30)
 	if days < 1 || days > 3650 {

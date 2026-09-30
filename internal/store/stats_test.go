@@ -43,3 +43,62 @@ func TestPlaybackStatsGroupsShowsAndUsesViewerTimeZone(t *testing.T) {
 		t.Fatalf("hours of day = %+v, want 02 local", ps.Hours24)
 	}
 }
+
+func TestLibraryTitlesFindsAnyAudioTrackAndGroupsShows(t *testing.T) {
+	st := testStore(t)
+	db := st.DB()
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.Exec(q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO libraries(id,name,kind,paths,created_at) VALUES(1,'All','mixed','[]',0)`)
+	exec(`INSERT INTO items(id,library_id,kind,show_id,title,sort_title,year,added_at,updated_at) VALUES
+		(1,1,'show',0,'Silo','silo',2023,0,0),
+		(2,1,'episode',1,'Freedom Day','freedom day',0,0,0),
+		(3,1,'episode',1,'Holston''s Pick','holston',0,0,0),
+		(4,1,'movie',0,'Dune','dune',2021,0,0)`)
+	info := func(codecs ...string) string {
+		s := `{"streams":[{"type":"video","codec":"hevc"}`
+		for _, c := range codecs {
+			s += `,{"type":"audio","codec":"` + c + `"}`
+		}
+		return s + `]}`
+	}
+	exec(`INSERT INTO files(item_id,library_id,path,size,mtime,acodec,hdr,info,added_at) VALUES
+		(2,1,'/m/Silo/e1.mkv',100,0,'eac3','HDR10',?,0),
+		(3,1,'/m/Silo/e2.mkv',200,0,'eac3','HDR10',?,0),
+		(4,1,'/m/Dune.mp4',500,0,'aac','',?,0)`, info("eac3", "dts"), info("eac3", "dts"), info("aac"))
+	dts, err := st.LibraryTitles("audio", "dts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dts) != 1 || dts[0].Title != "Silo" || dts[0].Kind != "show" || dts[0].Files != 2 || dts[0].Bytes != 300 {
+		t.Fatalf("dts titles = %+v, want Silo with 2 episodes", dts)
+	}
+	hdr, _ := st.LibraryTitles("hdr", "SDR")
+	if len(hdr) != 1 || hdr[0].Title != "Dune" {
+		t.Fatalf("SDR titles = %+v, want Dune", hdr)
+	}
+	mp4, _ := st.LibraryTitles("container", "MP4")
+	if len(mp4) != 1 || mp4[0].Title != "Dune" {
+		t.Fatalf("mp4 titles = %+v, want Dune", mp4)
+	}
+	ls, err := st.LibraryStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dtsFiles int
+	for _, b := range ls.AudioCodecs {
+		if b.Key == "dts" {
+			dtsFiles = b.Count
+		}
+	}
+	if dtsFiles != 2 {
+		t.Fatalf("audio buckets = %+v, want dts in 2 files", ls.AudioCodecs)
+	}
+	if _, err := st.LibraryTitles("nope", "x"); err == nil {
+		t.Fatal("unknown category accepted")
+	}
+}

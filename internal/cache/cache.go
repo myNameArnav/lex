@@ -18,11 +18,11 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"lex/internal/logx"
 	"lex/internal/store"
+	"lex/internal/sysstats"
 )
 
 type Entry struct {
@@ -284,11 +284,11 @@ func (c *Cache) used() int64 {
 }
 
 func diskSpace(dir string) (free, total int64) {
-	var fs syscall.Statfs_t
-	if syscall.Statfs(dir, &fs) != nil {
+	t, f, _, _, ok := sysstats.DiskUsage(dir)
+	if !ok {
 		return 0, 0
 	}
-	return int64(fs.Bavail) * int64(fs.Bsize), int64(fs.Blocks) * int64(fs.Bsize)
+	return int64(f), int64(t)
 }
 
 func (c *Cache) Status() Status {

@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"lex/internal/logx"
@@ -140,7 +139,7 @@ func (j *hlsJob) produced() int {
 
 func (j *hlsJob) resume() {
 	if j.paused && j.cmd != nil && j.cmd.Process != nil {
-		j.cmd.Process.Signal(syscall.SIGCONT)
+		proc.Resume(j.cmd.Process)
 		j.paused = false
 	}
 }
@@ -381,7 +380,7 @@ func (h *HLS) janitor() {
 			}
 			produced := j.produced()
 			if j.running() && !j.paused && produced-j.lastReq > int(120/HLSSegment) {
-				if j.cmd.Process.Signal(syscall.SIGSTOP) == nil {
+				if proc.Suspend(j.cmd.Process) {
 					j.paused = true
 				}
 			} else if j.paused && produced-j.lastReq < int(60/HLSSegment) {

@@ -61,7 +61,7 @@ function prefsSection() {
   const set = (k, conv = (x) => x) => (v) => { prefs.set(k, conv(v)); toast('Saved on this device', 'ok'); };
   const langs = [['', 'File default'], ...LANG_OPTIONS];
   const caps = capsSummary();
-  return h('div', { class: 'form' },
+  return h('div', { class: 'form cols' },
     h('div', { class: 'form-section' }, h('h2', null, 'Quality & method'),
       h('p', { class: 'help', style: { margin: 0 } }, 'These settings are stored in this browser, so each device can have its own (e.g. lower quality on your phone).'),
       h('div', { class: 'form-grid' },
@@ -120,7 +120,7 @@ async function configForm(build) {
     try { cfg = await api('/api/admin/config', { method: 'PUT', body: draft }); Object.assign(draft, cfg); toast('Settings saved', 'ok'); }
     catch (e) { toast(e.message, 'error'); }
   } }, 'Save changes');
-  return h('div', { class: 'form' }, build({ draft, num, text, tg, bind, info }), h('div', { class: 'save-bar' }, save));
+  return h('div', { class: 'form cols' }, build({ draft, num, text, tg, bind, info }), h('div', { class: 'save-bar' }, save));
 }
 
 function serverSection() {
@@ -432,11 +432,12 @@ async function aboutSection() {
 // Dashboard
 // ======================================================================
 
-const DASH = [['live', 'Live', 'broadcast'], ['playback', 'Playback', 'stats'], ['library', 'Library', 'library'], ['history', 'History', 'history']];
+const DASH = [['live', 'Live', 'broadcast'], ['playback', 'Playback', 'stats'], ['library', 'Library', 'library']];
 
 export async function dashboardView(ctx, tab) {
   if (!state.me.isAdmin) return h('div', { class: 'empty' }, 'Admins only');
-  const content = await ({ live: liveTab, playback: playbackTab, library: libraryTab, history: historyTab }[tab] || liveTab)(ctx);
+  if (tab === 'history') tab = 'playback'; // merged into Playback
+  const content = await ({ live: liveTab, playback: playbackTab, library: libraryTab }[tab] || liveTab)(ctx);
   return h('div', { class: 'page' },
     h('h1', { class: 'page-title' }, 'Dashboard'),
     h('div', { class: 'tabs', style: { marginTop: '14px' } }, DASH.map(([id, label]) => h('button', { class: id === tab ? 'active' : '', onclick: () => { location.hash = `#/dashboard/${id}`; } }, label))),
@@ -595,7 +596,8 @@ async function playbackTab(ctx) {
   const methodColor = (it) => ({ direct: SERIES[0], remux: SERIES[1], transcode: SERIES[2] })[it.key] || SERIES[0];
   const mlabel = (k) => ({ direct: 'Direct play', remux: 'Direct stream', transcode: 'Transcode' })[k] || k;
   const page = h('div', null,
-    h('div', { class: 'toolbar' }, h('span', { class: 'muted' }, 'Range'), [7, 30, 90, 365].map((d) => h('button', { class: `btn sm ${d === days ? 'primary' : ''}`, onclick: () => { location.hash = `#/dashboard/playback?days=${d}`; } }, `${d} days`))),
+    h('div', { class: 'toolbar' }, h('span', { class: 'muted' }, 'Range'), [7, 30, 90, 365].map((d) => h('button', { class: `btn sm ${d === days ? 'primary' : ''}`, onclick: () => { location.hash = `#/dashboard/playback?days=${d}`; } }, `${d} days`)),
+      h('div', { class: 'spacer' }), h('button', { class: 'btn sm ghost', onclick: () => document.getElementById('history')?.scrollIntoView({ behavior: 'smooth' }) }, 'Jump to history')),
     h('div', { class: 'stats-grid' },
       stat('Plays', st.plays.toLocaleString(), `${st.uniqueItems} titles${st.plays ? ` · ${Math.round((st.remotePlays / st.plays) * 100)}% remote` : ''}`),
       stat('Watch time', fmtHours(st.hours), `${fmtHours(st.hours / Math.max(1, days))} a day`),
@@ -610,6 +612,9 @@ async function playbackTab(ctx) {
       h('div', { class: 'panel' }, h('h3', null, 'Most watched'), barList((st.topItems || []).map((m) => ({ label: m.key, value: m.count })), (v) => `${v} play${v === 1 ? '' : 's'}`)),
       h('div', { class: 'panel' }, h('h3', null, "Who's watching"), barList((st.users || []).map((m) => ({ label: m.key, value: m.value })), (v) => fmtHours(v)),
         h('h4', { class: 'panel-sub' }, 'Clients'), barList((st.clients || []).map((m) => ({ label: m.key || 'unknown', value: m.count })), (v) => `${v} play${v === 1 ? '' : 's'}`))));
+  page.append(await historySection(ctx, days));
+  // Paging through history keeps you at the table.
+  if (ctx.query.get('offset')) requestAnimationFrame(() => document.getElementById('history')?.scrollIntoView());
   requestAnimationFrame(() => {
     columnChart(hoursBox, { labels, fullLabels: full, values: hours, fmt: (v) => (v > 0 && v < 1 ? `${Math.round(v * 60)}m` : `${+v.toFixed(1)}h`), tipLabel: 'watched' });
     columnChart(hourBox, { labels: hod.map((_, i) => `${i}h`), values: hod, fmt: (v) => `${Math.round(v)}`, tipLabel: 'plays' });
@@ -636,31 +641,57 @@ function methodsTable(st, mlabel, color) {
 
 async function libraryTab() {
   const st = await api('/api/admin/stats/library');
-  const bucketList = (b, fmtKey = (k) => k) => barList([...(b || [])].sort((x, y) => y.value - x.value)
-    .map((x) => ({ label: `${fmtKey(x.key)} (${x.count})`, value: x.value })), (v) => fmtBytes(v));
+  const bucketList = (dim, b, fmtKey = (k) => k) => barList([...(b || [])].sort((x, y) => y.value - x.value)
+    .map((x) => ({ label: `${fmtKey(x.key)} (${x.count})`, value: x.value, onClick: () => libraryTitles(dim, x.key, `${DIM_LABEL[dim]}: ${fmtKey(x.key)}`) })), (v) => fmtBytes(v));
   return h('div', null,
     h('div', { class: 'stats-grid' },
       stat('Movies', st.movies.toLocaleString()),
       stat('Shows', st.shows.toLocaleString(), `${st.seasons} seasons · ${st.episodes.toLocaleString()} episodes`),
       stat('Files', fmtBytes(st.totalBytes), `${st.files.toLocaleString()} files · ${fmtHours(st.totalDuration / 3600)} of video${st.unprobed ? ` · ${st.unprobed} awaiting analysis` : ''}${st.probeErrors ? ` · ${st.probeErrors} unreadable` : ''}`),
       stat('Metadata', `${st.metaMatched} matched`, `${st.metaMissing} not found · ${st.metaPending} pending`)),
-    h('p', { class: 'small dim', style: { margin: '0 0 10px' } }, 'Bars show storage used; the number of files is in brackets.'),
+    h('p', { class: 'small dim', style: { margin: '0 0 10px' } }, 'Bars show storage used and the number of files is in brackets. Click a row to see the titles in it.'),
     h('div', { class: 'dash-3' },
-      h('div', { class: 'panel' }, h('h3', null, 'Libraries'), bucketList(st.libraries)),
-      h('div', { class: 'panel' }, h('h3', null, 'Resolution'), bucketList(st.resolutions)),
-      h('div', { class: 'panel' }, h('h3', null, 'HDR'), bucketList(st.hdr)),
-      h('div', { class: 'panel' }, h('h3', null, 'Video codecs'), bucketList(st.videoCodecs, (k) => k.toUpperCase())),
-      h('div', { class: 'panel' }, h('h3', null, 'Audio codecs'), bucketList(st.audioCodecs, (k) => k.toUpperCase())),
-      h('div', { class: 'panel' }, h('h3', null, 'Containers'), bucketList(st.containers, (k) => k.toUpperCase()))));
+      h('div', { class: 'panel' }, h('h3', null, 'Libraries'), bucketList('library', st.libraries)),
+      h('div', { class: 'panel' }, h('h3', null, 'Resolution'), bucketList('resolution', st.resolutions)),
+      h('div', { class: 'panel' }, h('h3', null, 'HDR'), bucketList('hdr', st.hdr)),
+      h('div', { class: 'panel' }, h('h3', null, 'Video codecs'), bucketList('video', st.videoCodecs, (k) => k.toUpperCase())),
+      h('div', { class: 'panel' }, h('h3', null, 'Audio (any track)'), bucketList('audio', st.audioCodecs, (k) => k.toUpperCase())),
+      h('div', { class: 'panel' }, h('h3', null, 'Containers'), bucketList('container', st.containers, (k) => k.toUpperCase()))));
 }
 
-async function historyTab(ctx) {
+const DIM_LABEL = { library: 'Library', resolution: 'Resolution', hdr: 'HDR', video: 'Video codec', audio: 'Audio track', container: 'Container' };
+
+// libraryTitles shows the movies and shows in one Library-stats category.
+async function libraryTitles(dim, key, label) {
+  const list = h('div', { class: 'title-list' }, spinner());
+  const m = modal({ title: label, body: list, wide: true });
+  try {
+    const rows = await api(`/api/admin/stats/library/titles?dim=${encodeURIComponent(dim)}&key=${encodeURIComponent(key)}`);
+    const total = rows.reduce((a, r) => a + r.bytes, 0);
+    clear(list).append(
+      h('div', { class: 'small muted' }, `${rows.length} title${rows.length === 1 ? '' : 's'} · ${fmtBytes(total)}`),
+      ...rows.map((r) => h('a', { class: 'title-row', href: `#/item/${r.itemId}`, onclick: () => m.close() },
+        h('img', { src: img({ id: r.itemId }, 'poster', 80), alt: '', loading: 'lazy' }),
+        h('div', { class: 'grow', style: { minWidth: 0 } },
+          h('div', { class: 'ellipsis' }, r.title, r.year ? h('span', { class: 'dim' }, ` (${r.year})`) : null),
+          h('div', { class: 'small dim' }, r.kind === 'show' ? `${r.files} episode${r.files === 1 ? '' : 's'}` : r.files > 1 ? `${r.files} files` : 'Movie')),
+        h('span', { class: 'muted small nowrap' }, fmtBytes(r.bytes)))));
+    if (!rows.length) list.append(h('div', { class: 'dim' }, 'Nothing here.'));
+  } catch (e) {
+    clear(list).append(h('div', { class: 'bad' }, e.message));
+  }
+}
+
+// Every play, newest first, under the playback statistics.
+async function historySection(ctx, days) {
   const offset = +(ctx.query.get('offset') || 0);
   const rows = await api(`/api/admin/history?limit=100&offset=${offset}`);
-  return h('div', null,
-    h('div', { class: 'toolbar' }, h('span', { class: 'muted' }, `Showing ${offset + 1}–${offset + rows.length}`), h('div', { class: 'spacer' }),
-      offset > 0 ? h('a', { class: 'btn sm', href: `#/dashboard/history?offset=${Math.max(0, offset - 100)}` }, 'Newer') : null,
-      rows.length === 100 ? h('a', { class: 'btn sm', href: `#/dashboard/history?offset=${offset + 100}` }, 'Older') : null,
+  const page = (o) => `#/dashboard/playback?days=${days}&offset=${o}`;
+  return h('section', { id: 'history', style: { marginTop: '28px' } },
+    h('div', { class: 'toolbar' }, h('h2', { class: 'section-title' }, 'History'),
+      rows.length ? h('span', { class: 'muted small' }, `${offset + 1}–${offset + rows.length}`) : null, h('div', { class: 'spacer' }),
+      offset > 0 ? h('a', { class: 'btn sm', href: page(Math.max(0, offset - 100)) }, 'Newer') : null,
+      rows.length === 100 ? h('a', { class: 'btn sm', href: page(offset + 100) }, 'Older') : null,
       h('button', { class: 'btn sm danger', onclick: async () => { if (await confirmDialog('Delete all playback history? Watch progress is kept.', 'Delete', true)) { await api('/api/admin/history', { method: 'DELETE' }); route(); } } }, 'Clear history')),
     rows.length ? h('div', { class: 'panel table-wrap' }, h('table', { class: 'tbl' },
       h('tr', null, ['When', 'User', 'Title', 'Method', 'Watched', 'Data', 'Stalls', 'Output', 'Client'].map((t) => h('th', null, t))),
@@ -668,7 +699,7 @@ async function historyTab(ctx) {
         h('td', { class: 'nowrap' }, fmtDate(r.startedAt)),
         h('td', null, r.userName),
         h('td', null, h('a', { href: `#/item/${r.itemId}` }, r.title)),
-        h('td', { title: r.reasons }, h('span', { class: `method ${r.method}` }, r.method), r.reasons ? h('div', { class: 'dim small' }, r.reasons) : null),
+        h('td', { title: r.reasons }, h('span', { class: `method ${r.method}` }, { direct: 'direct play', remux: 'direct stream', transcode: 'transcode' }[r.method] || r.method), r.reasons ? h('div', { class: 'dim small' }, r.reasons) : null),
         h('td', { class: 'nowrap' }, fmtDuration(r.watched) || `${Math.round(r.watched)}s`),
         h('td', { class: 'nowrap' }, fmtBytes(r.bytes)),
         h('td', null, r.bufferEvents ? `${r.bufferEvents} (${r.bufferSeconds.toFixed(0)}s)` : '0'),

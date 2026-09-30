@@ -156,7 +156,8 @@ export function popupMenu(anchor, items) {
   document.querySelectorAll('.menu.popup').forEach((m) => m.remove());
   const r = anchor.getBoundingClientRect();
   const menu = h('div', { class: 'menu popup', style: { position: 'fixed', top: `${r.bottom + 6}px`, right: `${Math.max(8, window.innerWidth - r.right)}px` } },
-    items.map((it) => it === '-' ? h('hr') : h('button', { onclick: () => { menu.remove(); it.onClick(); } }, it.icon ? h('span', { html: icons[it.icon] }) : null, it.label)));
+    items.map((it) => it === '-' ? h('hr') : it.note ? h('div', { class: 'menu-note' }, it.note)
+      : h('button', { onclick: () => { menu.remove(); it.onClick(); } }, it.icon ? h('span', { html: icons[it.icon] }) : null, it.label)));
   document.body.appendChild(menu);
   const off = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('mousedown', off, true); } };
   setTimeout(() => document.addEventListener('mousedown', off, true));
@@ -206,6 +207,7 @@ export const icons = {
   folder: svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'),
   up: svg('<path d="M12 19V5M5 12l7-7 7 7"/>'),
   user: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'),
+  keyboard: svg('<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/>'),
   logout: svg('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>'),
   library: svg('<rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="18" rx="1"/>'),
   users: svg('<circle cx="9" cy="8" r="4"/><path d="M1 21a8 8 0 0 1 16 0M17 4a4 4 0 0 1 0 8M23 21a8 8 0 0 0-5-7.4"/>'),

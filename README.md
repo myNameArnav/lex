@@ -105,11 +105,18 @@ frames from the films.</sub>
 
 ## Quick start
 
-Install Go **1.26.8 or newer**, FFmpeg and FFprobe. Run from the repository root:
+Download the archive for your system from
+[Releases](https://github.com/myNameArnav/lex/releases/latest) (Linux amd64,
+arm64 and armv7; macOS; Windows), unpack it, install FFmpeg and FFprobe, and run:
+
+```sh
+./lex -addr 127.0.0.1:8420 -data ./data
+```
+
+Or build it yourself with Go **1.26.8 or newer**, from the repository root:
 
 ```sh
 go build -trimpath -o lex ./cmd/lex
-./lex -addr 127.0.0.1:8420 -data ./data
 ```
 
 Open <http://localhost:8420>, create the first administrator, then add a library
@@ -214,6 +221,28 @@ Server. It carries a separate scan token; keep the URL private and redact query
 strings in proxy logs. GET webhooks are unsupported. API authentication accepts
 cookies, `Authorization: Bearer`, or `X-Lex-Token`; URL authentication tokens are
 unsupported.
+
+## Keyboard shortcuts
+
+Press `?` (or `Ctrl`/`⌘` + `/`) anywhere for the full list. The main ones:
+`Ctrl`/`⌘` + `K` or `/` to search, `g` then `h` / `1`–`9` / `s` / `d` to go to
+home, a library, settings or the dashboard, `p` to play the title you're
+viewing, and in the player `space`, `←`/`→`, `f`, `m`, `c` and `i`.
+
+## Versions and releases
+
+The version number lives in `internal/version/VERSION`; builds add the commit
+they came from (`lex -version` prints e.g. `lex 0.0.2 (0ac9413)`, and it's shown
+in Settings → About and the account menu). To release, bump that file, commit,
+and push a matching tag:
+
+```sh
+git tag -a v0.0.3 -m "Lex v0.0.3" && git push origin v0.0.3
+```
+
+The Release workflow checks the tag against the file, runs the tests, builds
+archives for every platform with `scripts/build-release.sh` and publishes them
+with checksums on GitHub Releases.
 
 ## Development and publication
 

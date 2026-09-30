@@ -7,7 +7,9 @@
 # to use Debian's ffmpeg instead.
 
 FROM --platform=$BUILDPLATFORM golang:1.26.8-trixie AS build
-ARG TARGETOS TARGETARCH VERSION=dev
+# COMMIT labels the build (the .git directory isn't part of the build context);
+# the version number itself comes from internal/version/VERSION.
+ARG TARGETOS TARGETARCH COMMIT=
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -15,7 +17,7 @@ COPY cmd ./cmd
 COPY internal ./internal
 COPY web ./web
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o /out/lex ./cmd/lex
+    go build -trimpath -ldflags "-s -w -X lex/internal/version.Commit=$COMMIT" -o /out/lex ./cmd/lex
 
 FROM debian:trixie-slim
 ARG TARGETARCH
