@@ -4,6 +4,10 @@ name: Container image
 #   main         -> :edge
 #   every build  -> :sha-<commit>
 # Pull requests build both architectures without pushing.
+# The arm64 runtime layer (apt under emulation) takes most of a build, so
+# layers are kept in :buildcache. main and tags write it; pull requests only
+# read it. The cache follows debian:trixie-slim: a new base image rebuilds
+# the layer and picks up package updates.
 on:
   push:
     branches: [main]
@@ -40,6 +44,7 @@ jobs:
             tags="$tags,$image:edge"
           fi
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "cache=$image:buildcache" >> "$GITHUB_OUTPUT"
           echo "tags=$tags" >> "$GITHUB_OUTPUT"
           echo "$tags" | tr , '\n'
       - name: Set up emulation and builder
@@ -55,13 +60,14 @@ jobs:
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
           COMMIT: ${{ steps.meta.outputs.commit }}
+          CACHE: ${{ steps.meta.outputs.cache }}
         run: |
-          args=()
+          args=(--cache-from "type=registry,ref=$CACHE")
           for t in ${TAGS//,/ }; do args+=(-t "$t"); done
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
             args+=(--output type=cacheonly)
           else
-            args+=(--push)
+            args+=(--push --cache-to "type=registry,ref=$CACHE,mode=max,oci-mediatypes=true,image-manifest=true")
           fi
           docker buildx build --platform linux/amd64,linux/arm64 \
             --build-arg COMMIT="$COMMIT" \
