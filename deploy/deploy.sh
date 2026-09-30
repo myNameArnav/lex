@@ -52,11 +52,14 @@ if [ "$MODE" != binary ]; then
   fi
   printf '%s\n' "$UNIT" | ssh "$HOST" 'install -d /etc/containers/systemd; cat > /etc/containers/systemd/lex.container'
   ssh "$HOST" 'set -e
-    install -d -o 1000 -g 1000 -m 700 /var/lib/lex
     if [ -f /etc/systemd/system/lex.service ]; then
       systemctl disable --now lex.service || true
       mv /etc/systemd/system/lex.service /etc/systemd/system/lex.service.binary-backup
     fi
+    install -d -o 1000 -g 1000 -m 700 /var/lib/lex
+    # Files left by the binary deployment belong to the "lex" system user;
+    # the container runs as UID 1000. -h: never follow symlinks.
+    chown -hR 1000:1000 /var/lib/lex
     systemctl daemon-reload
     systemctl restart lex.service
     systemctl --no-pager --lines=5 status lex.service'
@@ -80,6 +83,8 @@ ssh "$HOST" sh -s -- "$REMOTE_TMP" <<'REMOTE_SCRIPT'
   rm -f /etc/containers/systemd/lex.container
   install -d -m 755 /opt/lex
   install -d -o lex -g lex -m 700 /var/lib/lex
+  # Files left by a container deployment belong to UID 1000.
+  chown -hR lex:lex /var/lib/lex
   install -m 755 "$staging/lex.new" /opt/lex/lex
   install -m 644 "$staging/lex.service" /etc/systemd/system/lex.service
   systemctl daemon-reload

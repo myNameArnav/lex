@@ -19,7 +19,8 @@ async function boot() {
       libraries: () => state.libraries,
     });
   }
-  window.addEventListener('lex:unauthorized', () => { if (state.me) { state.me = null; renderAuth(false); } });
+  // Invalidate the current view too, so its pollers and pending loads stop.
+  window.addEventListener('lex:unauthorized', () => { if (state.me) { state.me = null; routeToken++; renderAuth(false); } });
   try {
     const info = await api('/api/public/info');
     state.serverName = info.serverName;
@@ -300,21 +301,38 @@ async function libraryView(ctx, id) {
     if (opts.desc) p.set('desc', '1');
     if (opts.filter) p.set('filter', opts.filter);
     if (opts.genre) p.set('genre', opts.genre);
-    const r = await api(`/api/items?${p}`);
-    total = r.total;
-    random.disabled = total === 0;
-    count.textContent = `${total} item${total === 1 ? '' : 's'}`;
-    r.items.forEach((it) => grid.appendChild(posterCard(it)));
-    offset += r.items.length;
-    if (!r.items.length) total = offset;
-    if (total === 0) grid.replaceWith(h('div', { class: 'empty' },
-      h('h2', null, opts.filter === 'favorite' && !opts.genre ? 'No favorites yet' : 'Nothing here'),
-      h('p', null, opts.filter === 'favorite' && !opts.genre ? 'Open a title and select the heart to add it to your favorites.' : opts.filter || opts.genre ? 'No titles match these filters.' : 'The library is empty or still scanning.'),
-      opts.filter || opts.genre ? h('button', { class: 'btn', onclick: () => setQ({ filter: '', genre: '' }) }, 'Clear filters') : null));
-    loading = false;
+    try {
+      const r = await api(`/api/items?${p}`);
+      if (!ctx.isCurrent()) return;
+      total = r.total;
+      random.disabled = total === 0;
+      count.textContent = `${total} item${total === 1 ? '' : 's'}`;
+      r.items.forEach((it) => grid.appendChild(posterCard(it)));
+      offset += r.items.length;
+      if (!r.items.length) total = offset;
+      if (total === 0) grid.replaceWith(h('div', { class: 'empty' },
+        h('h2', null, opts.filter === 'favorite' && !opts.genre ? 'No favorites yet' : 'Nothing here'),
+        h('p', null, opts.filter === 'favorite' && !opts.genre ? 'Open a title and select the heart to add it to your favorites.' : opts.filter || opts.genre ? 'No titles match these filters.' : 'The library is empty or still scanning.'),
+        opts.filter || opts.genre ? h('button', { class: 'btn', onclick: () => setQ({ filter: '', genre: '' }) }, 'Clear filters') : null));
+    } finally {
+      loading = false;
+    }
   };
+  // The first page fails the whole view (the router shows the error); later
+  // pages leave a retry button, since the observer won't fire again while
+  // the sentinel stays in view.
   await load();
-  const io = new IntersectionObserver((ents) => { if (ents[0].isIntersecting) load(); }, { rootMargin: '800px' });
+  const more = async () => {
+    if (loading) return;
+    clear(sentinel);
+    try { await load(); } catch (e) {
+      if (!ctx.isCurrent()) return;
+      toast(e.message, 'error');
+      sentinel.appendChild(h('div', { class: 'row', style: { justifyContent: 'center' } },
+        h('button', { class: 'btn sm', onclick: more }, 'Load more')));
+    }
+  };
+  const io = new IntersectionObserver((ents) => { if (ents[0].isIntersecting) more(); }, { rootMargin: '800px' });
   io.observe(sentinel);
   return page;
 }
@@ -382,12 +400,25 @@ function watchedButton(it, onDone) {
 }
 
 function favButton(it) {
-  let fav = !!it.userData?.favorite;
-  const b = h('button', { class: 'btn lg icon', title: 'Favorite', html: fav ? icons.heartFill : icons.heart, style: fav ? { color: 'var(--bad)' } : null, onclick: async () => {
-    fav = !fav;
-    await api(`/api/items/${it.id}/favorite`, { method: 'POST', body: { favorite: fav } });
+  let fav = !!it.userData?.favorite, busy = false;
+  const show = () => {
     b.innerHTML = fav ? icons.heartFill : icons.heart;
     b.style.color = fav ? 'var(--bad)' : '';
+  };
+  const b = h('button', { class: 'btn lg icon', title: 'Favorite', html: fav ? icons.heartFill : icons.heart, style: fav ? { color: 'var(--bad)' } : null, onclick: async () => {
+    if (busy) return;
+    busy = true;
+    fav = !fav;
+    show();
+    try {
+      await api(`/api/items/${it.id}/favorite`, { method: 'POST', body: { favorite: fav } });
+    } catch (ex) {
+      fav = !fav;
+      show();
+      toast(ex.message, 'error');
+    } finally {
+      busy = false;
+    }
   } });
   return b;
 }
@@ -597,13 +628,28 @@ async function showView(ctx, d) {
 
 function episodeRow(e) {
   const ud = e.userData || {};
+  let busy = false;
   const art = h('button', { class: 'art', type: 'button', dataset: { focusKey: `episode-play-${e.id}` }, 'aria-label': `${ud.position > 0 && !ud.played ? 'Resume' : 'Play'} episode ${e.episode}: ${e.title}`, onclick: () => play(e.id) }, lazyImg(img(e, 'thumb', 480), ''), h('span', { class: 'ep-play', 'aria-hidden': 'true', html: icons.play }));
   if (ud.position > 0 && e.duration) art.appendChild(h('div', { class: 'progress' }, h('i', { style: { width: `${(ud.position / e.duration) * 100}%` } })));
   const wbtn = h('button', { class: `watched-btn ${ud.played ? 'on' : ''}`, title: ud.played ? 'Mark unwatched' : 'Mark watched', html: icons.check, onclick: async (ev) => {
     ev.stopPropagation();
+    if (busy) return;
+    busy = true;
+    const show = () => {
+      wbtn.classList.toggle('on', ud.played);
+      wbtn.title = ud.played ? 'Mark unwatched' : 'Mark watched';
+    };
     ud.played = !ud.played;
-    await api(`/api/items/${e.id}/played`, { method: 'POST', body: { played: ud.played } });
-    wbtn.classList.toggle('on', ud.played);
+    show();
+    try {
+      await api(`/api/items/${e.id}/played`, { method: 'POST', body: { played: ud.played } });
+    } catch (ex) {
+      ud.played = !ud.played;
+      show();
+      toast(ex.message, 'error');
+    } finally {
+      busy = false;
+    }
   } });
   return h('div', { class: 'episode' },
   art,

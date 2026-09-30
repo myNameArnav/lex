@@ -3,6 +3,7 @@ package stream
 import (
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -58,7 +59,10 @@ type Session struct {
 	Restarts   int         `json:"restarts"`
 	Cached     bool        `json:"cached"`
 	HLS        bool        `json:"hls"`
-	streamKey  string
+	// AuthToken is the login token that opened (or last re-planned) the
+	// session; the HLS stream key is only valid while it is.
+	AuthToken string `json:"-"`
+	streamKey string
 
 	bytes     int64
 	lastBytes int64
@@ -74,14 +78,17 @@ type Session struct {
 type Manager struct {
 	// OnEnd is called when a session ends (player closed or expired).
 	OnEnd func(id string)
-	st    *store.Store
-	log   *logx.Logger
-	mu    sync.Mutex
-	m     map[string]*Session
+	// Slots enforces the transcode limit together with HLS jobs.
+	Slots  *Transcodes
+	st     *store.Store
+	log    *logx.Logger
+	mu     sync.Mutex
+	m      map[string]*Session
+	jobSeq int
 }
 
 func NewManager(st *store.Store, log *logx.Logger) *Manager {
-	mgr := &Manager{st: st, log: log, m: map[string]*Session{}}
+	mgr := &Manager{st: st, log: log, m: map[string]*Session{}, Slots: &Transcodes{}}
 	go mgr.loop()
 	return mgr
 }
@@ -102,6 +109,9 @@ func (m *Manager) Open(s *Session) (*Session, error) {
 		old.Method, old.Reasons, old.VideoOut, old.AudioOut, old.OutBitrate = s.Method, s.Reasons, s.VideoOut, s.AudioOut, s.OutBitrate
 		old.FileID, old.VideoIn, old.AudioIn, old.Container, old.SrcBitrate = s.FileID, s.VideoIn, s.AudioIn, s.Container, s.SrcBitrate
 		old.Cached, old.HLS = s.Cached, s.HLS
+		if s.AuthToken != "" {
+			old.AuthToken = s.AuthToken
+		}
 		old.LastSeen = now.Unix()
 		return old, nil
 	}
@@ -151,31 +161,38 @@ func (m *Manager) AttachJob(s *Session, maxTranscodes int, transcode bool, start
 		case <-old.Done():
 		case <-time.After(3 * time.Second):
 		}
+		if old.slot != "" {
+			m.Slots.Release(old.slot)
+		}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.m[s.ID] != s {
 		return nil, errors.New("session ended")
 	}
-	if transcode && maxTranscodes > 0 {
-		n := 0
-		for _, o := range m.m {
-			if o.job != nil && !o.job.Params.VideoCopy {
-				select {
-				case <-o.job.Done():
-				default:
-					n++
-				}
-			}
-		}
-		if n >= maxTranscodes {
+	// One limit across MSE and HLS transcodes: each running transcode holds
+	// a slot until its ffmpeg exits.
+	if m.Slots == nil {
+		m.Slots = &Transcodes{}
+	}
+	slots, slot := m.Slots, ""
+	if transcode {
+		m.jobSeq++
+		slot = fmt.Sprintf("mse:%s:%d", s.ID, m.jobSeq)
+		if !slots.Acquire(slot, maxTranscodes) {
 			return nil, ErrLimit
 		}
 	}
-	// Keep the limit check and registration atomic across all sessions.
 	j, err := start()
 	if err != nil {
+		if slot != "" {
+			slots.Release(slot)
+		}
 		return nil, err
+	}
+	if slot != "" {
+		j.slot = slot
+		go func() { <-j.Done(); slots.Release(slot) }()
 	}
 	if old != nil {
 		s.Restarts++
@@ -344,17 +361,19 @@ func (m *Manager) StreamKey(id string) string {
 	return ""
 }
 
-// KeyUser resolves a stream key to its session's user.
-func (m *Manager) KeyUser(sid, key string) int64 {
+// KeyUser resolves a stream key to its session's user and the login token
+// behind it, which the caller must check is still valid (so signing out or
+// a password reset also ends HLS access).
+func (m *Manager) KeyUser(sid, key string) (int64, string) {
 	if key == "" {
-		return 0
+		return 0, ""
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if s := m.m[sid]; s != nil && s.streamKey != "" && subtle.ConstantTimeCompare([]byte(s.streamKey), []byte(key)) == 1 {
-		return s.UserID
+		return s.UserID, s.AuthToken
 	}
-	return 0
+	return 0, ""
 }
 
 // Active returns the number of playback sessions.

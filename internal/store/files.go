@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 )
@@ -153,8 +154,20 @@ func (s *Store) AllFiles() ([]*File, error) {
 	return s.queryFiles(`SELECT ` + fileCols + ` FROM files`)
 }
 
+// Failed probes are retried with a growing delay (1h, 2h, 4h, ... up to a
+// week): a network share timing out once shouldn't leave a file without
+// duration and codecs forever, but a corrupt file mustn't be probed in a loop.
+const (
+	probeRetryBase = 3600
+	probeRetryMax  = 7 * 24 * 3600
+)
+
+// FilesNeedingProbe returns files never probed (or changed since) and files
+// whose last probe failed and whose retry delay has passed.
 func (s *Store) FilesNeedingProbe() ([]*File, error) {
-	return s.queryFiles(`SELECT ` + fileCols + ` FROM files WHERE probed_at=0 ORDER BY added_at DESC`)
+	return s.queryFiles(`SELECT `+fileCols+` FROM files WHERE probed_at=0
+		OR (probe_error<>'' AND probed_at <= ? - MIN(?, ? << MIN(MAX(probe_attempts-1, 0), 20)))
+		ORDER BY added_at DESC`, now(), probeRetryMax, probeRetryBase)
 }
 
 func (s *Store) InsertFile(f *File) (int64, error) {
@@ -172,18 +185,28 @@ func (s *Store) InsertFile(f *File) (int64, error) {
 
 // MarkFileChanged records a new size/mtime and queues a re-probe.
 func (s *Store) MarkFileChanged(id, size, mtime int64) error {
-	_, err := s.db.Exec(`UPDATE files SET size=?,mtime=?,probed_at=0 WHERE id=?`, size, mtime, id)
+	_, err := s.db.Exec(`UPDATE files SET size=?,mtime=?,probed_at=0,probe_attempts=0 WHERE id=?`, size, mtime, id)
 	return err
 }
 
-func (s *Store) MoveFile(id, itemID int64) error {
-	_, err := s.db.Exec(`UPDATE files SET item_id=? WHERE id=?`, itemID, id)
-	return err
+// MoveFile re-points a file at another item (its name or folder now parses
+// differently) and carries the old item's watch state, intro segments,
+// history and manual match over, so they survive the old item being pruned.
+func (s *Store) MoveFile(id, oldItem, newItem int64) error {
+	return s.Tx(context.Background(), func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`UPDATE files SET item_id=? WHERE id=?`, newItem, id); err != nil {
+			return err
+		}
+		if oldItem == newItem {
+			return nil
+		}
+		return carryOver(tx, id, oldItem, newItem)
+	})
 }
 
 func (s *Store) SaveProbe(id int64, info *MediaInfo, probeErr string) error {
 	if info == nil {
-		_, err := s.db.Exec(`UPDATE files SET probed_at=?,probe_error=? WHERE id=?`, now(), probeErr, id)
+		_, err := s.db.Exec(`UPDATE files SET probed_at=?,probe_error=?,probe_attempts=probe_attempts+1 WHERE id=?`, now(), probeErr, id)
 		return err
 	}
 	var w, h int
@@ -199,25 +222,62 @@ func (s *Store) SaveProbe(id int64, info *MediaInfo, probeErr string) error {
 			}
 		}
 	}
-	_, err := s.db.Exec(`UPDATE files SET container=?,duration=?,bitrate=?,width=?,height=?,vcodec=?,acodec=?,hdr=?,info=?,probed_at=?,probe_error='' WHERE id=?`,
+	_, err := s.db.Exec(`UPDATE files SET container=?,duration=?,bitrate=?,width=?,height=?,vcodec=?,acodec=?,hdr=?,info=?,probed_at=?,probe_error='',probe_attempts=0 WHERE id=?`,
 		info.Format, info.Duration, info.Bitrate, w, h, vc, ac, hdr, jsonString(info), now(), id)
 	return err
 }
 
 // RelocateFile records that a file was moved/renamed, keeping its probe
-// data, and carries watch state, intro segments and history over to the new
-// item when the file changed item.
+// data, and carries watch state, intro segments, history and a manual match
+// over to the new item when the file changed item.
 func (s *Store) RelocateFile(id int64, newPath string, oldItem, newItem int64) error {
-	if _, err := s.db.Exec(`UPDATE files SET path=?, item_id=? WHERE id=?`, newPath, newItem, id); err != nil {
-		return err
+	return s.Tx(context.Background(), func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`UPDATE files SET path=?, item_id=? WHERE id=?`, newPath, newItem, id); err != nil {
+			return err
+		}
+		if oldItem == newItem {
+			return nil
+		}
+		return carryOver(tx, id, oldItem, newItem)
+	})
+}
+
+// carryOver copies what users and the matcher attached to oldItem onto
+// newItem after file fileID moved between them. Watch state is merged (the
+// most recent position wins, played/favorite stick); history of the moved
+// file follows it, and all history does once oldItem has no files left.
+// A movie's manual match (or a match the new item lacks) is copied too.
+func carryOver(tx *sql.Tx, fileID, oldItem, newItem int64) error {
+	stmts := []struct {
+		q    string
+		args []any
+	}{
+		{`INSERT INTO user_data(user_id,item_id,position,played,play_count,last_played,favorite)
+			SELECT user_id,?,position,played,play_count,last_played,favorite FROM user_data WHERE item_id=?
+			ON CONFLICT(user_id,item_id) DO UPDATE SET
+				position=CASE WHEN excluded.last_played>user_data.last_played THEN excluded.position ELSE user_data.position END,
+				last_played=MAX(user_data.last_played,excluded.last_played),
+				played=MAX(user_data.played,excluded.played),
+				play_count=MAX(user_data.play_count,excluded.play_count),
+				favorite=MAX(user_data.favorite,excluded.favorite)`, []any{newItem, oldItem}},
+		{`INSERT OR IGNORE INTO segments(item_id,kind,start,end,source) SELECT ?,kind,start,end,source FROM segments WHERE item_id=?`, []any{newItem, oldItem}},
+		{`UPDATE history SET item_id=? WHERE item_id=? AND (file_id=? OR NOT EXISTS (SELECT 1 FROM files WHERE item_id=?))`, []any{newItem, oldItem, fileID, oldItem}},
+		{`UPDATE items SET title=o.title,sort_title=o.sort_title,original_title=o.original_title,year=o.year,overview=o.overview,tagline=o.tagline,
+				rating=o.rating,content_rating=o.content_rating,genres=o.genres,cast_json=o.cast_json,studios=o.studios,runtime=o.runtime,
+				premiere=o.premiere,poster=o.poster,backdrop=o.backdrop,thumb=o.thumb,provider_ids=o.provider_ids,
+				meta_status=o.meta_status,meta_locked=o.meta_locked,updated_at=?
+			FROM (SELECT * FROM items WHERE id=?) AS o
+			WHERE items.id=? AND items.kind='movie' AND o.kind='movie' AND items.meta_locked=0
+				AND (o.meta_locked=1 OR (o.meta_status=? AND items.meta_status<>?))`,
+			[]any{now(), oldItem, newItem, MetaMatched, MetaMatched}},
+		// Keep the movie where it was in "recently added".
+		{`UPDATE items SET added_at=MIN(added_at,(SELECT added_at FROM items WHERE id=?)) WHERE id=? AND kind='movie'`, []any{oldItem, newItem}},
 	}
-	if oldItem == newItem {
-		return nil
+	for _, st := range stmts {
+		if _, err := tx.Exec(st.q, st.args...); err != nil {
+			return err
+		}
 	}
-	s.db.Exec(`INSERT OR IGNORE INTO user_data(user_id,item_id,position,played,play_count,last_played,favorite)
-		SELECT user_id,?,position,played,play_count,last_played,favorite FROM user_data WHERE item_id=?`, newItem, oldItem)
-	s.db.Exec(`INSERT OR IGNORE INTO segments(item_id,kind,start,end,source) SELECT ?,kind,start,end,source FROM segments WHERE item_id=?`, newItem, oldItem)
-	s.db.Exec(`UPDATE history SET item_id=? WHERE item_id=?`, newItem, oldItem)
 	return nil
 }
 

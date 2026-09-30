@@ -76,6 +76,7 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r)
 	remote := s.isRemote(ip)
 	cfg := s.St.Config()
+	req.HLSCopy = s.HLS.CanCopy(f)
 	plan, err := stream.Decide(cfg, f, req.PlanRequest, remote)
 	if err != nil {
 		writeErr(w, 422, err.Error())
@@ -107,6 +108,7 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 		Method: plan.Method, Reasons: plan.Reasons, VideoIn: vin, AudioIn: ain, VideoOut: plan.VideoOut, AudioOut: plan.AudioOut,
 		Container: stream.ContainerKey(f.Path), SrcBitrate: int(f.Info.Bitrate / 1000), OutBitrate: plan.Bitrate,
 		Client: clientName(r.UserAgent()), IP: ip, Remote: remote, Duration: f.Info.Duration, Position: req.Start,
+		AuthToken: s.token(r),
 	})
 	if err != nil {
 		writeErr(w, 403, err.Error())

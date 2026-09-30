@@ -234,8 +234,13 @@ are available in the UI. Performance depends on codec, resolution and hardware.
 Use an HTTPS reverse proxy or a private VPN. Lex itself speaks HTTP. Keep direct
 access to the backend restricted. If you enable **Trust reverse-proxy headers**,
 set **Trusted proxy peers** to the proxy's exact addresses/CIDRs. The proxy must
-replace forwarding headers and preserve the public `Host` header. Proxy trust is
-disabled for new installations and its allowlist defaults to loopback.
+append the client address to `X-Forwarded-For` (nginx
+`$proxy_add_x_forwarded_for`, Caddy, Traefik and Cloudflare do this by default),
+set `X-Forwarded-Proto`, and preserve the public `Host` header. Lex reads
+`X-Forwarded-For` from the right and uses the first address that isn't a trusted
+proxy peer, so list every proxy hop in a chain. `X-Real-IP` and
+`CF-Connecting-IP` are ignored. Proxy trust is disabled for new installations
+and its allowlist defaults to loopback.
 
 Clients outside **Local networks** receive the configured **Remote bitrate
 limit** during playback planning. All signed-in users can access all libraries;
@@ -295,7 +300,8 @@ gh repo create REPOSITORY_NAME --public --source=. --remote=origin --push
 ```
 
 Do not use `git push --mirror`: application checkpoint refs are local metadata.
-The initial publication history uses neutral contributor attribution. Keep
+Commits use the neutral "Lex contributors" identity; pull requests merged on
+GitHub record the maintainer's GitHub no-reply address, which the check allows. Keep
 personal data, logs, media and credentials out of future commits, screenshots
 and issues. See [contributing](CONTRIBUTING.md) and the
 [publication audit](docs/PUBLISH_AUDIT.md) for validation and remaining limits.
