@@ -1,14 +1,17 @@
 package stream
 
 import (
+	"bufio"
 	"context"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,39 +23,67 @@ import (
 )
 
 // HLS serves remuxed/transcoded video as an HLS VOD playlist for clients
-// without Media Source Extensions (older iOS, AirPlay). The playlist lists
-// fixed-length segments for the whole file; one ffmpeg per session writes
-// segments to disk and is restarted at a segment when the player seeks
-// outside what's been produced.
+// without Media Source Extensions (older iOS, AirPlay).
+//
+// The playlist is exact: segment boundaries are fixed before ffmpeg runs,
+// and ffmpeg's segment muxer cuts at exactly those times.
+//   - Transcodes get a boundary every HLSSegment seconds, and the encoder is
+//     forced to start a keyframe on each one.
+//   - Copied video can only be cut at the source's keyframes: a boundary is
+//     the first keyframe at least HLSSegment after the previous one, from
+//     the file's keyframe index (Matroska cues). Files without one are
+//     transcoded instead (see CanCopy).
+//
+// One ffmpeg per session produces the segments in order. It's restarted at
+// a segment when the player seeks outside what's been produced, and paused
+// while it's far ahead of the player.
 const HLSSegment = 6.0
+
+var errHLSStopped = errors.New("playback session ended")
+
+// copySeekPad: ffmpeg seeks a little before -ss (3/23 s for streams with
+// B-frames), which would land on the keyframe before a boundary.
+const copySeekPad = 0.15
 
 type HLS struct {
 	root   string
 	ffmpeg string
 	log    *logx.Logger
-	mu     sync.Mutex
-	jobs   map[string]*hlsJob
+	// Slots enforces the transcode limit together with MSE sessions.
+	Slots *Transcodes
+
+	mu   sync.Mutex
+	jobs map[string]*hlsJob
+	runs int // numbers ffmpeg runs, for transcode slot owners
+
+	kfMu sync.Mutex
+	kf   map[string][]float64 // keyframe index per file version; nil = none
 }
 
 type hlsJob struct {
-	key      string
-	dir      string
-	ext      string
-	start    int
+	key, sid, dir, ext string
+	copy               bool
+	bounds             []float64 // segment start times, then the file's end
+
+	mu       sync.Mutex
+	removed  bool
+	lastReq  int
+	lastSeen time.Time
+	start    int // first segment of the current ffmpeg run
 	cmd      *exec.Cmd
 	cancel   context.CancelFunc
 	done     chan struct{}
-	lastReq  int
-	lastSeen time.Time
 	paused   bool
-	errText  string
-	mu       sync.Mutex
+
+	errMu   sync.Mutex
+	errText string // why the current run failed; "" if it didn't
+	clean   bool   // the current run reached the end of the input
 }
 
 func NewHLS(root, ffmpeg string, log *logx.Logger) *HLS {
 	os.RemoveAll(root)
 	os.MkdirAll(root, 0o755)
-	h := &HLS{root: root, ffmpeg: ffmpeg, log: log, jobs: map[string]*hlsJob{}}
+	h := &HLS{root: root, ffmpeg: ffmpeg, log: log, Slots: &Transcodes{}, jobs: map[string]*hlsJob{}}
 	go h.janitor()
 	return h
 }
@@ -66,48 +97,148 @@ func SegmentExt(f *store.File, p Params) string {
 	return "ts"
 }
 
+// keyframes returns f's video keyframe times, or nil when the file has no
+// usable index. Cached per file version.
+func (h *HLS) keyframes(f *store.File) []float64 {
+	key := fmt.Sprintf("%s|%d", f.Path, f.Mtime)
+	h.kfMu.Lock()
+	if t, ok := h.kf[key]; ok {
+		h.kfMu.Unlock()
+		return t
+	}
+	h.kfMu.Unlock()
+	var times []float64
+	switch strings.ToLower(filepath.Ext(f.Path)) {
+	case ".mkv", ".mk3d", ".webm":
+		if t, err := MatroskaKeyframes(f.Path); err == nil && len(t) >= 2 {
+			times = t
+		}
+	}
+	h.kfMu.Lock()
+	if h.kf == nil || len(h.kf) > 512 {
+		h.kf = map[string][]float64{}
+	}
+	h.kf[key] = times
+	h.kfMu.Unlock()
+	return times
+}
+
+// CanCopy reports whether HLS can remux f's video: it needs keyframe times
+// to cut at, which only Matroska files index.
+func (h *HLS) CanCopy(f *store.File) bool { return h.keyframes(f) != nil }
+
+// bounds returns the segment start times followed by the end of the file.
+func (h *HLS) bounds(f *store.File, p Params) []float64 {
+	dur := f.Info.Duration
+	b := []float64{0}
+	if p.VideoCopy {
+		if kf := h.keyframes(f); kf != nil {
+			for _, t := range kf {
+				if t >= b[len(b)-1]+HLSSegment && t < dur-0.5 {
+					b = append(b, t)
+				}
+			}
+			return append(b, dur)
+		}
+	}
+	for i := 1; float64(i)*HLSSegment < dur-0.5; i++ {
+		b = append(b, float64(i)*HLSSegment)
+	}
+	return append(b, dur)
+}
+
 // Playlist builds the VOD media playlist. q is the query string (stream
 // params + key) appended to every URI.
-func Playlist(f *store.File, p Params, q url.Values) string {
-	dur := f.Info.Duration
-	n := int(math.Ceil(dur / HLSSegment))
+func (h *HLS) Playlist(f *store.File, p Params, q url.Values) string {
+	b := h.bounds(f, p)
 	ext := SegmentExt(f, p)
 	qs := q.Encode()
-	var b strings.Builder
-	target := int(HLSSegment)
-	if p.VideoCopy {
-		// Copied video splits at the source's keyframes: allow long segments.
-		target = int(HLSSegment) + 6
+	longest := 0.0
+	for i := 1; i < len(b); i++ {
+		longest = math.Max(longest, b[i]-b[i-1])
 	}
-	b.WriteString("#EXTM3U\n")
+	var s strings.Builder
+	s.WriteString("#EXTM3U\n")
 	if ext == "m4s" {
-		b.WriteString("#EXT-X-VERSION:7\n")
+		s.WriteString("#EXT-X-VERSION:7\n")
 	} else {
-		b.WriteString("#EXT-X-VERSION:3\n")
+		s.WriteString("#EXT-X-VERSION:3\n")
 	}
-	fmt.Fprintf(&b, "#EXT-X-TARGETDURATION:%d\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n", target)
-	if !p.VideoCopy {
-		b.WriteString("#EXT-X-INDEPENDENT-SEGMENTS\n")
-	}
+	fmt.Fprintf(&s, "#EXT-X-TARGETDURATION:%d\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-INDEPENDENT-SEGMENTS\n", int(math.Ceil(longest)))
 	if ext == "m4s" {
-		fmt.Fprintf(&b, "#EXT-X-MAP:URI=\"init.mp4?%s\"\n", qs)
+		fmt.Fprintf(&s, "#EXT-X-MAP:URI=\"init.mp4?%s\"\n", qs)
 	}
-	for i := 0; i < n; i++ {
-		d := HLSSegment
-		if i == n-1 {
-			d = dur - HLSSegment*float64(n-1)
-		}
-		fmt.Fprintf(&b, "#EXTINF:%.3f,\nseg/%d.%s?%s\n", d, i, ext, qs)
+	for i := 0; i+1 < len(b); i++ {
+		fmt.Fprintf(&s, "#EXTINF:%.3f,\nseg/%d.%s?%s\n", b[i+1]-b[i], i, ext, qs)
 	}
-	b.WriteString("#EXT-X-ENDLIST\n")
-	return b.String()
+	s.WriteString("#EXT-X-ENDLIST\n")
+	return s.String()
 }
 
 func jobKey(p Params) string {
 	return fmt.Sprintf("%s|%d|%v|%v|%d|%d|%d|%d|%d|%v", p.SessionID, p.FileID, p.VideoCopy, p.AudioCopy, p.Audio, p.Burn, p.Bitrate, p.Height, p.Channels, p.SW)
 }
 
-func (j *hlsJob) segPath(n int) string { return filepath.Join(j.dir, fmt.Sprintf("%d.%s", n, j.ext)) }
+var validSID = regexp.MustCompile(`^[A-Za-z0-9-]{1,128}$`)
+
+// job returns the job for these parameters, replacing the session's jobs
+// with other parameters (quality or audio switch).
+func (h *HLS) job(f *store.File, p Params) *hlsJob {
+	key := jobKey(p)
+	h.mu.Lock()
+	if j := h.jobs[key]; j != nil {
+		h.mu.Unlock()
+		return j
+	}
+	h.mu.Unlock()
+	b := h.bounds(f, p) // may read the file's index: outside the lock
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if j := h.jobs[key]; j != nil {
+		return j
+	}
+	for _, o := range h.jobs {
+		if o.sid == p.SessionID {
+			h.dropLocked(o)
+		}
+	}
+	j := &hlsJob{key: key, sid: p.SessionID, dir: filepath.Join(h.root, fmt.Sprintf("%s-%d", p.SessionID, time.Now().UnixNano())),
+		ext: SegmentExt(f, p), copy: p.VideoCopy, bounds: b, lastSeen: time.Now()}
+	h.jobs[key] = j
+	return j
+}
+
+// dropLocked removes a job and stops its ffmpeg (h.mu held). Requests
+// waiting on it get errHLSStopped, and it can't be started again.
+func (h *HLS) dropLocked(j *hlsJob) {
+	if h.jobs[j.key] == j {
+		delete(h.jobs, j.key)
+	}
+	j.mu.Lock()
+	j.removed = true
+	done := j.stopAsync()
+	j.mu.Unlock()
+	go func() {
+		if done != nil {
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+			}
+		}
+		os.RemoveAll(j.dir)
+	}()
+}
+
+// Stop ends every HLS job for a playback session.
+func (h *HLS) Stop(sid string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, j := range h.jobs {
+		if j.sid == sid {
+			h.dropLocked(j)
+		}
+	}
+}
 
 func (j *hlsJob) running() bool {
 	if j.done == nil {
@@ -121,146 +252,255 @@ func (j *hlsJob) running() bool {
 	}
 }
 
-// produced returns the highest complete segment number, or -1.
-func (j *hlsJob) produced() int {
-	best := -1
-	ents, _ := os.ReadDir(j.dir)
-	for _, e := range ents {
-		name := e.Name()
-		if !strings.HasSuffix(name, "."+j.ext) {
-			continue
-		}
-		if n, err := strconv.Atoi(strings.TrimSuffix(name, "."+j.ext)); err == nil && n > best {
-			best = n
-		}
-	}
-	return best
-}
-
 func (j *hlsJob) resume() {
-	if j.paused && j.cmd != nil && j.cmd.Process != nil {
+	if j.paused && j.cmd != nil {
 		proc.Resume(j.cmd.Process)
 		j.paused = false
 	}
 }
 
-func (j *hlsJob) stop() {
-	if j.cancel != nil {
-		j.resume()
-		j.cancel()
-		select {
-		case <-j.done:
-		case <-time.After(3 * time.Second):
+// stopAsync cancels the current run (j.mu held) and returns its done channel.
+func (j *hlsJob) stopAsync() chan struct{} {
+	if j.cancel == nil {
+		return nil
+	}
+	j.resume()
+	j.cancel()
+	return j.done
+}
+
+func (j *hlsJob) runState() (failed string, clean bool) {
+	j.errMu.Lock()
+	defer j.errMu.Unlock()
+	return j.errText, j.clean
+}
+
+// raw is where ffmpeg writes segment n; for fMP4 it's a self-contained MP4
+// that's split into the shared init segment and the media segment on use.
+func (j *hlsJob) raw(n int) string {
+	if j.ext == "m4s" {
+		return filepath.Join(j.dir, fmt.Sprintf("%d.mp4", n))
+	}
+	return filepath.Join(j.dir, fmt.Sprintf("%d.ts", n))
+}
+
+func (j *hlsJob) served(n int) string {
+	if n < 0 {
+		return filepath.Join(j.dir, "init.mp4")
+	}
+	return filepath.Join(j.dir, fmt.Sprintf("%d.%s", n, j.ext))
+}
+
+// listed returns the segments ffmpeg has finished (from its segment list).
+func (j *hlsJob) listed() map[int]bool {
+	out := map[int]bool{}
+	f, err := os.Open(filepath.Join(j.dir, "list.csv"))
+	if err != nil {
+		return out
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		name, _, _ := strings.Cut(sc.Text(), ",")
+		if n, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSuffix(name, ".ts"), ".mp4")); err == nil {
+			out[n] = true
 		}
 	}
+	return out
+}
+
+// ready makes segment n (or the init segment, n < 0) servable if ffmpeg has
+// finished it, returning its path.
+func (j *hlsJob) ready(n int, done map[int]bool) (string, bool) {
+	if n >= 0 && !done[n] {
+		return "", false
+	}
+	if j.ext != "m4s" {
+		p := j.served(n)
+		_, err := os.Stat(p)
+		return p, err == nil
+	}
+	if n < 0 {
+		p := j.served(-1)
+		if _, err := os.Stat(p); err == nil {
+			return p, true
+		}
+		for m := range done {
+			if split(j.raw(m), p, "") == nil {
+				return p, true
+			}
+		}
+		return "", false
+	}
+	p := j.served(n)
+	if _, err := os.Stat(p); err == nil {
+		return p, true
+	}
+	init := j.served(-1)
+	if _, err := os.Stat(init); err == nil {
+		init = ""
+	}
+	if err := split(j.raw(n), init, p); err != nil {
+		return "", false
+	}
+	return p, true
+}
+
+// split cuts a fragmented MP4 into its init segment (ftyp+moov, written to
+// init unless it's "") and its media segment (the rest, written to media
+// unless it's "").
+func split(src, init, media string) error {
+	b, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	off := 0
+	for off+8 <= len(b) {
+		size := int(binary.BigEndian.Uint32(b[off:]))
+		if size < 8 || off+size > len(b) {
+			return errors.New("bad MP4 box")
+		}
+		kind := string(b[off+4 : off+8])
+		off += size
+		if kind == "moov" {
+			if init != "" {
+				if err := writeAtomic(init, b[:off]); err != nil {
+					return err
+				}
+			}
+			if media != "" {
+				return writeAtomic(media, b[off:])
+			}
+			return nil
+		}
+	}
+	return errors.New("no moov box")
+}
+
+func writeAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".part-*")
+	if err != nil {
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return err
+	}
+	tmp.Close()
+	return os.Rename(tmp.Name(), path)
 }
 
 // Segment returns the path of segment n (or the init segment when n < 0),
 // starting or restarting ffmpeg as needed.
 func (h *HLS) Segment(ctx context.Context, cfg store.Config, ff FFInfo, f *store.File, p Params, n int, nice int) (string, error) {
-	key := jobKey(p)
-	h.mu.Lock()
-	j := h.jobs[key]
-	if j == nil {
-		// Parameters changed (quality/audio switch): drop the old job for this session.
-		for k, o := range h.jobs {
-			if strings.HasPrefix(k, p.SessionID+"|") {
-				go func(o *hlsJob) { o.stop(); os.RemoveAll(o.dir) }(o)
-				delete(h.jobs, k)
-			}
-		}
-		j = &hlsJob{key: key, dir: filepath.Join(h.root, fmt.Sprintf("%s-%d", sanitize(p.SessionID), time.Now().UnixNano())), ext: SegmentExt(f, p)}
-		h.jobs[key] = j
+	if !validSID.MatchString(p.SessionID) {
+		return "", errors.New("missing or invalid session")
 	}
-	h.mu.Unlock()
-
+	j := h.job(f, p)
+	if n >= len(j.bounds)-1 {
+		return "", fmt.Errorf("segment %d is past the end", n)
+	}
+	deadline := time.Now().Add(90 * time.Second)
 	j.mu.Lock()
-	j.lastSeen = time.Now()
+	defer j.mu.Unlock()
 	target := n
 	if n < 0 {
-		target = j.lastReq
+		target = max(j.lastReq, 0)
 	} else {
 		j.lastReq = n
 	}
-	path := j.segPath(n)
-	if n < 0 {
-		path = filepath.Join(j.dir, "init.mp4")
-	}
-	if _, err := os.Stat(path); err == nil {
-		j.resume()
-		j.mu.Unlock()
-		return path, nil
-	}
-	produced := j.produced()
-	if !j.running() || target < j.start || target > produced+3 {
-		j.mu.Unlock()
-		if err := h.start(j, cfg, ff, f, p, target, nice); err != nil {
-			return "", err
+	for {
+		if j.removed {
+			return "", errHLSStopped
 		}
-		j.mu.Lock()
-	}
-	j.resume()
-	j.mu.Unlock()
-
-	// Wait for ffmpeg to finish the segment.
-	deadline := time.Now().Add(90 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := os.Stat(path); err == nil {
+		j.lastSeen = time.Now()
+		done := j.listed()
+		if path, ok := j.ready(n, done); ok {
+			j.resume()
 			return path, nil
 		}
-		j.mu.Lock()
-		alive := j.running()
-		errText := j.errText
-		j.mu.Unlock()
-		if !alive {
-			if _, err := os.Stat(path); err == nil {
-				return path, nil
-			}
-			return "", fmt.Errorf("ffmpeg stopped before segment %d: %s", n, errText)
+		if n < 0 && len(done) > 0 {
+			// Finished segments exist but none could be split: ffmpeg
+			// output is unusable, and waiting won't help.
+			return "", errors.New("could not read the init segment")
 		}
+		produced := -1
+		for m := range done {
+			produced = max(produced, m)
+		}
+		failed, clean := j.runState()
+		running := j.running()
+		switch {
+		case !running && failed != "" && j.start == target:
+			return "", fmt.Errorf("ffmpeg failed at segment %d: %s", target, failed)
+		case !running && clean && target >= j.start && target > produced:
+			return "", fmt.Errorf("segment %d is past the end of the media", target)
+		case !running || target < j.start || target > max(produced, j.start-1)+3 || (target <= produced && !done[target]):
+			// Not running, a seek outside what this run will produce soon,
+			// or a segment already deleted to save space: (re)start here.
+			if err := h.startLocked(j, cfg, ff, f, p, target, nice); err != nil {
+				return "", err
+			}
+		}
+		j.resume()
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("timed out waiting for segment %d", n)
+		}
+		j.mu.Unlock()
 		select {
 		case <-ctx.Done():
+			j.mu.Lock()
 			return "", ctx.Err()
 		case <-time.After(150 * time.Millisecond):
 		}
+		j.mu.Lock()
 	}
-	return "", fmt.Errorf("timed out waiting for segment %d", n)
 }
 
-func sanitize(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' {
-			b.WriteRune(r)
+// startLocked runs ffmpeg from segment seg (j.mu held).
+func (h *HLS) startLocked(j *hlsJob, cfg store.Config, ff FFInfo, f *store.File, p Params, seg, nice int) error {
+	if done := j.stopAsync(); done != nil {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
 		}
 	}
-	if b.Len() == 0 {
-		return "x"
+	j.cmd, j.cancel, j.done, j.paused = nil, nil, nil, false
+	slot := ""
+	if !j.copy {
+		h.mu.Lock()
+		h.runs++
+		slot = fmt.Sprintf("hls:%s:%d", j.sid, h.runs)
+		h.mu.Unlock()
+		if !h.Slots.Acquire(slot, cfg.MaxTranscodes) {
+			return ErrLimit
+		}
 	}
-	return b.String()
-}
-
-func (h *HLS) start(j *hlsJob, cfg store.Config, ff FFInfo, f *store.File, p Params, seg, nice int) error {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if j.running() {
-		j.mu.Unlock()
-		j.stop()
-		j.mu.Lock()
+	release := func() {
+		if slot != "" {
+			h.Slots.Release(slot)
+		}
 	}
 	os.RemoveAll(j.dir)
 	if err := os.MkdirAll(j.dir, 0o755); err != nil {
+		release()
 		return err
 	}
-	p.Start = float64(seg) * HLSSegment
+	pp := p
+	pp.Start = j.bounds[seg]
+	if j.copy {
+		pp.Start += copySeekPad
+	}
 	if p.SW {
 		cfg.VideoEncoder = "libx264"
 	}
-	args, err := buildArgs(cfg, ff, f, p)
+	args, err := buildArgs(cfg, ff, f, pp)
 	if err != nil {
+		release()
 		return err
 	}
-	// Replace the fMP4 pipe output with the HLS muxer.
+	// Keep the input side, replace the fMP4 pipe output with the segmenter.
 	cut := len(args)
 	for i, a := range args {
 		if a == "-map_metadata" {
@@ -269,30 +509,46 @@ func (h *HLS) start(j *hlsJob, cfg store.Config, ff FFInfo, f *store.File, p Par
 		}
 	}
 	args = args[:cut]
-	segType, ext := "mpegts", "ts"
-	if j.ext == "m4s" {
-		segType, ext = "fmp4", "m4s"
-	}
-	args = append(args,
-		"-map_metadata", "-1", "-map_chapters", "-1", "-sn", "-dn",
-		"-avoid_negative_ts", "disabled", "-max_muxing_queue_size", "4096",
-		"-f", "hls", "-hls_time", strconv.Itoa(int(HLSSegment)), "-hls_list_size", "0",
-		"-start_number", strconv.Itoa(seg), "-hls_segment_type", segType,
-		"-hls_flags", "temp_file", "-hls_segment_filename", filepath.Join(j.dir, "%d."+ext))
-	if segType == "fmp4" {
-		args = append(args, "-hls_fmp4_init_filename", "init.mp4")
-	} else {
-		args = append(args, "-muxdelay", "0", "-muxpreload", "0")
-	}
-	args = append(args, filepath.Join(j.dir, "ffmpeg.m3u8"))
-	// buildArgs asks for progress on fd 3; HLS jobs don't report it.
-	for i, a := range args {
-		if a == "-progress" && i+1 < len(args) {
-			args[i+1] = "-"
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-progress" { // HLS jobs don't report progress
 			args = append(args[:i], args[i+2:]...)
 			break
 		}
 	}
+	if j.copy {
+		// Start at the boundary keyframe itself, and don't trim decoded
+		// streams (audio) to the padded seek point.
+		for i, a := range args {
+			if a == "-ss" {
+				args = append(args[:i], append([]string{"-noaccurate_seek"}, args[i:]...)...)
+				break
+			}
+		}
+	} else {
+		// A keyframe on every boundary (t counts from this run's start,
+		// which is itself a boundary).
+		args = append(args, "-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%g)", HLSSegment))
+	}
+	// Cut times are relative to the first packet: this run's boundary.
+	var times []string
+	for _, b := range j.bounds[seg+1 : len(j.bounds)-1] {
+		times = append(times, strconv.FormatFloat(b-j.bounds[seg]-0.001, 'f', 3, 64))
+	}
+	args = append(args, "-map_metadata", "-1", "-map_chapters", "-1", "-sn", "-dn",
+		"-avoid_negative_ts", "disabled", "-max_muxing_queue_size", "4096",
+		"-f", "segment", "-segment_start_number", strconv.Itoa(seg),
+		"-segment_list", filepath.Join(j.dir, "list.csv"), "-segment_list_type", "csv", "-reset_timestamps", "0")
+	if len(times) > 0 {
+		args = append(args, "-segment_times", strings.Join(times, ","))
+	} else {
+		args = append(args, "-segment_time", "100000")
+	}
+	if j.ext == "m4s" {
+		args = append(args, "-segment_format", "mp4", "-segment_format_options", "movflags=+frag_keyframe+empty_moov+default_base_moof")
+	} else {
+		args = append(args, "-segment_format", "mpegts", "-muxdelay", "0", "-muxpreload", "0")
+	}
+	args = append(args, strings.TrimSuffix(j.raw(seg), strconv.Itoa(seg)+filepath.Ext(j.raw(seg)))+"%d"+filepath.Ext(j.raw(seg)))
 	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, h.ffmpeg, args...)
 	cmd.WaitDelay = 3 * time.Second
@@ -300,103 +556,78 @@ func (h *HLS) start(j *hlsJob, cfg store.Config, ff FFInfo, f *store.File, p Par
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		cancel()
+		release()
 		return err
 	}
 	proc.Nice(cmd.Process.Pid, nice)
-	j.cmd, j.cancel, j.start, j.paused, j.errText = cmd, cancel, seg, false, ""
+	j.errMu.Lock()
+	j.errText, j.clean = "", false
+	j.errMu.Unlock()
 	done := make(chan struct{})
-	j.done = done
+	j.cmd, j.cancel, j.done, j.start = cmd, cancel, done, seg
 	go func() {
 		err := cmd.Wait()
-		j.mu.Lock()
-		if err != nil && ctx.Err() == nil {
+		// Not j.mu: startLocked and dropLocked wait for done while holding it.
+		j.errMu.Lock()
+		switch {
+		case err == nil:
+			j.clean = true
+		case ctx.Err() == nil:
 			j.errText = strings.TrimSpace(stderr.String())
 			if j.errText == "" {
 				j.errText = err.Error()
 			}
 			h.log.Warnf("hls ffmpeg: %s", j.errText)
 		}
-		j.mu.Unlock()
+		j.errMu.Unlock()
 		cancel()
+		release()
 		close(done)
 	}()
-	h.log.Debugf("hls: %s from segment %d", filepath.Base(f.Path), seg)
+	h.log.Debugf("hls: %s from segment %d (%s)", filepath.Base(f.Path), seg, map[bool]string{true: "copy", false: "transcode"}[j.copy])
 	return nil
 }
 
-// Stop ends every HLS job for a playback session.
-func (h *HLS) Stop(sid string) {
-	h.mu.Lock()
-	var jobs []*hlsJob
-	for k, j := range h.jobs {
-		if strings.HasPrefix(k, sid+"|") {
-			jobs = append(jobs, j)
-			delete(h.jobs, k)
-		}
-	}
-	h.mu.Unlock()
-	for _, j := range jobs {
-		j.stop()
-		os.RemoveAll(j.dir)
-	}
-}
-
-// ActiveTranscodesExcept counts running HLS jobs that re-encode video,
-// ignoring the given session (it's about to be replaced).
-func (h *HLS) ActiveTranscodesExcept(sid string) int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	n := 0
-	for k, j := range h.jobs {
-		parts := strings.Split(k, "|")
-		if len(parts) > 2 && parts[0] != sid && parts[2] == "false" && j.running() {
-			n++
-		}
-	}
-	return n
-}
-
-// janitor throttles ffmpeg when it's far ahead of the player, deletes old
+// janitor pauses ffmpeg when it's far ahead of the player, deletes old
 // segments and drops idle jobs.
 func (h *HLS) janitor() {
 	for range time.Tick(5 * time.Second) {
 		h.mu.Lock()
-		jobs := make(map[string]*hlsJob, len(h.jobs))
-		for k, j := range h.jobs {
-			jobs[k] = j
+		jobs := make([]*hlsJob, 0, len(h.jobs))
+		for _, j := range h.jobs {
+			jobs = append(jobs, j)
 		}
 		h.mu.Unlock()
-		for k, j := range jobs {
+		for _, j := range jobs {
 			j.mu.Lock()
-			idle := time.Since(j.lastSeen)
-			if idle > 3*time.Minute {
+			if j.removed {
 				j.mu.Unlock()
-				j.stop()
-				os.RemoveAll(j.dir)
+				continue
+			}
+			if time.Since(j.lastSeen) > 3*time.Minute {
+				j.mu.Unlock()
 				h.mu.Lock()
-				delete(h.jobs, k)
+				h.dropLocked(j)
 				h.mu.Unlock()
 				continue
 			}
-			produced := j.produced()
-			if j.running() && !j.paused && produced-j.lastReq > int(120/HLSSegment) {
-				if proc.Suspend(j.cmd.Process) {
-					j.paused = true
-				}
-			} else if j.paused && produced-j.lastReq < int(60/HLSSegment) {
+			done := j.listed()
+			produced := -1
+			for n := range done {
+				produced = max(produced, n)
+			}
+			ahead := produced - j.lastReq
+			if j.running() && !j.paused && ahead > int(120/HLSSegment) {
+				j.paused = proc.Suspend(j.cmd.Process)
+			} else if j.paused && ahead < int(60/HLSSegment) {
 				j.resume()
 			}
 			// Keep a little history for short rewinds.
-			ents, _ := os.ReadDir(j.dir)
-			var old []string
-			for _, e := range ents {
-				if n, err := strconv.Atoi(strings.TrimSuffix(e.Name(), "."+j.ext)); err == nil && n < j.lastReq-10 {
-					old = append(old, e.Name())
+			for n := range done {
+				if n < j.lastReq-10 {
+					os.Remove(j.raw(n))
+					os.Remove(j.served(n))
 				}
-			}
-			sort.Strings(old)
-			for _, name := range old {
-				os.Remove(filepath.Join(j.dir, name))
 			}
 			j.mu.Unlock()
 		}

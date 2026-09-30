@@ -109,6 +109,7 @@ func main() {
 	intros.Resolve = mediaCache.Resolve
 	hls := stream.NewHLS(filepath.Join(abs, "hls"), *ffmpeg, log)
 	sessions.OnEnd = hls.Stop
+	hls.Slots = sessions.Slots // one transcode limit across MSE and HLS
 	tricks := trickplay.New(st, log, *ffmpeg, filepath.Join(abs, "trickplay"))
 	tricks.Resolve = mediaCache.Peek
 	tricks.Busy = func() bool { return sessions.Active() > 0 }

@@ -18,8 +18,12 @@ func (s *Server) hlsAuth(next http.HandlerFunc) http.Handler {
 		u, err := s.St.TokenUser(s.token(r))
 		if err != nil {
 			q := r.URL.Query()
-			if uid := s.Sess.KeyUser(q.Get("sid"), q.Get("k")); uid > 0 {
-				u, err = s.St.User(uid)
+			// The stream key is only as good as the login that opened the
+			// session: signing out or a password reset revokes it too.
+			if uid, tok := s.Sess.KeyUser(q.Get("sid"), q.Get("k")); uid > 0 {
+				if ku, kerr := s.St.TokenUser(tok); kerr == nil && ku.ID == uid {
+					u, err = ku, nil
+				}
 			}
 		}
 		if err != nil || u == nil {
@@ -54,7 +58,7 @@ func (s *Server) hlsPlaylist(w http.ResponseWriter, r *http.Request) {
 	q.Del("t")
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Write([]byte(stream.Playlist(f, p, q)))
+	w.Write([]byte(s.HLS.Playlist(f, p, q)))
 }
 
 func (s *Server) hlsSegment(w http.ResponseWriter, r *http.Request) {
@@ -83,12 +87,9 @@ func (s *Server) hlsSegment(w http.ResponseWriter, r *http.Request) {
 		}
 		n = v
 	}
-	if !p.VideoCopy && cfg.MaxTranscodes > 0 {
-		_, tx := s.Sess.ActiveJobs()
-		if tx+s.HLS.ActiveTranscodesExcept(p.SessionID) >= cfg.MaxTranscodes {
-			writeErr(w, 503, stream.ErrLimit.Error())
-			return
-		}
+	if p.SessionID == "" {
+		writeErr(w, 400, "missing session")
+		return
 	}
 	method := "remux"
 	if !p.VideoCopy {
@@ -109,6 +110,10 @@ func (s *Server) hlsSegment(w http.ResponseWriter, r *http.Request) {
 	path, err := s.HLS.Segment(r.Context(), cfg, s.FF, f, p, n, cfg.FFmpegNice)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
+			return
+		}
+		if errors.Is(err, stream.ErrLimit) {
+			writeErr(w, 503, err.Error())
 			return
 		}
 		s.Log.Warnf("hls %s seg %d: %v", f.Path, n, err)
