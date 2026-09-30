@@ -44,10 +44,13 @@ export function lineChart(box, opts) {
   if (!canvas) { canvas = h('canvas', { class: 'lc chart' }); box.prepend(canvas); }
   const height = opts.height || 160;
   const { ctx, w, h: H } = setupCanvas(canvas, height);
-  const padL = 46, padR = 8, padT = 8, padB = 20;
+  const padR = 8, padT = 8, padB = 20;
   const n = opts.times.length;
   const all = opts.series.flatMap((s) => s.values);
   const max = opts.max || niceMax(Math.max(0, ...all) * 1.1);
+  // Room for the widest y-axis label.
+  ctx.font = '11px system-ui, sans-serif';
+  const padL = Math.ceil(Math.max(...[0, 1, 2, 3].map((i) => ctx.measureText(opts.fmt((max * i) / 3)).width))) + 12;
   const x = (i) => padL + (n <= 1 ? 0 : (i / (n - 1)) * (w - padL - padR));
   const y = (v) => padT + (1 - Math.min(v, max) / max) * (H - padT - padB);
   // Grid + y labels
@@ -127,9 +130,13 @@ export function columnChart(box, opts) {
   const height = opts.height || 180;
   const draw = (hover = -1) => {
     const { ctx, w, h: H } = setupCanvas(canvas, height);
-    const padL = 40, padR = 6, padT = 10, padB = 22;
+    const padR = 6, padT = 10, padB = 22;
     const n = opts.values.length;
-    const max = niceMax(Math.max(0, ...opts.values));
+    let max = niceMax(Math.max(0, ...opts.values));
+    // Counts: keep the three gridlines on whole numbers.
+    if (opts.values.every(Number.isInteger)) max = Math.max(3, Math.ceil(max / 3) * 3);
+    ctx.font = '11px system-ui, sans-serif';
+    const padL = Math.ceil(Math.max(...[0, 1, 2, 3].map((i) => ctx.measureText(opts.fmt((max * i) / 3)).width))) + 12;
     const band = (w - padL - padR) / Math.max(1, n);
     const bw = Math.max(2, Math.min(24, band - 2));
     const y = (v) => padT + (1 - v / max) * (H - padT - padB);

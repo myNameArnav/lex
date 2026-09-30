@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -147,10 +148,17 @@ type PlaybackStats struct {
 	Hours24        []Bucket  `json:"hoursOfDay"`
 }
 
-func (s *Store) PlaybackStats(days int) (*PlaybackStats, error) {
+// titleKey groups history rows by title: episodes count toward their show.
+const titleKey = `(SELECT CASE WHEN i.show_id > 0 THEN 's' || i.show_id ELSE 'i' || i.id END FROM items i WHERE i.id = history.item_id)`
+
+// PlaybackStats summarises the last days of history. tzMinutes is the
+// viewer's offset east of UTC, so days and hours of day are their local ones
+// (the server often runs in UTC, e.g. in a container).
+func (s *Store) PlaybackStats(days, tzMinutes int) (*PlaybackStats, error) {
 	since := time.Now().AddDate(0, 0, -days).Unix()
+	tz := fmt.Sprintf("%+d minutes", tzMinutes)
 	st := &PlaybackStats{}
-	err := s.db.QueryRow(`SELECT COUNT(*),COALESCE(SUM(watched),0)/3600.0,COALESCE(SUM(bytes),0),COUNT(DISTINCT item_id),COALESCE(SUM(remote),0),
+	err := s.db.QueryRow(`SELECT COUNT(*),COALESCE(SUM(watched),0)/3600.0,COALESCE(SUM(bytes),0),COUNT(DISTINCT COALESCE(`+titleKey+`, 'i' || item_id)),COALESCE(SUM(remote),0),
 		COALESCE(SUM(buffer_events),0),COALESCE(SUM(buffer_seconds),0) FROM history WHERE started_at>=?`, since).
 		Scan(&st.Plays, &st.Hours, &st.Bytes, &st.UniqueItems, &st.RemotePlays, &st.BufferEvents, &st.BufferSeconds)
 	if err != nil {
@@ -165,7 +173,7 @@ func (s *Store) PlaybackStats(days int) (*PlaybackStats, error) {
 	if st.Clients, err = s.buckets(`SELECT client, COUNT(*), SUM(watched)/3600.0 FROM history WHERE started_at>=? GROUP BY client ORDER BY 2 DESC LIMIT 20`, since); err != nil {
 		return nil, err
 	}
-	if st.TopItems, err = s.buckets(`SELECT title, COUNT(*), SUM(watched)/3600.0 FROM history WHERE started_at>=? GROUP BY item_id ORDER BY 2 DESC, 3 DESC LIMIT 15`, since); err != nil {
+	if st.TopItems, err = s.buckets(`SELECT MAX(title), COUNT(*), SUM(watched)/3600.0 FROM history WHERE started_at>=? GROUP BY COALESCE(`+titleKey+`, 'i' || item_id) ORDER BY 2 DESC, 3 DESC LIMIT 15`, since); err != nil {
 		return nil, err
 	}
 	if st.Reasons, err = s.buckets(`SELECT reasons, COUNT(*), SUM(watched)/3600.0 FROM history WHERE started_at>=? AND reasons!='' GROUP BY reasons ORDER BY 2 DESC LIMIT 15`, since); err != nil {
@@ -174,10 +182,10 @@ func (s *Store) PlaybackStats(days int) (*PlaybackStats, error) {
 	if st.BufferByMethod, err = s.buckets(`SELECT method, SUM(buffer_events), CASE WHEN SUM(watched)>0 THEN SUM(buffer_seconds)*100.0/SUM(watched) ELSE 0 END FROM history WHERE started_at>=? GROUP BY method`, since); err != nil {
 		return nil, err
 	}
-	if st.Hours24, err = s.buckets(`SELECT strftime('%H', started_at, 'unixepoch', 'localtime'), COUNT(*), SUM(watched)/3600.0 FROM history WHERE started_at>=? GROUP BY 1 ORDER BY 1`, since); err != nil {
+	if st.Hours24, err = s.buckets(`SELECT strftime('%H', started_at, 'unixepoch', ?), COUNT(*), SUM(watched)/3600.0 FROM history WHERE started_at>=? GROUP BY 1 ORDER BY 1`, tz, since); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT date(started_at,'unixepoch','localtime') d, COUNT(*), SUM(watched)/3600.0, SUM(bytes) FROM history WHERE started_at>=? GROUP BY d ORDER BY d`, since)
+	rows, err := s.db.Query(`SELECT date(started_at,'unixepoch',?) d, COUNT(*), SUM(watched)/3600.0, SUM(bytes) FROM history WHERE started_at>=? GROUP BY d ORDER BY d`, tz, since)
 	if err != nil {
 		return nil, err
 	}

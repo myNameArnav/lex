@@ -453,56 +453,77 @@ function meter(pct, hotAt = 85) {
 
 const bps = (bytesPerSec) => fmtBitrate(bytesPerSec * 8);
 
+// Live: what's playing first, then server health (each card with its own
+// last-hour chart), then storage, then one line about the host.
 async function liveTab(ctx) {
-  const tiles = h('div', { class: 'stats-grid' });
-  const cores = h('div');
   const sessionsBox = h('div', { class: 'sessions' });
-  const charts = { cpu: h('div'), net: h('div'), temp: h('div'), stream: h('div') };
-  const extra = h('div', { class: 'info-grid', style: { marginTop: '14px' } });
-  const sparkCanvases = {};
-  const spark = (k) => (sparkCanvases[k] ||= h('canvas'));
+  const nowTitle = h('h2', { class: 'section-title' }, 'Now playing');
+  const cards = { cpu: h('div', { class: 'dcard' }), mem: h('div', { class: 'dcard' }), temp: h('div', { class: 'dcard' }), net: h('div', { class: 'dcard' }) };
+  const charts = { cpu: h('div', { class: 'dchart' }), mem: h('div', { class: 'dchart' }), temp: h('div', { class: 'dchart' }), net: h('div', { class: 'dchart' }) };
+  const storage = h('div', { class: 'panel' });
+  const host = h('div', { class: 'dash-host' });
+  // Element.append would print null and stringify arrays; flatten like h().
+  const put = (el, ...kids) => clear(el).append(...kids.flat(Infinity).filter((k) => k != null && k !== false));
+  const card = (el, label, value, sub, ...rest) => put(el,
+    h('div', { class: 'dcard-head' }, h('span', { class: 'l' }, label), h('span', { class: 'v' }, value)),
+    h('div', { class: 'sub' }, sub || ''), ...rest);
+  let hist = [];
 
   const renderSystem = async (withHistory) => {
     const r = await api(`/api/admin/stats/system${withHistory ? '?history=1' : ''}`).catch(() => null);
     if (!r || !ctx.isCurrent()) return;
     const s = r.snapshot, n = s.now;
-    if (withHistory || !renderSystem.hist) renderSystem.hist = r.history || [];
-    else { renderSystem.hist.push(n); if (renderSystem.hist.length > 1200) renderSystem.hist.shift(); }
-    const hist = renderSystem.hist;
-    const last = (k, count = 40) => hist.slice(-count).map((p) => p[k]);
+    if (withHistory) hist = r.history || [];
+    else { hist.push(n); if (hist.length > 1200) hist.shift(); }
     const memPct = s.memTotal ? (s.memUsed / s.memTotal) * 100 : 0;
-    clear(tiles).append(
-      stat('CPU', `${n.cpu.toFixed(0)}%`, `load ${s.load.map((x) => x.toFixed(2)).join(' ')}${s.freqMhz ? ` · ${Math.round(s.freqMhz)} MHz` : ''}`, [meter(n.cpu), spark('cpu')]),
-      stat('Memory', `${memPct.toFixed(0)}%`, `${fmtBytes(s.memUsed)} of ${fmtBytes(s.memTotal)}${s.swapTotal ? ` · swap ${fmtBytes(s.swapUsed)}` : ''}`, meter(memPct, 90)),
-      stat('Temperature', n.temp ? `${n.temp.toFixed(1)}°C` : '—', s.throttleFlags?.length ? s.throttleFlags.join(', ') : (s.throttled ? 'no throttling' : ''), [n.temp ? meter((n.temp / 85) * 100, 88) : null, spark('temp')]),
-      stat('Network out', bps(n.tx), `in ${bps(n.rx)}`, spark('tx')),
-      stat('Streaming', bps(n.stream), `${n.sessions} session${n.sessions === 1 ? '' : 's'} · ${r.remuxJobs} remux · ${r.transcodeJobs} transcode`, spark('stream')),
-      stat('Disk I/O', `${fmtBytes(n.dr)}/s`, `write ${fmtBytes(n.dw)}/s`, spark('dr')),
-      ...(r.cache?.enabled ? [stat('SSD cache', fmtBytes(r.cache.usedBytes), `of ${fmtBytes(r.cache.maxBytes)} · ${r.cache.files} files${r.cache.current ? ` · copying ${Math.round((r.cache.current.done / r.cache.current.size) * 100)}%` : ''}`, meter((r.cache.usedBytes / r.cache.maxBytes) * 100, 97))] : []),
-      stat('Lex process', fmtBytes(s.procRss), `CPU ${s.procCpu.toFixed(1)}% · heap ${fmtBytes(s.goHeap)} · ${s.goroutines} goroutines`),
-      stat('Uptime', fmtUptime(s.uptime), `${s.model || s.os} · ${s.arch} · ${s.numCpu} cores`));
-    sparkline(spark('cpu'), last('cpu'), 100);
-    sparkline(spark('temp'), last('temp'));
-    sparkline(spark('tx'), last('tx'));
-    sparkline(spark('stream'), last('stream'));
-    sparkline(spark('dr'), last('dr'));
-    clear(cores).append(h('div', { class: 'cores' }, (s.cores || []).map((c, i) => h('div', { class: 'core', title: `Core ${i}: ${c.toFixed(0)}%` }, h('i', { style: { height: `${c}%` } }), h('span', null, `${c.toFixed(0)}%`)))));
-    clear(extra).append(
-      h('div', { class: 'panel' }, h('h3', null, 'Storage'), (s.disks || []).map((d) => h('div', { style: { marginBottom: '10px' } },
-        h('div', { class: 'row small' }, h('span', { class: 'mono grow ellipsis' }, d.path), h('span', { class: 'muted' }, `${fmtBytes(d.used)} / ${fmtBytes(d.total)}`)), meter((d.used / d.total) * 100, 92)))),
-      h('div', { class: 'panel' }, h('h3', null, 'Interfaces'), h('dl', { class: 'kv' }, (s.ifaces || []).map((i) => [h('dt', null, i.name), h('dd', null, `↑ ${bps(i.tx)} · ↓ ${bps(i.rx)} (total ↑ ${fmtBytes(i.txTotal)})`)]))));
+    const flags = s.throttleFlags?.length ? s.throttleFlags.join(', ') : '';
+    card(cards.cpu, 'CPU', `${n.cpu.toFixed(0)}%`,
+      `load ${s.load.map((x) => x.toFixed(2)).join(' · ')}${s.freqMhz ? ` · ${Math.round(s.freqMhz)} MHz` : ''}`,
+      h('div', { class: 'cores' }, (s.cores || []).map((c, i) => h('div', { class: 'core', title: `Core ${i}: ${c.toFixed(0)}%` }, h('i', { style: { height: `${c}%` } }), h('span', null, `${c.toFixed(0)}`)))),
+      charts.cpu);
+    card(cards.mem, 'Memory', `${memPct.toFixed(0)}%`,
+      `${fmtBytes(s.memUsed)} of ${fmtBytes(s.memTotal)}${s.swapTotal ? ` · swap ${fmtBytes(s.swapUsed)}` : ''}`,
+      h('div', { class: 'small dim' }, `Lex uses ${fmtBytes(s.procRss)} (Go heap ${fmtBytes(s.goHeap)}) · ${s.procCpu.toFixed(1)}% CPU`),
+      charts.mem);
+    // Hosts without a sensor (VMs, containers on a laptop) get no card.
+    const hasTemp = !!n.temp || hist.some((p) => p.temp);
+    cards.temp.hidden = !hasTemp;
+    if (hasTemp) {
+      card(cards.temp, 'Temperature', n.temp ? `${n.temp.toFixed(0)}°C` : '—',
+        flags ? h('span', { class: 'warn' }, flags) : s.throttled ? 'No throttling' : '',
+        charts.temp);
+    }
+    card(cards.net, 'Network', bps(n.tx),
+      `out · in ${bps(n.rx)} · streaming ${bps(n.stream)}`,
+      charts.net);
     const times = hist.map((p) => p.t);
     if (times.length > 1) {
-      lineChart(charts.cpu, { times, series: [{ name: 'CPU', values: hist.map((p) => p.cpu) }, { name: 'Lex process', values: hist.map((p) => p.pcpu / Math.max(1, s.numCpu)) }], fmt: (v) => `${v.toFixed(0)}%`, max: 100 });
-      lineChart(charts.net, { times, series: [{ name: 'Out', values: hist.map((p) => p.tx) }, { name: 'In', values: hist.map((p) => p.rx) }], fmt: (v) => bps(v) });
-      lineChart(charts.temp, { times, series: [{ name: 'SoC temp', values: hist.map((p) => p.temp) }], fmt: (v) => `${v.toFixed(0)}°`, max: 90 });
-      lineChart(charts.stream, { times, series: [{ name: 'Streaming', values: hist.map((p) => p.stream) }], fmt: (v) => bps(v) });
+      lineChart(charts.cpu, { times, height: 96, max: 100, fmt: (v) => `${v.toFixed(0)}%`, series: [{ name: 'Host', values: hist.map((p) => p.cpu) }, { name: 'Lex', values: hist.map((p) => p.pcpu / Math.max(1, s.numCpu)) }] });
+      lineChart(charts.mem, { times, height: 96, max: 100, fmt: (v) => `${v.toFixed(0)}%`, series: [{ name: 'Used', values: hist.map((p) => p.mem) }] });
+      if (hasTemp) lineChart(charts.temp, { times, height: 96, max: 90, fmt: (v) => `${v.toFixed(0)}°`, series: [{ name: 'SoC', values: hist.map((p) => p.temp) }] });
+      lineChart(charts.net, { times, height: 96, fmt: (v) => bps(v), series: [{ name: 'Out', values: hist.map((p) => p.tx) }, { name: 'Streaming', values: hist.map((p) => p.stream) }] });
     }
+    // Storage: disks, SSD cache and current disk activity in one place.
+    const row = (name, used, total, hot, note) => h('div', { class: 'srow' },
+      h('div', { class: 'row small' }, h('span', { class: 'grow ellipsis' }, name), h('span', { class: 'muted nowrap' }, note || `${fmtBytes(used)} of ${fmtBytes(total)} · ${fmtBytes(Math.max(0, total - used))} free`)),
+      meter(total ? (used / total) * 100 : 0, hot));
+    const c = r.cache;
+    put(storage,
+      h('div', { class: 'row', style: { marginBottom: '10px' } }, h('h3', { class: 'grow', style: { margin: 0 } }, 'Storage'),
+        h('span', { class: 'small muted' }, `read ${fmtBytes(n.dr)}/s · write ${fmtBytes(n.dw)}/s`)),
+      (s.disks || []).map((d) => row(h('span', { class: 'mono' }, d.path), d.used, d.total, 92)),
+      c?.enabled ? row('SSD cache', c.usedBytes, c.maxBytes, 97,
+        `${fmtBytes(c.usedBytes)} of ${fmtBytes(c.maxBytes)} · ${c.files} files${c.current ? ` · copying ${Math.round((c.current.done / c.current.size) * 100)}%` : ''}`) : null);
+    host.textContent = [s.model || s.os, s.arch, `${s.numCpu} cores`, `up ${fmtUptime(s.uptime)}`,
+      `${r.remuxJobs} remux · ${r.transcodeJobs} transcode jobs`].filter(Boolean).join('  ·  ');
   };
 
   const renderSessions = async () => {
     const list = await api('/api/admin/stats/sessions').catch(() => null);
     if (!list || !ctx.isCurrent()) return;
+    nowTitle.textContent = list.length ? `Now playing · ${list.length}` : 'Now playing';
+    // Keep expanded "details" open across refreshes.
+    const open = new Set([...sessionsBox.querySelectorAll('details[open]')].map((d) => d.dataset.id));
     clear(sessionsBox);
     if (!list.length) { sessionsBox.appendChild(h('div', { class: 'panel dim' }, 'Nothing is playing right now.')); return; }
     list.sort((a, b) => b.startedAt - a.startedAt);
@@ -510,50 +531,53 @@ async function liveTab(ctx) {
       const c = s.clientStats || {};
       const j = s.job;
       const pct = s.duration ? (s.position / s.duration) * 100 : 0;
-      const kv = [
+      const health = [
+        ['Buffer', `${(c.bufferAhead || 0).toFixed(0)}s`, (c.bufferAhead || 0) < 3 ? 'bad' : (c.bufferAhead || 0) < 10 ? 'warn' : ''],
+        ['Delivery', bps(s.rate)],
+        ['Stalls', c.bufferEvents ? `${c.bufferEvents} · ${(c.bufferSeconds || 0).toFixed(0)}s` : 'none', c.bufferEvents ? 'warn' : ''],
+        ['Read from', s.cached ? 'SSD cache' : 'Library disk'],
+      ];
+      const details = [
         ['Video', `${s.videoIn || '?'} → ${s.videoOut || ''}`],
         ['Audio', `${s.audioIn || '?'} → ${s.audioOut || ''}`],
-        ['Bitrate', `${fmtBitrate((s.srcBitrate || 0) * 1000)} source${s.method === 'transcode' ? ` → ${fmtBitrate((s.outBitrate || 0) * 1000)}` : ''}`],
-        ['Delivery', `${bps(s.rate)} · ${fmtBytes(s.bytes)} sent`],
-        ['Client buffer', `${(c.bufferAhead || 0).toFixed(0)}s ahead${c.buffering ? ' · buffering!' : ''}`],
-        ['Client speed', c.bandwidth ? fmtBitrate(c.bandwidth) : '—'],
-        ['Stalls', `${c.bufferEvents || 0} (${(c.bufferSeconds || 0).toFixed(1)}s)`],
-        ['Frames', c.totalFrames ? `${c.droppedFrames} dropped of ${c.totalFrames}` : '—'],
-        ['Client', `${s.client} · ${s.ip}${s.remote ? ' (remote)' : ' (local)'}`],
-        ['Source', s.cached ? 'SSD cache' : 'library disk'],
-        ['Rendered', c.resolution || '—'],
+        ['Bitrate', `${fmtBitrate((s.srcBitrate || 0) * 1000)} source${s.method === 'transcode' ? ` → ${fmtBitrate((s.outBitrate || 0) * 1000)}` : ''} · ${fmtBytes(s.bytes)} sent`],
+        ['Client', `${s.client} · ${s.ip}${s.remote ? ' (remote)' : ' (local)'} · ${c.bandwidth ? fmtBitrate(c.bandwidth) : '—'} download`],
+        ['Picture', `${c.resolution || '—'}${c.totalFrames ? ` · ${c.droppedFrames} of ${c.totalFrames} frames dropped` : ''}`],
       ];
-      if (j) kv.push(['ffmpeg', j.exited ? (j.error ? `exited: ${j.error}` : 'finished') : `${j.throttled ? 'throttled (client buffer full)' : `${(j.speed || 0).toFixed(2)}x · ${Math.round(j.fps || 0)} fps`} · CPU ${Math.round(j.cpu || 0)}%`], ['Processed', `to ${fmtTime(j.outTime)} · restarts ${s.restarts}`]);
+      if (j) details.push(['ffmpeg', j.exited ? (j.error ? `exited: ${j.error}` : 'finished') : `${j.throttled ? 'waiting (client buffer full)' : `${(j.speed || 0).toFixed(2)}x · ${Math.round(j.fps || 0)} fps`} · CPU ${Math.round(j.cpu || 0)}% · ${s.restarts} restart${s.restarts === 1 ? '' : 's'}`]);
+      const det = h('details', { 'data-id': s.id, open: open.has(s.id) }, h('summary', null, 'Details'),
+        h('dl', { class: 'kv' }, details.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])));
       sessionsBox.appendChild(h('div', { class: 'session' },
         h('a', { class: 'poster', href: `#/item/${s.itemId}` }, h('img', { src: img({ id: s.itemId }, 'poster', 160), alt: '' })),
         h('div', { style: { minWidth: 0 } },
           h('div', { class: 'row' },
-            h('div', { class: 'grow', style: { minWidth: 0 } }, h('h3', { class: 'ellipsis' }, s.title), h('div', { class: 'dim small ellipsis' }, `${s.subtitle || ''} — ${s.userName}`)),
-            h('span', { class: `method ${s.method}` }, s.method === 'remux' ? 'direct stream' : s.method === 'direct' ? 'direct play' : 'transcode'),
+            h('div', { class: 'grow', style: { minWidth: 0 } },
+              h('h3', { class: 'ellipsis' }, s.title),
+              h('div', { class: 'dim small ellipsis' }, [s.subtitle, s.userName, s.client, s.remote ? 'remote' : 'local'].filter(Boolean).join(' · '))),
+            h('span', { class: `method ${s.method}`, title: s.reasons?.join('; ') || '' }, s.method === 'remux' ? 'direct stream' : s.method === 'direct' ? 'direct play' : 'transcode'),
             h('button', { class: 'btn sm danger', title: 'Stop this stream', onclick: async () => { if (await confirmDialog(`Stop ${s.userName}'s stream?`, 'Stop', true)) { await api(`/api/admin/sessions/${s.id}`, { method: 'DELETE' }); renderSessions(); } } }, 'Stop')),
-          s.reasons?.length ? h('div', { class: 'small warn', style: { marginTop: '4px' } }, s.reasons.join(' · ')) : null,
-          h('div', { class: 'row small', style: { marginTop: '8px' } }, h('span', { class: 'muted nowrap' }, `${s.paused ? '⏸' : '▶'} ${fmtTime(s.position)} / ${fmtTime(s.duration)}`), h('div', { class: 'grow' }, meter(pct, 101))),
-          h('dl', { class: 'kv' }, kv.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])))));
+          h('div', { class: 'row small', style: { marginTop: '10px' } },
+            h('span', { class: 'muted nowrap' }, `${s.paused ? 'Paused' : 'Playing'} · ${fmtTime(s.position)} / ${fmtTime(s.duration)}`), h('div', { class: 'grow' }, meter(pct, 101))),
+          s.reasons?.length ? h('div', { class: 'small muted', style: { marginTop: '6px' } }, `Why ${s.method === 'transcode' ? 'transcoding' : 'converting'}: ${s.reasons.join(' · ')}`) : null,
+          h('div', { class: 'health' }, health.map(([k, v, cls]) => h('div', null, h('span', null, k), h('b', { class: cls || '' }, v)))),
+          det)));
     }
   };
 
   await Promise.all([renderSystem(true), renderSessions()]);
   every(3000, () => renderSystem(false));
   every(2000, renderSessions);
-  const chartPanel = (title, box) => h('div', { class: 'panel' }, h('h3', null, title), box);
-  return h('div', null,
-    tiles,
-    h('div', { class: 'panel', style: { marginBottom: '14px' } }, h('h3', null, 'CPU cores'), cores),
-    h('h2', { class: 'section-title', style: { margin: '22px 0 12px' } }, 'Now playing'),
-    sessionsBox,
-    h('h2', { class: 'section-title', style: { margin: '26px 0 12px' } }, 'Last hour'),
-    h('div', { class: 'info-grid' }, chartPanel('CPU', charts.cpu), chartPanel('Network', charts.net), chartPanel('Temperature', charts.temp), chartPanel('Streaming throughput', charts.stream)),
-    extra);
+  return h('div', { class: 'dash-live' },
+    h('section', null, h('div', { class: 'dash-head' }, nowTitle), sessionsBox),
+    h('section', null, h('div', { class: 'dash-head' }, h('h2', { class: 'section-title' }, 'Server'), h('span', { class: 'muted small' }, 'last hour')),
+      h('div', { class: 'dcards' }, cards.cpu, cards.mem, cards.temp, cards.net)),
+    h('section', null, storage),
+    host);
 }
 
 async function playbackTab(ctx) {
   const days = +(ctx.query.get('days') || 30);
-  const st = await api(`/api/admin/stats/playback?days=${days}`);
+  const st = await api(`/api/admin/stats/playback?days=${days}&tz=${-new Date().getTimezoneOffset()}`);
   // Fill missing days so the chart has a continuous axis.
   const byDay = Object.fromEntries((st.days || []).map((d) => [d.day, d]));
   const labels = [], full = [], hours = [], plays = [];
@@ -573,46 +597,61 @@ async function playbackTab(ctx) {
   const page = h('div', null,
     h('div', { class: 'toolbar' }, h('span', { class: 'muted' }, 'Range'), [7, 30, 90, 365].map((d) => h('button', { class: `btn sm ${d === days ? 'primary' : ''}`, onclick: () => { location.hash = `#/dashboard/playback?days=${d}`; } }, `${d} days`))),
     h('div', { class: 'stats-grid' },
-      stat('Plays', st.plays.toLocaleString(), `${st.uniqueItems} unique titles`),
-      stat('Watch time', `${st.hours.toFixed(1)} h`, `${(st.hours / Math.max(1, days)).toFixed(1)} h/day average`),
+      stat('Plays', st.plays.toLocaleString(), `${st.uniqueItems} titles${st.plays ? ` · ${Math.round((st.remotePlays / st.plays) * 100)}% remote` : ''}`),
+      stat('Watch time', fmtHours(st.hours), `${fmtHours(st.hours / Math.max(1, days))} a day`),
       stat('Data served', fmtBytes(st.bytes), st.plays ? `${fmtBytes(st.bytes / st.plays)} per play` : ''),
-      stat('Remote plays', st.plays ? `${Math.round((st.remotePlays / st.plays) * 100)}%` : '—', `${st.remotePlays} of ${st.plays}`),
-      stat('Buffering', `${st.bufferEvents} stalls`, st.hours ? `${((st.bufferSeconds / (st.hours * 3600)) * 100).toFixed(2)}% of watch time (${st.bufferSeconds.toFixed(0)}s)` : '')),
-    h('div', { class: 'panel', style: { marginBottom: '14px' } }, h('h3', null, 'Hours watched per day'), hoursBox),
-    h('div', { class: 'info-grid' },
-      h('div', { class: 'panel' }, h('h3', null, 'Playback methods (plays)'), barList((st.methods || []).map((m) => ({ key: m.key, label: mlabel(m.key), value: m.count })), (v) => `${v}`, methodColor),
-        h('div', { class: 'legend', style: { marginTop: '10px' } }, ['direct', 'remux', 'transcode'].map((k, i) => h('span', null, h('i', { style: { background: SERIES[i] } }), mlabel(k))))),
-      h('div', { class: 'panel' }, h('h3', null, 'Stall time by method (% of watch time)'), barList((st.bufferByMethod || []).map((m) => ({ key: m.key, label: mlabel(m.key), value: m.value })), (v) => `${v.toFixed(2)}%`, methodColor)),
+      stat('Buffering', st.hours ? `${((st.bufferSeconds / (st.hours * 3600)) * 100).toFixed(2)}%` : '—', `of watch time · ${st.bufferEvents} stalls, ${st.bufferSeconds.toFixed(0)}s`)),
+    h('div', { class: 'dash-2' },
+      h('div', { class: 'panel' }, h('h3', null, 'Hours watched per day'), hoursBox),
+      h('div', { class: 'panel' }, h('h3', null, 'Plays by hour of day'), hourBox)),
+    h('div', { class: 'dash-3' },
+      h('div', { class: 'panel' }, h('h3', null, 'How streams played'), methodsTable(st, mlabel, methodColor),
+        st.reasons?.length ? [h('h4', { class: 'panel-sub' }, 'Why streams were converted'), barList(st.reasons.map((m) => ({ label: m.key, value: m.count })), (v) => `${v}`)] : null),
       h('div', { class: 'panel' }, h('h3', null, 'Most watched'), barList((st.topItems || []).map((m) => ({ label: m.key, value: m.count })), (v) => `${v} play${v === 1 ? '' : 's'}`)),
-      h('div', { class: 'panel' }, h('h3', null, 'Users (hours)'), barList((st.users || []).map((m) => ({ label: m.key, value: m.value })), (v) => `${v.toFixed(1)} h`)),
-      h('div', { class: 'panel' }, h('h3', null, 'Clients (plays)'), barList((st.clients || []).map((m) => ({ label: m.key || 'unknown', value: m.count })), (v) => `${v}`)),
-      h('div', { class: 'panel' }, h('h3', null, 'Why streams were converted'), barList((st.reasons || []).map((m) => ({ label: m.key, value: m.count })), (v) => `${v}`)),
-      h('div', { class: 'panel' }, h('h3', null, 'Time of day (plays started)'), hourBox)));
+      h('div', { class: 'panel' }, h('h3', null, "Who's watching"), barList((st.users || []).map((m) => ({ label: m.key, value: m.value })), (v) => fmtHours(v)),
+        h('h4', { class: 'panel-sub' }, 'Clients'), barList((st.clients || []).map((m) => ({ label: m.key || 'unknown', value: m.count })), (v) => `${v} play${v === 1 ? '' : 's'}`))));
   requestAnimationFrame(() => {
-    columnChart(hoursBox, { labels, fullLabels: full, values: hours, fmt: (v) => `${v.toFixed(1)}h`, tipLabel: 'watched' });
-    columnChart(hourBox, { labels: hod.map((_, i) => `${i}h`), values: hod, fmt: (v) => `${Math.round(v)}`, tipLabel: 'plays', height: 140 });
+    columnChart(hoursBox, { labels, fullLabels: full, values: hours, fmt: (v) => (v > 0 && v < 1 ? `${Math.round(v * 60)}m` : `${+v.toFixed(1)}h`), tipLabel: 'watched' });
+    columnChart(hourBox, { labels: hod.map((_, i) => `${i}h`), values: hod, fmt: (v) => `${Math.round(v)}`, tipLabel: 'plays' });
   });
   return page;
 }
 
+const fmtHours = (v) => (v > 0 && v < 1 ? `${Math.round(v * 60)} min` : v < 100 ? `${v.toFixed(1)} h` : `${Math.round(v).toLocaleString()} h`);
+
+// Plays, share and stall time per playback method, in one table.
+function methodsTable(st, mlabel, color) {
+  const plays = Object.fromEntries((st.methods || []).map((m) => [m.key, m.count]));
+  const stall = Object.fromEntries((st.bufferByMethod || []).map((m) => [m.key, m.value]));
+  const total = Object.values(plays).reduce((a, b) => a + b, 0);
+  const rows = ['direct', 'remux', 'transcode'].filter((k) => plays[k]);
+  if (!rows.length) return h('div', { class: 'dim small' }, 'No plays yet.');
+  return h('table', { class: 'tbl mtable' },
+    h('tr', null, h('th', null, ''), h('th', null, 'Plays'), h('th', null, 'Stalled')),
+    rows.map((k) => h('tr', null,
+      h('td', null, h('i', { class: 'dot', style: { background: color({ key: k }) } }), mlabel(k)),
+      h('td', null, `${plays[k]}`, h('span', { class: 'dim' }, ` · ${Math.round((plays[k] / total) * 100)}%`)),
+      h('td', null, stall[k] != null ? `${stall[k].toFixed(2)}%` : '—'))));
+}
+
 async function libraryTab() {
   const st = await api('/api/admin/stats/library');
-  const bucketList = (b, fmtKey = (k) => k) => barList((b || []).map((x) => ({ label: `${fmtKey(x.key)} (${x.count})`, value: x.value })), (v) => fmtBytes(v));
+  const bucketList = (b, fmtKey = (k) => k) => barList([...(b || [])].sort((x, y) => y.value - x.value)
+    .map((x) => ({ label: `${fmtKey(x.key)} (${x.count})`, value: x.value })), (v) => fmtBytes(v));
   return h('div', null,
     h('div', { class: 'stats-grid' },
       stat('Movies', st.movies.toLocaleString()),
       stat('Shows', st.shows.toLocaleString(), `${st.seasons} seasons · ${st.episodes.toLocaleString()} episodes`),
-      stat('Files', st.files.toLocaleString(), `${st.unprobed} awaiting analysis${st.probeErrors ? ` · ${st.probeErrors} unreadable` : ''}`),
-      stat('Total size', fmtBytes(st.totalBytes)),
-      stat('Total runtime', `${Math.round(st.totalDuration / 3600).toLocaleString()} h`, `${(st.totalDuration / 86400).toFixed(1)} days of video`),
+      stat('Files', fmtBytes(st.totalBytes), `${st.files.toLocaleString()} files · ${fmtHours(st.totalDuration / 3600)} of video${st.unprobed ? ` · ${st.unprobed} awaiting analysis` : ''}${st.probeErrors ? ` · ${st.probeErrors} unreadable` : ''}`),
       stat('Metadata', `${st.metaMatched} matched`, `${st.metaMissing} not found · ${st.metaPending} pending`)),
-    h('div', { class: 'info-grid' },
-      h('div', { class: 'panel' }, h('h3', null, 'Libraries (size)'), bucketList(st.libraries)),
-      h('div', { class: 'panel' }, h('h3', null, 'Video codecs (size)'), bucketList(st.videoCodecs, (k) => k.toUpperCase())),
-      h('div', { class: 'panel' }, h('h3', null, 'Resolution (size)'), bucketList(st.resolutions)),
-      h('div', { class: 'panel' }, h('h3', null, 'HDR (size)'), bucketList(st.hdr)),
-      h('div', { class: 'panel' }, h('h3', null, 'Audio codecs (size)'), bucketList(st.audioCodecs, (k) => k.toUpperCase())),
-      h('div', { class: 'panel' }, h('h3', null, 'Containers (size)'), bucketList(st.containers, (k) => k.toUpperCase()))));
+    h('p', { class: 'small dim', style: { margin: '0 0 10px' } }, 'Bars show storage used; the number of files is in brackets.'),
+    h('div', { class: 'dash-3' },
+      h('div', { class: 'panel' }, h('h3', null, 'Libraries'), bucketList(st.libraries)),
+      h('div', { class: 'panel' }, h('h3', null, 'Resolution'), bucketList(st.resolutions)),
+      h('div', { class: 'panel' }, h('h3', null, 'HDR'), bucketList(st.hdr)),
+      h('div', { class: 'panel' }, h('h3', null, 'Video codecs'), bucketList(st.videoCodecs, (k) => k.toUpperCase())),
+      h('div', { class: 'panel' }, h('h3', null, 'Audio codecs'), bucketList(st.audioCodecs, (k) => k.toUpperCase())),
+      h('div', { class: 'panel' }, h('h3', null, 'Containers'), bucketList(st.containers, (k) => k.toUpperCase()))));
 }
 
 async function historyTab(ctx) {

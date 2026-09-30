@@ -430,7 +430,11 @@ func (s *Server) statsPlayback(w http.ResponseWriter, r *http.Request) {
 	if days < 1 || days > 3650 {
 		days = 30
 	}
-	st, err := s.St.PlaybackStats(days)
+	tz := qInt(r, "tz", 0) // minutes east of UTC
+	if tz < -14*60 || tz > 14*60 {
+		tz = 0
+	}
+	st, err := s.St.PlaybackStats(days, tz)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
