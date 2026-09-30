@@ -152,7 +152,7 @@ are published to GitHub Container Registry:
 
 | Tag | Updated |
 |---|---|
-| `ghcr.io/mynamearnav/lex:latest`, `:<major.minor>`, `:<version>` (e.g. `:0.0.3`) | with each release |
+| `ghcr.io/mynamearnav/lex:latest`, `:<major.minor>`, `:<version>` (e.g. `:0.0.4`) | with each release |
 | `ghcr.io/mynamearnav/lex:edge` | with every change on `main` |
 
 ```sh
@@ -262,12 +262,12 @@ viewing, and in the player `space`, `←`/`→`, `f`, `m`, `c` and `i`.
 ## Versions and releases
 
 The version number lives in `internal/version/VERSION`; builds add the commit
-they came from (`lex -version` prints e.g. `lex 0.0.3 (0ac9413)`, and it's shown
+they came from (`lex -version` prints e.g. `lex 0.0.4 (0ac9413)`, and it's shown
 in Settings → About and the account menu). To release, bump that file, commit,
 and push a matching tag:
 
 ```sh
-git tag -a v0.0.3 -m "Lex v0.0.3" && git push origin v0.0.3
+git tag -a v0.0.4 -m "Lex v0.0.4" && git push origin v0.0.4
 ```
 
 The Release workflow checks the tag against the file, runs the tests, builds
