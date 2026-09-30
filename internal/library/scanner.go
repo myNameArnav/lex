@@ -157,6 +157,11 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 	}
 	var entries []entry
 	okRoots := map[string]bool{}
+	// Directories and files that couldn't be read this time (permissions, a
+	// flaky network share): their existing records are kept, not treated as
+	// deleted — removing them would also drop watch progress and favorites.
+	var unreadableDirs []string
+	unreadable := map[string]bool{}
 	for _, root := range lib.Paths {
 		root = filepath.Clean(root)
 		fi, err := os.Stat(root)
@@ -171,9 +176,14 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 					return err
 				}
 				s.log.Warnf("scan: %s: %v", p, err)
-				if d != nil && d.IsDir() {
-					return fs.SkipDir
+				if d == nil || d.IsDir() {
+					unreadableDirs = append(unreadableDirs, p)
+					if d != nil {
+						return fs.SkipDir
+					}
+					return nil
 				}
+				unreadable[p] = true
 				return nil
 			}
 			if ctx.Err() != nil {
@@ -191,6 +201,7 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 			}
 			info, err := d.Info()
 			if err != nil {
+				unreadable[p] = true
 				return nil
 			}
 			if IsSample(name, info.Size()) {
@@ -239,7 +250,7 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 	type fkey struct{ size, mtime int64 }
 	vanished := map[fkey][]*store.File{}
 	for p, f := range byPath {
-		if !seen[p] {
+		if !seen[p] && !unreadable[p] && !underAny(p, unreadableDirs) {
 			k := fkey{f.Size, f.Mtime}
 			vanished[k] = append(vanished[k], f)
 		}
@@ -280,7 +291,7 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 	}
 	removed := 0
 	for p, f := range byPath {
-		if seen[p] {
+		if seen[p] || unreadable[p] || underAny(p, unreadableDirs) {
 			continue
 		}
 		inOkRoot := false
@@ -307,6 +318,16 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 	}
 	s.update(func(st *Status) { st.Removed += removed })
 	return s.st.SetLibraryScanned(lib.ID)
+}
+
+// underAny reports whether path is one of dirs or inside one of them.
+func underAny(path string, dirs []string) bool {
+	for _, d := range dirs {
+		if path == d || strings.HasPrefix(path, d+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Scanner) ensureItem(lib store.Library, t target, cache map[string]int64) (int64, error) {
