@@ -411,6 +411,7 @@ func StartJob(ffmpeg string, c Command, p Params, nice int) (*Job, error) {
 	proc.Nice(cmd.Process.Pid, nice)
 	j.mu.Lock()
 	j.prog.Updated = time.Now().UnixMilli()
+	j.prog.OutTime = p.Start
 	j.mu.Unlock()
 
 	go func() {

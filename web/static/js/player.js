@@ -973,7 +973,10 @@ class Player {
       hd('Server ffmpeg');
       r('State', j.exited ? (j.error ? `exited: ${j.error}` : 'finished') : j.throttled ? 'throttled (waiting for client)' : 'running');
       r('Speed', `${(j.speed || 0).toFixed(2)}x · ${Math.round(j.fps || 0)} fps · CPU ${Math.round(j.cpu || 0)}%`);
-      r('Processed to', `${fmtTime(j.outTime)} (${Math.max(0, j.outTime - this.video.currentTime).toFixed(0)}s ahead)`);
+      // ffmpeg reports progress only once a second and not at all while the
+      // client's full buffer blocks it; what the browser holds was produced too.
+      const done = Math.max(j.outTime || 0, es ? es.ranges.reduce((m, [s, e]) => (s <= this.video.currentTime + 1 ? Math.max(m, e) : m), 0) : 0);
+      r('Processed to', `${fmtTime(done)} (${Math.max(0, done - this.video.currentTime).toFixed(0)}s ahead)`);
     }
     clear(this.statsEl).appendChild(h('table', null, rows));
     // Buffer sparkline.
