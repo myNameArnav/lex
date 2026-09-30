@@ -3,6 +3,7 @@ package stream
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,11 +21,12 @@ import (
 
 // Subs extracts subtitles to WebVTT and caches them on disk.
 type Subs struct {
-	dir    string
-	ffmpeg string
-	log    *logx.Logger
-	mu     sync.Mutex
-	flight map[string]*extraction
+	dir     string
+	ffmpeg  string
+	ffprobe string
+	log     *logx.Logger
+	mu      sync.Mutex
+	flight  map[string]*extraction
 	// Resolve maps a file to the path to read (e.g. an SSD cache copy).
 	Resolve func(*store.File) string
 }
@@ -34,9 +36,9 @@ type extraction struct {
 	err  error
 }
 
-func NewSubs(dir, ffmpeg string, log *logx.Logger) *Subs {
+func NewSubs(dir, ffmpeg, ffprobe string, log *logx.Logger) *Subs {
 	os.MkdirAll(dir, 0o755)
-	return &Subs{dir: dir, ffmpeg: ffmpeg, log: log, flight: map[string]*extraction{}}
+	return &Subs{dir: dir, ffmpeg: ffmpeg, ffprobe: ffprobe, log: log, flight: map[string]*extraction{}}
 }
 
 func (s *Subs) cachePath(f *store.File, idx int) string {
@@ -75,6 +77,19 @@ func (s *Subs) GetFile(ctx context.Context, f *store.File, idx int, src string) 
 	return dst, s.run(ctx, fmt.Sprintf("dl-%d-%d", f.ID, idx), func() error { return s.convertExternal(src, dst) })
 }
 
+// Forget removes the cached conversions of subtitle idx of a file (for every
+// version of the file), e.g. when a downloaded subtitle is deleted.
+func (s *Subs) Forget(fileID int64, idx int) {
+	ents, _ := os.ReadDir(s.dir)
+	for _, e := range ents {
+		for _, ext := range []string{"vtt", "ass"} {
+			if ok, _ := filepath.Match(fmt.Sprintf("%d-*-%d.%s", fileID, idx, ext), e.Name()); ok {
+				os.Remove(filepath.Join(s.dir, e.Name()))
+			}
+		}
+	}
+}
+
 var fontExts = map[string]bool{".ttf": true, ".otf": true, ".ttc": true, ".woff": true, ".woff2": true}
 
 // FontsDir extracts the fonts attached to a file (Matroska attachments,
@@ -104,12 +119,23 @@ func (s *Subs) Fonts(ctx context.Context, f *store.File) (string, []string, erro
 		}
 		cctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		// -dump_attachment writes each attachment under its filename tag into
-		// the working directory; -t 0 stops right after reading the header.
-		cmd := exec.CommandContext(cctx, s.ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-dump_attachment:t", "", "-t", "0", "-i", src, "-f", "null", "-")
-		cmd.Dir = dir
-		cmd.Run() // ffmpeg exits non-zero when there's no output stream; the dump still happened
-		// Drop anything that isn't a font (and any odd names).
+		fonts, err := s.fontAttachments(cctx, src)
+		if err != nil {
+			return err
+		}
+		if len(fonts) > 0 {
+			// Each font is dumped into the working directory under a name we
+			// chose; -t 0 stops right after reading the header.
+			args := []string{"-hide_banner", "-nostdin", "-loglevel", "error", "-y"}
+			for _, a := range fonts {
+				args = append(args, fmt.Sprintf("-dump_attachment:%d", a.index), a.name)
+			}
+			args = append(args, "-t", "0", "-i", src, "-f", "null", "-")
+			cmd := exec.CommandContext(cctx, s.ffmpeg, args...)
+			cmd.Dir = dir
+			cmd.Run() // ffmpeg exits non-zero when there's no output stream; the dump still happened
+		}
+		// Drop anything that isn't a font.
 		ents, _ := os.ReadDir(dir)
 		for _, e := range ents {
 			if e.IsDir() || !fontExts[strings.ToLower(filepath.Ext(e.Name()))] {
@@ -122,6 +148,135 @@ func (s *Subs) Fonts(ctx context.Context, f *store.File) (string, []string, erro
 		return "", nil, err
 	}
 	return dir, list(), nil
+}
+
+type fontAttachment struct {
+	index int
+	name  string
+}
+
+// fontAttachments lists the font attachments of src with the file names to
+// dump them as. The filename tags come from the media file, so they can't be
+// trusted: ffmpeg would write "../../x" or "/abs/path" wherever it points.
+func (s *Subs) fontAttachments(ctx context.Context, src string) ([]fontAttachment, error) {
+	out, err := exec.CommandContext(ctx, s.ffprobe, "-v", "error", "-select_streams", "t",
+		"-show_entries", "stream=index:stream_tags=filename,mimetype", "-of", "json", "-i", src).Output()
+	if err != nil {
+		return nil, fmt.Errorf("list attachments: %w", err)
+	}
+	var probe struct {
+		Streams []struct {
+			Index int               `json:"index"`
+			Tags  map[string]string `json:"tags"`
+		} `json:"streams"`
+	}
+	if err := json.Unmarshal(out, &probe); err != nil {
+		return nil, fmt.Errorf("list attachments: %w", err)
+	}
+	var fonts []fontAttachment
+	seen := map[string]bool{}
+	for _, st := range probe.Streams {
+		var filename, mimetype string
+		for k, v := range st.Tags {
+			switch strings.ToLower(k) {
+			case "filename":
+				filename = v
+			case "mimetype":
+				mimetype = v
+			}
+		}
+		name := fontFileName(filename, mimetype)
+		if name == "" {
+			continue
+		}
+		// Names must be unique, ignoring case (for case-insensitive disks).
+		ext := filepath.Ext(name)
+		stem := strings.TrimSuffix(name, ext)
+		for n := 2; seen[strings.ToLower(name)]; n++ {
+			name = fmt.Sprintf("%s-%d%s", stem, n, ext)
+		}
+		seen[strings.ToLower(name)] = true
+		fonts = append(fonts, fontAttachment{st.Index, name})
+	}
+	return fonts, nil
+}
+
+// fontFileName turns an attachment's filename tag into a safe local file
+// name: no directories, no leading dots, only URL-safe characters, a font
+// extension and a sane length. It returns "" for attachments that aren't
+// fonts.
+func fontFileName(tag, mimetype string) string {
+	if i := strings.LastIndexAny(tag, `/\`); i >= 0 {
+		tag = tag[i+1:]
+	}
+	var b strings.Builder
+	for _, r := range tag {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	name := strings.TrimLeft(b.String(), ".")
+	ext := strings.ToLower(filepath.Ext(name))
+	stem := strings.TrimSuffix(name, filepath.Ext(name))
+	if !fontExts[ext] {
+		m := strings.ToLower(mimetype)
+		if !strings.Contains(m, "font") && !strings.Contains(m, "truetype") && !strings.Contains(m, "opentype") && !strings.Contains(m, "sfnt") {
+			return ""
+		}
+		stem, ext = name, ".ttf"
+		if strings.Contains(m, "opentype") || strings.Contains(m, "otf") {
+			ext = ".otf"
+		}
+	}
+	if len(stem) > 64 {
+		stem = stem[:64]
+	}
+	if stem = strings.Trim(stem, "."); stem == "" {
+		stem = "font"
+	}
+	return stem + ext
+}
+
+// WriteFileAtomic writes data to dst through a uniquely named temporary file
+// in the same folder, so concurrent writers never share a temp file and
+// readers never see a partial dst.
+func WriteFileAtomic(dst string, data []byte) error {
+	tmp, err := tempFor(dst)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return commit(tmp, dst)
+}
+
+// tempFor creates an empty, uniquely named temporary file next to dst.
+func tempFor(dst string) (string, error) {
+	f, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+".*.tmp")
+	if err != nil {
+		return "", err
+	}
+	f.Close()
+	return f.Name(), nil
+}
+
+// commit moves a finished temporary file into place. Losing a race to an
+// identical conversion is fine.
+func commit(tmp, dst string) error {
+	os.Chmod(tmp, 0o644)
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp)
+		if exists(dst) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func exists(p string) bool {
@@ -295,10 +450,11 @@ func (s *Subs) assVTT(f *store.File, idx int, src string) (string, []byte, error
 	if err != nil {
 		return "", nil, err
 	}
-	if err := os.WriteFile(dst+".tmp", AssToVTT(b), 0o644); err != nil {
+	// Not de-duplicated: concurrent requests may convert the same track.
+	if err := WriteFileAtomic(dst, AssToVTT(b)); err != nil {
 		return "", nil, err
 	}
-	return dst, nil, os.Rename(dst+".tmp", dst)
+	return dst, nil, nil
 }
 
 // cutAt trims b after the last occurrence of sep (drops a half-written tail).
@@ -355,8 +511,10 @@ func (s *Subs) extractAll(f *store.File) error {
 	}
 	proc.Nice(cmd.Process.Pid, 5)
 	err := cmd.Wait()
+	// A failed or timed-out run leaves truncated tracks; caching those would
+	// make them look complete forever.
 	for _, o := range outs {
-		if exists(o.tmp) {
+		if err == nil && exists(o.tmp) {
 			os.Rename(o.tmp, o.dst)
 		} else {
 			os.Remove(o.tmp)
@@ -369,26 +527,38 @@ func (s *Subs) extractAll(f *store.File) error {
 	return nil
 }
 
+// subDemuxers pins ffmpeg's input format for known subtitle extensions, so a
+// downloaded or sidecar file is never probed as something else.
+var subDemuxers = map[string]string{".srt": "srt", ".ass": "ass", ".ssa": "ass", ".vtt": "webvtt"}
+
 func (s *Subs) convertExternal(src, dst string) error {
 	b, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	if strings.EqualFold(filepath.Ext(src), ".vtt") && utf8.Valid(b) {
-		return os.WriteFile(dst, b, 0o644)
+	ext := strings.ToLower(filepath.Ext(src))
+	if ext == ".vtt" && utf8.Valid(b) {
+		return WriteFileAtomic(dst, b)
 	}
 	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error"}
 	if !utf8.Valid(b) {
 		args = append(args, "-sub_charenc", "CP1252")
 	}
-	args = append(args, "-i", src, "-c:s", "webvtt", "-f", "webvtt", "-y", dst+".tmp")
+	if f := subDemuxers[ext]; f != "" {
+		args = append(args, "-f", f)
+	}
+	tmp, err := tempFor(dst)
+	if err != nil {
+		return err
+	}
+	args = append(args, "-i", src, "-c:s", "webvtt", "-f", "webvtt", "-y", tmp)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	if out, err := exec.CommandContext(ctx, s.ffmpeg, args...).CombinedOutput(); err != nil {
-		os.Remove(dst + ".tmp")
+		os.Remove(tmp)
 		return fmt.Errorf("convert subtitle: %v %s", err, strings.TrimSpace(string(out)))
 	}
-	return os.Rename(dst+".tmp", dst)
+	return commit(tmp, dst)
 }
 
 // Clear removes all cached subtitles.

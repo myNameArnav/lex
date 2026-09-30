@@ -102,7 +102,7 @@ func main() {
 	agent := meta.NewAgent(st, images, log)
 	scanner := library.NewScanner(st, *ffprobe, log)
 	sessions := stream.NewManager(st, log)
-	subs := stream.NewSubs(filepath.Join(abs, "subs"), *ffmpeg, log)
+	subs := stream.NewSubs(filepath.Join(abs, "subs"), *ffmpeg, *ffprobe, log)
 	mediaCache := cache.New(st, log, abs)
 	subs.Resolve = mediaCache.Resolve
 	intros := intro.New(st, log, *ffmpeg)
