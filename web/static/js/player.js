@@ -18,12 +18,24 @@ export function openPlayer(opts) {
 export function isPlayerOpen() { return !!current; }
 
 const METHOD_LABEL = { direct: 'Direct Play', remux: 'Direct Stream', transcode: 'Transcode' };
+const END_FMT = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 const DEFAULT_FONT = '/vendor/jassub/default.woff2';
 const LANG_CHOICES = ['eng', 'spa', 'fre', 'ger', 'ita', 'por', 'hin', 'jpn', 'kor', 'chi', 'ara', 'rus', 'dut', 'swe', 'nor', 'dan', 'fin', 'pol', 'tur', 'tam', 'tel', 'ukr', 'heb', 'gre', 'cze', 'hun', 'rum', 'tha', 'vie', 'ind', 'may']
   .map((k) => [k, langName(k)]).sort((a, b) => a[1].localeCompare(b[1]));
 const LANG1 = { en: 'eng', es: 'spa', fr: 'fre', de: 'ger', it: 'ita', pt: 'por', 'pt-pt': 'por', 'pt-br': 'por', hi: 'hin', ja: 'jpn', ko: 'kor', zh: 'chi', 'zh-cn': 'chi', 'zh-tw': 'chi', ar: 'ara', ru: 'rus', nl: 'dut', sv: 'swe', no: 'nor', da: 'dan', fi: 'fin', pl: 'pol', tr: 'tur', ta: 'tam', te: 'tel', uk: 'ukr', he: 'heb', el: 'gre', cs: 'cze', hu: 'hun', ro: 'rum', th: 'tha', vi: 'vie', id: 'ind', ms: 'may' };
 const lang1to3 = (l) => LANG1[(l || '').toLowerCase()] || l;
+
+// Stats panel formatting: durations in whole seconds up to ten minutes, then
+// m:ss; positions are always m:ss.
+const secs = (s) => (s < 600 ? `${Math.round(s)}s` : fmtTime(s));
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+// The server says "copy" and "forced remux"; the UI calls remuxing Direct Stream.
+const copied = (s) => (s || '').replace(/ \(copy\)$/, ' · copied');
+const reasonLabel = (r) => {
+  const m = /^forced (direct|remux|transcode)$/.exec(r);
+  return m ? `${METHOD_LABEL[m[1]]} chosen in player settings` : r === 'forced direct play' ? 'Direct Play chosen in player settings' : r;
+};
 
 function pickAudio(file, lang) {
   const auds = (file.info?.streams || []).filter((s) => s.type === 'audio');
@@ -138,6 +150,7 @@ class Player {
     this.fill = h('div', { class: 'fill' });
     this.rail.appendChild(this.fill);
     this.timeEl = h('span', { class: 'p-time' }, '0:00 / 0:00');
+    this.endsEl = h('span', { class: 'p-ends', title: 'When playback will finish at the current speed' });
     this.methodEl = h('span', { class: 'p-method hide-mobile', title: 'Playback method (click for stats)', onclick: (e) => { e.stopPropagation(); this.toggleStats(); } });
     this.playBtn = b('play', 'Play (k)', () => this.togglePlay(), 'big');
     this.volBtn = b('volume', 'Mute (m)', () => this.toggleMute());
@@ -161,7 +174,7 @@ class Player {
         h('div', { class: 'p-controls' },
           h('div', { class: 'p-transport' }, this.playBtn,
             b('back10', `Back ${prefs.get('skipBack')}s (←)`, () => this.skip(-prefs.get('skipBack'))),
-            b('fwd30', `Forward ${prefs.get('skipFwd')}s (→)`, () => this.skip(prefs.get('skipFwd'))), this.timeEl),
+            b('fwd30', `Forward ${prefs.get('skipFwd')}s (→)`, () => this.skip(prefs.get('skipFwd'))), this.timeEl, this.endsEl),
           h('div', { class: 'spacer' }),
           h('div', { class: 'p-tools' }, h('div', { class: 'vol' }, this.volBtn, this.volRange), this.methodEl,
             this.nextBtn, this.ccBtn, this.gearBtn, this.pipBtn, this.fsBtn))));
@@ -895,6 +908,7 @@ class Player {
     this.fill.style.width = `${pct}%`;
     this.knob.style.left = `${pct}%`;
     this.timeEl.textContent = `${fmtTime(t)} / ${fmtTime(d)}`;
+    this.renderEnds();
     this.seek.setAttribute('aria-valuemax', String(Math.max(0, Math.floor(d || 0))));
     this.seek.setAttribute('aria-valuenow', String(Math.max(0, Math.min(Math.floor(t || 0), Math.floor(d || 0)))));
     this.seek.setAttribute('aria-valuetext', `${fmtTime(t)} of ${fmtTime(d)}`);
@@ -918,6 +932,14 @@ class Player {
     if ('mediaSession' in navigator && d && navigator.mediaSession.setPositionState) {
       try { navigator.mediaSession.setPositionState({ duration: d, position: Math.min(t, d), playbackRate: this.video.playbackRate }); } catch {}
     }
+  }
+
+  // Wall-clock finish time. Paused, it slides forward with the clock, so the
+  // UI tick refreshes it too.
+  renderEnds() {
+    const d = this.duration(), left = d - (this.dragT ?? this.video.currentTime);
+    const txt = isFinite(d) && d && left > 0 ? `Ends at: ${END_FMT.format(Date.now() + (left / (this.video.playbackRate || 1)) * 1000)}` : '';
+    if (this.endsEl.textContent !== txt) this.endsEl.textContent = txt;
   }
 
   // ---------- heartbeat & stats ----------
@@ -961,6 +983,7 @@ class Player {
     this.bufHist.push(es.bufferAhead);
     if (this.bufHist.length > 90) this.bufHist.shift();
     if (this.statsEl) this.renderStats(es);
+    this.renderEnds();
     this.checkUpNext();
   }
 
@@ -968,72 +991,179 @@ class Player {
     if (this.statsEl) { this.statsEl.remove(); this.statsEl = null; prefs.set('showStats', false); return; }
     if (!this.plan) return;
     prefs.set('showStats', true);
-    this.statsEl = h('div', { class: 'p-stats', onclick: (e) => e.stopPropagation() });
+    const stop = (on) => (e) => { e.stopPropagation(); on(e); };
+    this.statsDot = h('span', { class: 'ps-dot' });
+    this.statsSum = h('span', { class: 'ps-sum' });
+    this.statsCanvas = h('canvas');
+    this.statsBody = h('div', { class: 'ps-body' });
+    const compact = !!prefs.get('statsCompact');
+    const toggle = h('button', { class: 'ps-toggle', title: 'Collapse / expand', 'aria-expanded': String(!compact), onclick: stop(() => {
+      const c = this.statsEl.classList.toggle('compact');
+      toggle.setAttribute('aria-expanded', String(!c));
+      prefs.set('statsCompact', c);
+    }) }, this.statsDot, this.statsSum);
+    this.statsEl = h('div', { class: `p-stats${compact ? ' compact' : ''}`, onclick: (e) => e.stopPropagation() },
+      h('div', { class: 'ps-head' }, toggle,
+        h('button', { class: 'ps-btn', title: 'Copy stats as text', onclick: stop(() => this.copyStats()) }, 'Copy'),
+        h('button', { class: 'ps-btn ps-close', title: 'Close (I)', 'aria-label': 'Close stats (I)', html: icons.close, onclick: stop(() => this.toggleStats()) })),
+      h('div', { class: 'ps-graph' }, h('div', { class: 'ps-cap' }, 'Buffer · last 90s'), this.statsCanvas),
+      this.statsBody);
     this.root.appendChild(this.statsEl);
     this.renderStats(this.clientStats());
     this.beat();
   }
 
-  renderStats(cs) {
-    const p = this.plan, f = this.file, info = f?.info || {};
-    if (!p) return;
+  // Everything the stats panel shows, as data: rendered into the panel and
+  // flattened to text by the Copy button. lvl is '' | 'warn' | 'bad'.
+  statsModel(cs) {
+    const p = this.plan, f = this.file, info = f?.info || {}, v = this.video;
     const vs = (info.streams || []).find((s) => s.type === 'video');
     const as = (info.streams || []).find((s) => s.index === p.audio);
     const es = this.engine ? this.engine.stats() : null;
     const j = this.lastJob;
-    const rows = [];
-    const hd = (t) => rows.push(h('tr', null, h('td', { class: 'hd', colspan: 2 }, t)));
-    const r = (k, v) => rows.push(h('tr', null, h('td', null, k), h('td', null, v)));
-    hd('Playback');
-    r('Method', `${METHOD_LABEL[p.method]}${p.remote ? ' · remote' : ' · local'}`);
-    if (p.reasons?.length) r('Why', p.reasons.join('; '));
-    r('Session', `${p.sessionId}${es ? ` · restarts ${es.restarts}` : ''}`);
-    r('Position', `${fmtTime(this.video.currentTime)} / ${fmtTime(this.duration())} · ${this.video.playbackRate}x`);
-    hd('Video');
-    if (vs) r('Source', `${vs.codec.toUpperCase()} ${vs.profile || ''} ${vs.width}x${vs.height} ${vs.frameRate ? vs.frameRate.toFixed(3).replace(/\.?0+$/, '') + 'fps' : ''} ${vs.bitDepth || 8}-bit ${vs.hdr || 'SDR'}`);
-    r('Output', `${p.videoOut}${p.method !== 'direct' ? ` · ${p.mime}` : ''}`);
-    r('Rendered', `${cs.resolution || '—'} · viewport ${this.video.clientWidth}x${this.video.clientHeight} @${window.devicePixelRatio}x`);
-    r('Frames', `${cs.droppedFrames} dropped / ${cs.totalFrames} decoded${cs.totalFrames ? ` (${((cs.droppedFrames / cs.totalFrames) * 100).toFixed(2)}%)` : ''}`);
-    hd('Audio');
-    if (as) r('Source', `${as.codec.toUpperCase()} ${channelName(as.channels)} ${as.sampleRate ? as.sampleRate / 1000 + 'kHz' : ''} ${langName(as.language)}`);
-    r('Output', p.audioOut || 'none');
-    hd('Stream');
-    r('Container', `${(f.name || '').split('.').pop()} → ${p.hls ? `HLS (${p.mime})` : p.method === 'direct' ? 'original file (range requests)' : 'fragmented MP4 (MSE)'}`);
-    r('Read from', this.cached ? 'SSD cache' : 'library disk');
+    const t = v.currentTime, d = this.duration(), method = METHOD_LABEL[p.method];
+    const sections = [];
+    let rows;
+    const sec = (title) => { rows = []; sections.push({ title, rows }); };
+    const r = (k, val, sub = '', lvl = '', full = '') => rows.push({ k, v: val, sub, lvl, full });
+
+    // Health. A short buffer is fine once the rest of the file is in it.
+    const needMore = d - t - cs.bufferAhead > 1;
+    const bufLvl = cs.buffering ? 'bad' : needMore && cs.bufferAhead < (es ? Math.min(30, es.target / 2) : 10) ? 'warn' : '';
+    const dropPct = cs.totalFrames ? (cs.droppedFrames / cs.totalFrames) * 100 : 0;
+    const dropLvl = cs.totalFrames < 100 ? '' : dropPct > 5 ? 'bad' : dropPct > 1 ? 'warn' : '';
+    // ffmpeg reports progress only once a second and not at all while the
+    // client's full buffer blocks it; what the browser holds was produced too.
+    const done = j ? Math.max(j.outTime || 0, es ? es.ranges.reduce((m, [s, e]) => (s <= t + 1 ? Math.max(m, e) : m), 0) : 0) : 0;
+    const jobLvl = !j ? '' : j.error ? 'bad' : !j.exited && !j.throttled && j.speed && j.speed < v.playbackRate && done - t < 30 ? 'warn' : '';
+    const lvls = [bufLvl, dropLvl, jobLvl];
+    const lvl = lvls.includes('bad') ? 'bad' : lvls.includes('warn') ? 'warn' : '';
+    const status = cs.buffering ? 'Buffering' : lvl === 'bad' ? 'Error' : lvl === 'warn' ? 'Degraded' : 'Healthy';
+    const summary = `${status} · ${secs(cs.bufferAhead)} buffered · ${plural(cs.bufferEvents, 'stall')} · ${cs.droppedFrames} dropped`;
+
+    sec('Playback');
+    r('Method', method, p.remote ? 'remote' : 'local');
+    if (p.reasons?.length) { const why = p.reasons.map(reasonLabel).join('; '); r('Why', why, '', '', why); }
+    r('Position', `${fmtTime(t)} / ${fmtTime(d)}`, v.playbackRate !== 1 ? `${v.playbackRate}x` : '');
     const seg = this.intro();
-    if (seg) r('Intro', `${fmtTime(seg.start)}–${fmtTime(seg.end)} (${seg.source})`);
-    r('Source bitrate', fmtBitrate((info.bitrate || 0)));
-    if (p.method === 'transcode') r('Target bitrate', fmtBitrate(p.bitrate * 1000));
-    if (p.limitKbps) r('Bitrate limit', fmtBitrate(p.limitKbps * 1000));
-    r('Buffer ahead', `${cs.bufferAhead.toFixed(1)}s${es ? ` / target ${Math.round(es.target)}s${prefs.get('bufferAhead') ? (es.quotaLimited ? ` (browser memory limit; setting ${prefs.get('bufferAhead')}s)` : '') : ' (auto: as much as the browser holds)'} · back ${prefs.get('backBuffer')}s` : ' (browser managed)'}`);
-    const canvas = h('canvas', { width: 360, height: 36 });
-    rows.push(h('tr', null, h('td', { colspan: 2 }, canvas)));
+    if (seg) r('Intro', `${fmtTime(seg.start)}–${fmtTime(seg.end)}`, seg.source);
+    r('Container', `${(f.name || '').split('.').pop()} → ${p.hls ? 'HLS' : p.method === 'direct' ? 'original file' : 'fragmented MP4'}`, p.hls ? p.mime : p.method === 'direct' ? 'range requests' : 'MSE');
+
+    sec('Buffer & network');
     if (es) {
-      r('Download', `${fmtBitrate(es.bandwidth)} · ${fmtBytes(es.bytes)} received${es.throttled ? ' · paused (buffer full)' : es.fetching ? '' : ' · idle'}`);
-      r('Ranges', es.ranges.map(([s, e]) => `${fmtTime(s)}–${fmtTime(e)}`).join(', ') || '—');
+      const why = es.quotaLimited ? 'browser memory limit' : prefs.get('bufferAhead') ? 'your setting' : 'auto';
+      r('Ahead', `${secs(cs.bufferAhead)} / ${secs(es.target)}`, why, bufLvl);
+      const cur = es.ranges.find(([s, e]) => s <= t + 0.5 && e >= t);
+      r('Behind', `${secs(cur ? t - cur[0] : 0)} / ${secs(prefs.get('backBuffer'))}`);
+      const idle = es.throttled || !es.fetching;
+      r('Download', es.throttled ? 'paused' : es.fetching ? fmtBitrate(es.bandwidth) : 'idle',
+        `${es.throttled ? 'buffer full · ' : ''}${idle && es.bandwidth ? `last ${fmtBitrate(es.bandwidth)} · ` : ''}${fmtBytes(es.bytes)} total`);
+      const ranges = es.ranges.map(([s, e]) => `${fmtTime(s)}–${fmtTime(e)}`).join(', ') || '—';
+      r('Ranges', ranges, '', '', ranges);
+    } else {
+      r('Ahead', secs(cs.bufferAhead), 'browser managed', bufLvl);
     }
     r('Server rate', fmtBitrate(this.serverRate * 8));
-    r('Stalls', `${cs.bufferEvents} · ${cs.bufferSeconds.toFixed(1)}s total${cs.buffering ? ' · buffering now' : ''}`);
-    if (j) {
-      hd('Server ffmpeg');
-      r('State', j.exited ? (j.error ? `exited: ${j.error}` : 'finished') : j.throttled ? 'throttled (waiting for client)' : 'running');
-      r('Speed', `${(j.speed || 0).toFixed(2)}x · ${Math.round(j.fps || 0)} fps · CPU ${Math.round(j.cpu || 0)}%`);
-      // ffmpeg reports progress only once a second and not at all while the
-      // client's full buffer blocks it; what the browser holds was produced too.
-      const done = Math.max(j.outTime || 0, es ? es.ranges.reduce((m, [s, e]) => (s <= this.video.currentTime + 1 ? Math.max(m, e) : m), 0) : 0);
-      r('Processed to', `${fmtTime(done)} (${Math.max(0, done - this.video.currentTime).toFixed(0)}s ahead)`);
+    r('Stalls', String(cs.bufferEvents), `${cs.bufferSeconds.toFixed(1)}s total${cs.buffering ? ' · buffering now' : ''}`, cs.buffering ? 'bad' : cs.bufferEvents ? 'warn' : '');
+    r('Read from', this.cached ? 'SSD cache' : 'library disk');
+    r('Source bitrate', fmtBitrate(info.bitrate || 0));
+    if (p.method === 'transcode') r('Target bitrate', fmtBitrate(p.bitrate * 1000));
+    if (p.limitKbps) r('Bitrate limit', fmtBitrate(p.limitKbps * 1000));
+
+    sec('Video');
+    if (vs) r('Source', `${vs.codec.toUpperCase()} ${vs.profile || ''} ${vs.width}x${vs.height}`.replace(/\s+/g, ' '),
+      `${vs.frameRate ? vs.frameRate.toFixed(3).replace(/\.?0+$/, '') + 'fps · ' : ''}${vs.bitDepth || 8}-bit ${vs.hdr || 'SDR'}`);
+    r('Output', copied(p.videoOut));
+    if (p.method !== 'direct' && p.mime) r('MIME', p.mime, '', '', p.mime);
+    if (v.videoWidth) {
+      // object-fit: contain, so the picture is scaled by the tighter axis.
+      const scale = Math.min(v.clientWidth / v.videoWidth, v.clientHeight / v.videoHeight) * window.devicePixelRatio;
+      r('Decoded', `${v.videoWidth}x${v.videoHeight}`, `${Math.round(v.videoWidth * scale)}x${Math.round(v.videoHeight * scale)} on screen (${scale.toFixed(1)}x)`);
     }
-    clear(this.statsEl).appendChild(h('table', null, rows));
-    // Buffer sparkline.
-    const ctx = canvas.getContext('2d');
-    const max = Math.max(10, ...this.bufHist);
-    ctx.strokeStyle = '#f2b33d'; ctx.lineWidth = 1.5; ctx.beginPath();
-    this.bufHist.forEach((v, i) => {
-      const x = (i / 89) * 360, y = 34 - (v / max) * 32;
-      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-    });
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,.4)'; ctx.font = '10px monospace'; ctx.fillText(`${max.toFixed(0)}s`, 330, 10);
+    r('Dropped', plural(cs.droppedFrames, 'frame'), `${cs.totalFrames} decoded · ${dropPct.toFixed(2)}%`, dropLvl);
+
+    sec('Audio');
+    if (as) r('Source', `${as.codec.toUpperCase()} ${channelName(as.channels)}`, [as.sampleRate ? as.sampleRate / 1000 + 'kHz' : '', langName(as.language)].filter(Boolean).join(' · '));
+    r('Output', copied(p.audioOut) || 'none');
+
+    if (j) {
+      sec('Server (ffmpeg)');
+      r('State', j.exited ? (j.error ? `exited: ${j.error}` : 'finished') : j.throttled ? 'throttled' : 'running', j.throttled ? 'waiting for client' : '', j.error ? 'bad' : '', j.error || '');
+      r('Speed', `${(j.speed || 0).toFixed(j.speed >= 10 ? 0 : 1)}x`, `${Math.round(j.fps || 0)} fps · CPU ${Math.round(j.cpu || 0)}%`, jobLvl);
+      r('Ready to', fmtTime(done), `${secs(Math.max(0, done - t))} ahead`);
+    }
+
+    sec('Session');
+    r('ID', p.sessionId.slice(0, 8), es ? plural(es.restarts, 'restart') : '', '', p.sessionId);
+    return { lvl, summary, sections, es };
+  }
+
+  renderStats(cs) {
+    if (!this.plan) return;
+    const m = this.statsModel(cs);
+    this.statsDot.className = `ps-dot ${m.lvl}`;
+    this.statsSum.textContent = m.summary;
+    const rows = [];
+    for (const s of m.sections) {
+      rows.push(h('tr', null, h('td', { class: 'hd', colspan: 2 }, s.title)));
+      for (const row of s.rows) {
+        const text = row.sub ? `${row.v} · ${row.sub}` : row.v;
+        rows.push(h('tr', null, h('td', null, row.k),
+          h('td', { class: row.lvl || null, title: row.full || text }, row.v, row.sub ? h('span', { class: 'sub' }, ` ${row.sub}`) : null)));
+      }
+    }
+    clear(this.statsBody).appendChild(h('table', null, h('colgroup', null, h('col', { class: 'k' }), h('col')), rows));
+    this.drawBufGraph(m.es);
+  }
+
+  // Buffer sparkline. The scale tops out just above the target so a full
+  // buffer sits near the dashed target line and a draining one visibly drops.
+  drawBufGraph(es) {
+    const c = this.statsCanvas, dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth, ht = c.clientHeight;
+    if (!w) return;
+    if (c.width !== w * dpr || c.height !== ht * dpr) { c.width = w * dpr; c.height = ht * dpr; }
+    const ctx = c.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, ht);
+    const hist = this.bufHist, peak = Math.max(0, ...hist);
+    const target = es ? es.target : 0;
+    const top = Math.max(10, target && target < 1200 ? target * 1.15 : 0, peak * 1.15);
+    const pad = 2, y = (val) => ht - pad - (Math.min(val, top) / top) * (ht - pad * 2);
+    const x = (i) => ((90 - hist.length + i) / 89) * w;
+    if (target && target <= top) {
+      ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(0, y(target)); ctx.lineTo(w, y(target)); ctx.stroke(); ctx.setLineDash([]);
+    }
+    if (hist.length > 1) {
+      ctx.beginPath();
+      hist.forEach((val, i) => (i ? ctx.lineTo(x(i), y(val)) : ctx.moveTo(x(i), y(val))));
+      ctx.strokeStyle = '#f2b33d'; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.lineTo(x(hist.length - 1), ht); ctx.lineTo(x(0), ht); ctx.closePath();
+      ctx.fillStyle = 'rgba(242,179,61,.12)'; ctx.fill();
+    }
+    ctx.font = '10px ui-monospace, Menlo, monospace'; ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.textAlign = 'right';
+    ctx.fillText(target && target <= top ? `target ${secs(target)}` : `max ${secs(top)}`, w - 2, 10);
+  }
+
+  async copyStats() {
+    const m = this.statsModel(this.clientStats());
+    const lines = [`Lex playback stats · ${[...this.titleEl.children].map((c) => c.textContent).join(' · ')} · ${new Date().toISOString()}`, m.summary];
+    for (const s of m.sections) {
+      lines.push('', `[${s.title}]`);
+      for (const row of s.rows) lines.push(`${row.k}: ${row.full || row.v}${row.sub ? ` · ${row.sub}` : ''}`);
+    }
+    const text = lines.join('\n');
+    try { await navigator.clipboard.writeText(text); }
+    catch {
+      // Plain-http LAN installs have no Clipboard API.
+      const ta = h('textarea', { style: { position: 'fixed', opacity: '0' } }, text);
+      this.root.appendChild(ta); ta.select();
+      const ok = document.execCommand('copy');
+      ta.remove();
+      if (!ok) { toast('Could not copy stats', 'error'); return; }
+    }
+    toast('Stats copied');
   }
 
   // ---------- menus ----------
