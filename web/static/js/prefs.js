@@ -18,6 +18,7 @@ export const DEFAULTS = {
   autoplayNext: true,
   countdown: 10,
   showStats: false,
+  statsCompact: false, // stats panel collapsed to its summary and graph
   volume: 1,
   muted: false,
   skipBack: 10,
