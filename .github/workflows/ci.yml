@@ -31,6 +31,7 @@ jobs:
           go test -race ./...
           go vet ./...
           for file in web/static/js/*.js; do node --input-type=module --check < "$file"; done
+          node --experimental-vm-modules --test web/tests/*.test.mjs
           bash -n deploy/deploy.sh
           docker compose config --quiet
           docker compose -f docker-compose.yml -f docker-compose.rpi.yml config --quiet

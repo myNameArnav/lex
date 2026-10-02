@@ -19,6 +19,7 @@ export function isPlayerOpen() { return !!current; }
 
 const METHOD_LABEL = { direct: 'Direct Play', remux: 'Direct Stream', transcode: 'Transcode' };
 const END_FMT = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+const DIRECT_STARTUP_TIMEOUT = 15000;
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 const DEFAULT_FONT = '/vendor/jassub/default.woff2';
 const LANG_CHOICES = ['eng', 'spa', 'fre', 'ger', 'ita', 'por', 'hin', 'jpn', 'kor', 'chi', 'ara', 'rus', 'dut', 'swe', 'nor', 'dan', 'fin', 'pol', 'tur', 'tam', 'tel', 'ukr', 'heb', 'gre', 'cze', 'hun', 'rum', 'tha', 'vie', 'ind', 'may']
@@ -204,8 +205,8 @@ class Player {
     this.onHide = () => this.sendStop(true);
     window.addEventListener('pagehide', this.onHide);
 
-    v.addEventListener('play', () => { this.playBtn.innerHTML = icons.pause; this.labelButton(this.playBtn, 'Pause (k)'); this.poke(); this.beat(); });
-    v.addEventListener('pause', () => { this.playBtn.innerHTML = icons.play; this.labelButton(this.playBtn, 'Play (k)'); this.showUI(true); this.beat(); });
+    v.addEventListener('play', () => { this.watchDirectStartup(); this.playBtn.innerHTML = icons.pause; this.labelButton(this.playBtn, 'Pause (k)'); this.poke(); this.beat(); });
+    v.addEventListener('pause', () => { if (v.paused) this.startupWatch = null; this.playBtn.innerHTML = icons.play; this.labelButton(this.playBtn, 'Play (k)'); this.showUI(true); this.beat(); });
     v.addEventListener('waiting', () => {
       this.showSpinner(true);
       if (this.started && !v.seeking) { this.stalls.count++; this.stalls.since = performance.now(); }
@@ -214,7 +215,7 @@ class Player {
       this.showSpinner(false);
       if (this.stalls.since) { this.stalls.secs += (performance.now() - this.stalls.since) / 1000; this.stalls.since = 0; }
     };
-    v.addEventListener('playing', () => { ready(); this.started = true; });
+    v.addEventListener('playing', () => { ready(); this.started = true; this.startupWatch = null; });
     v.addEventListener('canplay', ready);
     v.addEventListener('seeked', () => { ready(); this.beat(); });
     v.addEventListener('seeking', () => this.showSpinner(true));
@@ -315,6 +316,7 @@ class Player {
 
   // ---------- loading ----------
   async start(itemId, start) {
+    this.bufferRebuilds = 0;
     try {
       const d = await api(`/api/items/${itemId}`);
       if (this.closed) return;
@@ -357,6 +359,8 @@ class Player {
   }
 
   async loadPlan(start, overrides = {}) {
+    const generation = this.planGeneration = (this.planGeneration || 0) + 1;
+    this.startupWatch = null;
     this.hideError();
     this.showSpinner(true);
     const caps = detectCaps();
@@ -377,8 +381,22 @@ class Player {
       mode, forceHls: forceHls && this.mode === 'hls', maxBitrate: this.quality, audioLang: prefs.get('audioLang'), swEncode: !!this.swEncode,
       caps, sessionId: this.sessionId, start,
     };
-    const res = await api('/api/playback/plan', { method: 'POST', body: req });
-    if (this.closed) return;
+    let res;
+    for (let attempt = 0; ; attempt++) {
+      if (this.closed || generation !== this.planGeneration) return false;
+      try {
+        res = await api('/api/playback/plan', { method: 'POST', body: req });
+        break;
+      } catch (e) {
+        if (this.closed || generation !== this.planGeneration) return false;
+        // A server restart briefly makes the proxy unavailable. Retrying
+        // the same session's plan is safe; permission and media errors stay
+        // terminal. Closing or selecting another plan cancels the retry.
+        if (![0, 502, 503, 504].includes(e.status) || attempt >= 6) throw e;
+        await new Promise(resolve => setTimeout(resolve, Math.min(8000, 1000 * (attempt + 1))));
+      }
+    }
+    if (this.closed || generation !== this.planGeneration) return false;
     this.plan = res.plan;
     this.cached = !!res.cached;
     if (res.segments) this.segments = res.segments;
@@ -390,9 +408,12 @@ class Player {
     this.methodEl.title = (this.plan.reasons || []).join('; ') || 'Playing the original file';
     if (this.trick?.fileId !== this.file.id) this.loadTrickplay();
     await this.attach(start);
+    return !this.closed && generation === this.planGeneration;
   }
 
   teardown() {
+    this.startupWatch = null;
+    this.attachGeneration = (this.attachGeneration || 0) + 1;
     if (this.engine) { this.engine.destroy(); this.engine = null; }
     const v = this.video;
     v.pause();
@@ -403,8 +424,10 @@ class Player {
 
   async attach(start) {
     this.teardown();
+    const generation = this.attachGeneration;
     const v = this.video;
     this.started = false;
+    this.startPosition = start;
     if (this.plan.hls) {
       // Native HLS (Safari, iOS, AirPlay): the playlist covers the whole file,
       // with segment N starting at N x segment length, so seek like a file.
@@ -419,29 +442,62 @@ class Player {
       this.engine = new MseEngine(v, this.plan, {
         forward: prefs.get('bufferAhead'),
         back: prefs.get('backBuffer'),
-        onError: (msg, status, decode) => this.onStreamError(msg, status, decode),
+        onError: (msg, status, decode, rebuild) => this.onStreamError(msg, status, decode, rebuild),
       });
       await this.engine.open(start);
     }
+    if (this.closed || generation !== this.attachGeneration) return;
     this.setSubtitleTrack(this.subtitle);
+    this.watchDirectStartup();
     try { await v.play(); } catch (e) {
+      // A fallback replaces the source while the old play() is pending.
+      // Its eventual AbortError must not change the new source's controls.
+      if (this.closed || generation !== this.attachGeneration || this.failedPlan === this.plan) return;
+      // A quick pause/play can reject the first play() after the next one
+      // has already armed a fresh startup watch on this same source.
+      if (e.name === 'AbortError' && !v.paused) return;
+      this.startupWatch = null;
       // Autoplay with sound blocked: show paused state, user clicks play.
       this.playBtn.innerHTML = icons.play;
       this.showSpinner(false);
     }
+    if (this.closed || generation !== this.attachGeneration) return;
     this.beat();
   }
 
   async replan(overrides) {
-    const t = this.video.currentTime || 0;
+    // Metadata may never arrive for an unsupported native container, so
+    // currentTime is still zero even when playback was requested at a resume point.
+    const t = this.video.currentTime || (!this.started && this.startPosition) || 0;
     const wasPaused = this.video.paused && this.started;
+    const generation = (this.planGeneration || 0) + 1;
     try {
-      await this.loadPlan(t, overrides);
-      if (wasPaused) this.video.pause();
-    } catch (e) { this.showError(e.message); }
+      const applied = await this.loadPlan(t, overrides);
+      if (applied && wasPaused) this.video.pause();
+    } catch (e) { if (!this.closed && generation === this.planGeneration) this.showError(e.message); }
   }
 
   // ---------- errors & fallback ----------
+  watchDirectStartup() {
+    if (this.closed || this.started || !this.plan || this.plan.hls || this.plan.method !== 'direct' || this.failedPlan === this.plan) return;
+    this.startupWatch = { plan: this.plan, since: performance.now() };
+  }
+
+  checkDirectStartup() {
+    const watch = this.startupWatch;
+    if (!watch) return;
+    if (this.closed || this.started || this.video.paused || this.plan !== watch.plan) {
+      this.startupWatch = null;
+      return;
+    }
+    // Some browsers accept the MIME type but never decode the original
+    // file or emit a media error. Retry via remux instead of waiting forever.
+    if (performance.now() - watch.since >= DIRECT_STARTUP_TIMEOUT) {
+      this.startupWatch = null;
+      this.fallback('Direct Play did not start within 15 seconds');
+    }
+  }
+
   async onVideoError() {
     const err = this.video.error;
     if (!err || err.code === 1 || this.closed || !this.plan) return;
@@ -449,12 +505,24 @@ class Player {
     await this.fallback(`${this.plan.method} failed (${err.message || 'media error ' + err.code})`);
   }
 
-  async onStreamError(msg, status, decode) {
+  async onStreamError(msg, status, decode, rebuild) {
+    if (rebuild && !this.bufferRebuilds) {
+      if (this.closed || !this.plan || this.failedPlan === this.plan) return;
+      this.failedPlan = this.plan;
+      this.bufferRebuilds = 1;
+      toast('Video buffer stalled — restarting playback');
+      return this.replan({ mode: this.plan.method });
+    }
     if (decode) return this.fallback(msg);
     this.showError(msg, status !== 503);
   }
 
   async fallback(reason) {
+    // An error event and the startup deadline can report the same failure.
+    // Each plan gets one fallback; a newly attached plan can fail separately.
+    if (this.closed || !this.plan || this.failedPlan === this.plan) return;
+    this.failedPlan = this.plan;
+    this.startupWatch = null;
     if (this.plan.hls && this.mode === 'hls') { this.showError(`HLS playback failed: ${reason}`); return; }
     const order = ['direct', 'remux', 'transcode'];
     const idx = order.indexOf(this.plan.method);
@@ -475,6 +543,7 @@ class Player {
   }
 
   showError(msg, retry = true) {
+    this.startupWatch = null;
     this.showSpinner(false);
     this.hideError();
     this.errEl = h('div', { class: 'p-error' }, h('div', null,
@@ -979,6 +1048,7 @@ class Player {
 
   tickUI() {
     if (this.closed) return;
+    this.checkDirectStartup();
     const es = this.clientStats();
     this.bufHist.push(es.bufferAhead);
     if (this.bufHist.length > 90) this.bufHist.shift();
