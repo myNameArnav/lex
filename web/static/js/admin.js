@@ -118,6 +118,7 @@ function prefsSection() {
       toggleRow('Autoplay next episode', 'Shows an "Up next" card near the end with a countdown.', p.autoplayNext, set('autoplayNext')),
       toggleRow('Skip intros automatically', 'Otherwise a "Skip Intro" button appears while an intro plays.', p.autoSkipIntro, set('autoSkipIntro')),
       toggleRow('Show stats for nerds by default', 'Overlay with codecs, bitrate, buffer health, dropped frames and server transcode speed (press i in the player).', p.showStats, set('showStats')),
+      toggleRow('Single-key shortcuts', 'p, /, ? and g-then-key. Ctrl/⌘ K and the player keys always work.', p.shortcuts, set('shortcuts')),
       h('div', { class: 'form-grid' },
         field('Autoplay countdown', select(p.countdown, [[5, '5 seconds'], [10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds']], set('countdown', Number))),
         field('Skip back', select(p.skipBack, [[5, '5 seconds'], [10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds']], set('skipBack', Number))),

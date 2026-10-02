@@ -19,6 +19,16 @@ export function isPlayerOpen() { return !!current; }
 
 export function closePlayer() { current?.close(); }
 
+// pauseForOverlay pauses playback while something covers the player (e.g.
+// the shortcuts sheet). It returns a function that resumes it, if it was
+// playing and the same player is still open.
+export function pauseForOverlay() {
+  const p = current, v = p?.video;
+  if (!v || v.paused) return () => {};
+  v.pause();
+  return () => { if (current === p && v.paused) v.play().catch(() => {}); };
+}
+
 const END_FMT = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 const DIRECT_STARTUP_TIMEOUT = 15000;
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
