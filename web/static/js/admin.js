@@ -181,7 +181,7 @@ function transcodingSection() {
           field('AAC bitrate (stereo, kbps)', num('audioBitrate', { min: 64, max: 640, step: 16 })))),
       h('div', { class: 'form-section' }, h('h2', null, 'Streaming'),
         h('div', { class: 'form-grid' },
-          field('Fragment duration (ms)', num('fragmentMs', { min: 200, max: 10000, step: 100 }), 'Shorter = faster start & seeking, slightly more overhead.'),
+          field('Minimum fragment duration (ms)', num('fragmentMs', { min: 200, max: 10000, step: 100 }), 'Fragments start at video keyframes. Direct stream uses the source file’s keyframes.'),
           field('Keyframe interval (s)', num('keyframeSec', { min: 1, max: 10 }), 'For transcodes. Shorter = more precise seeking.'))),
     ];
   });

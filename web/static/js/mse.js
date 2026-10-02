@@ -14,6 +14,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Automatic buffering: fill whatever the browser will hold (Chrome's quota is
 // ~150 MB), up to this many seconds.
 const AUTO_AHEAD = 1200;
+const APPEND_BATCH_BYTES = 1 << 20;
 
 export class MseEngine {
   constructor(video, plan, opts) {
@@ -127,9 +128,22 @@ export class MseEngine {
 
   async evict(aggressive) {
     const t = this.video.currentTime;
-    const back = aggressive ? 3 : this.opts.back;
+    const gen = this.gen;
+    // Removal extends to the next video keyframe. A tiny back buffer can
+    // therefore delete the playhead itself, especially with copied video.
+    const back = Math.max(10, this.evictionBack || 0, aggressive ? 10 : this.opts.back);
+    const hadPlayhead = this.ranges().some(([s, e]) => s <= t && t < e);
     const r = this.ranges();
     if (r.length && r[0][0] < t - back - 1) await this.remove(0, t - back);
+    if (gen !== this.gen || this.destroyed) return;
+    if (hadPlayhead && !this.ranges().some(([s, e]) => s <= this.video.currentTime && this.video.currentTime < e)) {
+      // Very long GOPs can cross even the safety margin. Retain more of
+      // the preceding range on the next attempt so the same removal can't
+      // cause a refetch loop, then refill at the playhead without skipping.
+      this.evictionBack = Math.max(back * 2, t - r[0][0] + 1);
+      this.load(this.video.currentTime, false);
+      return;
+    }
     if (aggressive) {
       // Also drop stale data far ahead that isn't contiguous with the playhead.
       for (const [s, e] of r) if (s > t + 5 && s > this.bufferedEnd() + 1) await this.remove(s, e);
@@ -143,6 +157,7 @@ export class MseEngine {
   target() { return Math.min(this.wanted(), this.quotaAhead || Infinity); }
 
   async append(data, gen) {
+    let quotaSince = 0, quotaTime = this.video.currentTime;
     for (;;) {
       if (gen !== this.gen || this.destroyed) return false;
       await this.whenIdle();
@@ -151,14 +166,23 @@ export class MseEngine {
         if (this.ms.readyState === 'closed') return false;
         this.sb.appendBuffer(data);
         await this.whenIdle();
-        return true;
+        return gen === this.gen && !this.destroyed;
       } catch (e) {
         if (e.name !== 'QuotaExceededError') throw e;
         // The SourceBuffer is full (Chrome allows ~150 MB). Drop what's
         // behind the playhead, remember how much fits, and wait for
-        // playback to make room — never give up, or the stream stalls.
+        // playback to make room. A starving, stuck buffer needs a new
+        // playback pipeline instead of waiting forever.
         await this.evict(true);
+        if (gen !== this.gen || this.destroyed) return false;
         const ahead = this.ahead();
+        const now = performance.now();
+        if (this.video.paused || ahead >= 5 || this.video.currentTime !== quotaTime) quotaSince = 0;
+        else {
+          if (!quotaSince) quotaSince = now;
+          if (now - quotaSince >= 15000) throw new DOMException('Buffer quota prevented playback from continuing', 'QuotaStallError');
+        }
+        quotaTime = this.video.currentTime;
         if (ahead > 10) this.quotaAhead = Math.max(10, Math.floor(ahead * 0.85));
         this.throttled = true;
         await sleep(500);
@@ -179,6 +203,9 @@ export class MseEngine {
     this.ended = false;
     this.eos = false;
     this.fetching = true;
+    this.bufferFailed = false;
+    this.gapSince = 0;
+    this.throttled = false;
     this.lastData = performance.now();
     this.streamFrom = t;
     if (!keep) { this.stalls = 0; this.resumeAfter = 0; }
@@ -193,13 +220,17 @@ export class MseEngine {
     try {
       res = await fetch(`${this.url}&t=${Math.max(0, t).toFixed(3)}`, { signal: ctrl.signal, credentials: 'same-origin', cache: 'no-store' });
     } catch (e) {
-      if (gen === this.gen && e.name !== 'AbortError') this.networkError(gen, e);
+      if (gen === this.gen && !ctrl.signal.aborted && e.name !== 'AbortError') this.networkError(gen, e);
       return;
     }
     if (!res.ok) {
       let msg = `Stream failed (HTTP ${res.status})`;
-      try { const j = await res.json(); if (j.error) msg = j.error; } catch {}
-      if (gen === this.gen) { this.fetching = false; this.opts.onError(msg, res.status); }
+      let serverError = false;
+      try { const j = await res.json(); if (j.error) { msg = j.error; serverError = true; } } catch {}
+      if (gen !== this.gen || ctrl.signal.aborted) return;
+      // Lex's own 503 explains the transcode limit; it isn't an outage.
+      if ([502, 504].includes(res.status) || (res.status === 503 && !serverError)) this.networkError(gen, new Error(msg));
+      else { this.fetching = false; this.opts.onError(msg, res.status); }
       return;
     }
     const reader = res.body.getReader();
@@ -210,25 +241,33 @@ export class MseEngine {
       let off = 0;
       for (const c of pending) { buf.set(c, off); off += c.byteLength; }
       pending = []; pendingBytes = 0; lastFlush = performance.now();
+      const before = this.producingEnd();
       const ok = await this.append(buf, gen);
-      // Only media that actually arrived counts as a recovered connection;
-      // a 200 that dies before any data must keep counting toward the cap.
-      if (ok) this.retries = 0;
+      // Processing queued bytes is progress even if no new read is needed.
+      if (ok) this.lastData = performance.now();
+      // Accepted init headers (or duplicate frames) are not recovery.
+      if (ok && this.producingEnd() > Math.max(before, this.video.currentTime) + 0.1) this.retries = 0;
       return ok;
     };
+    const waitForSpace = async () => {
+      let waited = false;
+      while (gen === this.gen && this.ahead() > this.target()) {
+        if (pendingBytes && !(await flush())) return false;
+        this.throttled = true;
+        if (!this.throttledSince) this.throttledSince = performance.now();
+        waited = true;
+        await sleep(300);
+      }
+      // Intentional backpressure (including quota waits) is not network
+      // silence. Start the watchdog clock when we resume processing.
+      if (gen !== this.gen) return false;
+      if (waited || this.throttled) this.lastData = performance.now();
+      this.throttled = false;
+      return true;
+    };
     try {
-      while (gen === this.gen) {
-        // Backpressure: stop reading when the forward buffer is full.
-        let waited = false;
-        while (gen === this.gen && this.ahead() > this.target()) {
-          if (pendingBytes && !(await flush())) break;
-          this.throttled = true;
-          if (!this.throttledSince) this.throttledSince = performance.now();
-          waited = true;
-          await sleep(300);
-        }
-        this.throttled = false;
-        if (gen !== this.gen) break;
+      reading: while (gen === this.gen) {
+        if (!(await waitForSpace())) break;
         const t0 = performance.now();
         const r = await reader.read();
         this.lastData = performance.now();
@@ -239,16 +278,27 @@ export class MseEngine {
         }
         const n = r.value.byteLength;
         this.bytes += n;
-        this.measure(n, waited ? performance.now() - t0 : 0);
-        pending.push(r.value);
-        pendingBytes += n;
-        if (pendingBytes >= 1 << 20 || performance.now() - lastFlush > 250 || this.ahead() < 3) {
-          if (!(await flush())) break;
+        this.measure(n, performance.now() - t0);
+        // Firefox can return hundreds of MB in one read after we pause
+        // downloading. One append may then exceed the entire MSE quota,
+        // even with an empty buffer. Split it and apply backpressure between
+        // batches; SourceBuffer accepts partial MP4 boxes across appends.
+        for (let offset = 0; offset < n;) {
+          if (!(await waitForSpace())) break reading;
+          const size = Math.min(APPEND_BATCH_BYTES - pendingBytes, n - offset);
+          pending.push(r.value.subarray(offset, offset + size));
+          pendingBytes += size;
+          offset += size;
+          if (pendingBytes >= APPEND_BATCH_BYTES || performance.now() - lastFlush > 250 || this.ahead() < 3) {
+            if (!(await flush())) break reading;
+          }
         }
       }
     } catch (e) {
-      if (gen === this.gen && e.name !== 'AbortError') {
-        if (e.name === 'InvalidStateError' || e.name === 'NotSupportedError') {
+      if (gen === this.gen && !ctrl.signal.aborted && e.name !== 'AbortError') {
+        if (e.name === 'QuotaStallError') {
+          this.bufferError('The video buffer stopped accepting frames.');
+        } else if (e.name === 'InvalidStateError' || e.name === 'NotSupportedError') {
           this.fetching = false;
           this.opts.onError(`The browser rejected the stream (${e.message}).`, 0, true);
         } else {
@@ -343,8 +393,18 @@ export class MseEngine {
     this.seekTimer = setTimeout(() => this.load(this.video.currentTime, false), 150);
   }
 
+  bufferError(message) {
+    if (this.bufferFailed || this.destroyed) return;
+    this.bufferFailed = true;
+    this.gen++;
+    this.ctrl?.abort();
+    this.fetching = false;
+    this.ended = false;
+    this.opts.onError(message, 0, true, true);
+  }
+
   tick() {
-    if (this.destroyed || !this.sb) return;
+    if (this.destroyed || this.bufferFailed || !this.sb) return;
     const v = this.video;
     const t = v.currentTime;
     // Jump small gaps (audio/video start mismatch after a seek).
@@ -352,6 +412,24 @@ export class MseEngine {
       const b = v.buffered;
       for (let i = 0; i < b.length; i++) {
         if (b.start(i) > t && b.start(i) - t < 2.5) { v.currentTime = b.start(i) + 0.05; break; }
+      }
+    }
+    // A healthy download can still leave a large, unplayable hole. The
+    // network watchdog cannot see this because bytes continue arriving.
+    const b = v.buffered;
+    let gap = false;
+    if (!v.paused && !v.seeking && v.readyState < 3) {
+      for (let i = 0; i < b.length; i++) {
+        if (b.start(i) - t >= 2.5 && b.end(i) - b.start(i) > 2) { gap = true; break; }
+      }
+    }
+    if (!gap || Math.abs(t - (this.gapTime ?? t)) > 0.1) this.gapSince = 0;
+    this.gapTime = t;
+    if (gap) {
+      if (!this.gapSince) this.gapSince = performance.now();
+      if (performance.now() - this.gapSince >= 15000) {
+        this.bufferError('The browser left an unplayable gap in the video buffer.');
+        return;
       }
     }
     // Resume a stream that stopped before the end of the file (server
@@ -364,8 +442,8 @@ export class MseEngine {
     // Watchdog: a connection that stays silent while we're starving (e.g. a
     // proxy kept a dead connection open) gets restarted.
     if (this.fetching && !this.throttled && this.ahead() < 5 && this.lastData && performance.now() - this.lastData > 15000) {
-      this.lastData = performance.now();
-      this.load(this.bufferedEnd(), true);
+      this.ctrl?.abort();
+      this.networkError(this.gen, new Error('Stream stopped delivering data'));
     }
     if (!this.sb.updating && performance.now() - (this.lastEvict || 0) > 5000) {
       this.lastEvict = performance.now();

@@ -208,7 +208,7 @@ func BuildArgs(cfg store.Config, ff FFInfo, f *store.File, p Params) (Command, e
 	// esds without it, which Chrome's MSE parser rejects.
 	stage2 = append(stage2, "-avoid_negative_ts", "disabled",
 		"-f", "mp4", "-movflags", "+frag_keyframe+empty_moov+delay_moov+default_base_moof+frag_discont",
-		"-frag_duration", strconv.Itoa(cfg.FragmentMs*1000), "pipe:1")
+		"-min_frag_duration", strconv.Itoa(cfg.FragmentMs*1000), "pipe:1")
 	return Command{Args: out, Stage2: stage2}, nil
 }
 
@@ -322,11 +322,15 @@ func buildArgs(cfg store.Config, ff FFInfo, f *store.File, p Params) ([]string, 
 			}
 		}
 	}
+	// A duration cutoff can split a GOP between dependent frames. Firefox's
+	// MSE parser can then discard frames until the next keyframe, leaving a
+	// permanent playback hole despite a healthy download. Use the duration
+	// as a minimum and let frag_keyframe choose every fragment boundary.
 	args = append(args,
 		"-map_metadata", "-1", "-map_chapters", "-1", "-sn", "-dn",
 		"-avoid_negative_ts", "disabled", "-max_muxing_queue_size", "4096",
 		"-f", "mp4", "-movflags", "+frag_keyframe+empty_moov+default_base_moof+frag_discont",
-		"-frag_duration", strconv.Itoa(cfg.FragmentMs*1000),
+		"-min_frag_duration", strconv.Itoa(cfg.FragmentMs*1000),
 		"pipe:1")
 	return args, nil
 }
