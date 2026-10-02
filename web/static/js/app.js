@@ -1,9 +1,10 @@
-import { h, $, clear, icons, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrate, toast, modal, spinner, lazyImg, popupMenu, streamLabel, langName, channelName, confirmDialog } from './ui.js';
+import { h, $, clear, icons, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrate, toast, modal, spinner, lazyImg, popupMenu, closePopupMenu, streamLabel, langName, channelName, confirmDialog, run, fmtEpisode, motionOK } from './ui.js';
 import { api, img, castImg } from './api.js';
 import { openPlayer, isPlayerOpen } from './player.js';
 import { installShortcuts, showShortcuts, MOD } from './shortcuts.js';
 
-export const state = { me: null, serverName: 'Lex', libraries: [], version: '' };
+// caps: { subtitleSearch, cacheEnabled } from the server (see /api/me).
+export const state = { me: null, caps: {}, serverName: 'Lex', libraries: [], version: '' };
 const app = document.getElementById('app');
 let mainEl = null;
 let routeToken = 0;
@@ -29,6 +30,7 @@ async function boot() {
     if (info.setupRequired) return renderAuth(true);
     const me = await api('/api/me');
     state.me = me.user;
+    state.caps = me.caps || {};
     await startApp();
   } catch (e) {
     if (e.status === 401) renderAuth(false);
@@ -55,6 +57,7 @@ function renderAuth(setup) {
     try {
       const r = await api(setup ? '/api/setup' : '/api/auth/login', { method: 'POST', body: { name: name.value, password: pass.value } });
       state.me = r.user;
+      state.caps = r.caps || {};
       await startApp();
       if (setup) location.hash = '#/settings/libraries';
     } catch (ex) {
@@ -89,14 +92,14 @@ let navEl, searchInput;
 function renderShell() {
   clear(app);
   navEl = h('nav', { class: 'nav desktop' });
-  searchInput = h('input', { type: 'search', placeholder: 'Search movies & shows', 'aria-label': 'Search movies & shows', 'aria-keyshortcuts': 'Control+K Meta+K /', oninput: debounce((e) => {
+  searchInput = h('input', { type: 'search', placeholder: 'Search movies & shows', 'aria-label': 'Search movies & shows', 'aria-keyshortcuts': 'Control+K Meta+K /', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', oninput: debounce((e) => {
     const q = e.target.value.trim();
     if (q) location.hash = `#/search?q=${encodeURIComponent(q)}`;
   }, 300), onkeydown: (e) => {
     if (e.key === 'Escape') { e.target.value = ''; e.target.blur(); }
     if (e.key === 'Enter' && e.target.value.trim()) location.hash = `#/search?q=${encodeURIComponent(e.target.value.trim())}`;
   } });
-  const avatarBtn = h('button', { class: 'avatar', title: state.me.name, onclick: (e) => userMenu(e.currentTarget) }, state.me.name.slice(0, 1).toUpperCase());
+  const avatarBtn = h('button', { class: 'avatar', title: state.me.name, 'aria-label': `Account menu (${state.me.name})`, 'aria-haspopup': 'menu', 'aria-expanded': 'false', onclick: (e) => userMenu(e.currentTarget) }, state.me.name.slice(0, 1).toUpperCase());
   const top = h('header', { class: 'topbar' },
     h('a', { class: 'logo', href: '#/' }, h('b', null, 'L'), h('span', null, state.serverName)),
     navEl,
@@ -122,7 +125,8 @@ function userMenu(anchor) {
     { label: 'Settings', icon: 'gear', onClick: () => { location.hash = '#/settings'; } },
   ];
   if (state.me.isAdmin) items.push({ label: 'Dashboard & stats', icon: 'stats', onClick: () => { location.hash = '#/dashboard'; } });
-  items.push({ label: 'Keyboard shortcuts', icon: 'keyboard', onClick: showShortcuts });
+  // Phones have no keyboard; iPads with one (or a trackpad) keep the entry.
+  if (matchMedia('(any-pointer: fine)').matches) items.push({ label: 'Keyboard shortcuts', icon: 'keyboard', onClick: showShortcuts });
   items.push('-', { label: 'Sign out', icon: 'logout', onClick: async () => { await api('/api/auth/logout', { method: 'POST' }).catch(() => {}); location.hash = ''; location.reload(); } });
   if (state.version) items.push('-', { note: `Lex ${state.version}` });
   popupMenu(anchor, items);
@@ -142,6 +146,7 @@ function parseHash() {
 
 export async function route() {
   if (!state.me) return;
+  closePopupMenu();
   const token = ++routeToken;
   const { parts, query } = parseHash();
   renderNav();
@@ -185,7 +190,7 @@ async function refreshSoft() {
 // ---------- cards ----------
 function subtitleFor(it) {
   if (it.kind === 'show') return it.childCount ? `${it.childCount} episode${it.childCount === 1 ? '' : 's'}` : (it.year || '');
-  if (it.kind === 'episode') return `S${it.season} · E${it.episode}`;
+  if (it.kind === 'episode') return fmtEpisode(it);
   if (it.kind === 'season') return it.childCount ? `${it.childCount} episodes` : '';
   return it.year || '';
 }
@@ -216,7 +221,7 @@ export function landCard(it, { playOnClick = true } = {}) {
   const ud = it.userData || {};
   if (ud.position > 0 && it.duration) art.appendChild(h('div', { class: 'progress' }, h('i', { style: { width: `${Math.min(100, (ud.position / it.duration) * 100)}%` } })));
   const title = it.kind === 'episode' ? (it.showTitle || it.title) : it.title;
-  const sub = it.kind === 'episode' ? `S${it.season} · E${it.episode} — ${it.title}` : [it.year, ud.position && it.duration ? `${fmtDuration(it.duration - ud.position)} left` : ''].filter(Boolean).join(' · ');
+  const sub = it.kind === 'episode' ? `${fmtEpisode(it)} — ${it.title}` : [it.year, ud.position && it.duration ? `${fmtDuration(it.duration - ud.position)} left` : ''].filter(Boolean).join(' · ');
   return h('div', { class: 'card land', title: `${title} — ${sub}`, onclick: (e) => {
     if (e.target.closest('.meta a')) return;
     if (playOnClick) play(it.id); else location.hash = `#/item/${it.id}`;
@@ -225,7 +230,7 @@ export function landCard(it, { playOnClick = true } = {}) {
 
 function shelf(title, items, kind, moreHref) {
   const track = h('div', { class: 'shelf-track' }, items.map((it) => kind === 'landscape' ? landCard(it) : posterCard(it)));
-  const scroll = (dir) => track.scrollBy({ left: dir * track.clientWidth * 0.85, behavior: 'smooth' });
+  const scroll = (dir) => track.scrollBy({ left: dir * track.clientWidth * 0.85, behavior: motionOK() ? 'smooth' : 'auto' });
   return h('section', { class: 'shelf' },
     h('div', { class: 'shelf-head' }, h('h2', { class: 'section-title' }, title), moreHref ? h('a', { class: 'more', href: moreHref }, 'See all') : null),
     h('div', { class: 'shelf-scroll' },
@@ -275,13 +280,13 @@ async function libraryView(ctx, id) {
   const count = h('span', { class: 'count' });
   const grid = h('div', { class: 'grid' });
   const sentinel = h('div', { style: { height: '40px' } });
-  const random = h('button', { class: 'btn sm', title: 'Play a random title', disabled: true, onclick: async () => {
+  const random = h('button', { class: 'btn sm', title: 'Play a random title', disabled: true, onclick: (e) => run(e.currentTarget, async () => {
     const p = new URLSearchParams({ library: id, sort: 'random', limit: 1 });
     if (opts.filter) p.set('filter', opts.filter);
     if (opts.genre) p.set('genre', opts.genre);
     const r = await api(`/api/items?${p}`);
     if (r.items[0]) location.hash = `#/item/${r.items[0].id}`;
-  } }, h('span', { html: icons.shuffle }), 'Random');
+  }) }, h('span', { html: icons.shuffle }), 'Random');
   const page = h('div', { class: 'page' },
     h('div', { class: 'row' }, h('h1', { class: 'page-title' }, lib.name), count),
     h('div', { class: 'toolbar' },
@@ -360,7 +365,7 @@ function hero(it, posterNode, info, backdropItem = it) {
 }
 
 function heroPoster(it, kind, land) {
-  const box = h('div', { class: `hero-poster card-ph ${land ? 'land' : ''}`, style: { position: 'relative' } }, h('div', { class: 'ph', style: { position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', padding: '16px', textAlign: 'center', color: 'var(--text3)', fontWeight: 700, fontSize: '18px' } }, it.title));
+  const box = h('div', { class: `hero-poster ${land ? 'land' : ''}`, style: { position: 'relative' } }, h('div', { class: 'ph', style: { position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', padding: '16px', textAlign: 'center', color: 'var(--text3)', fontWeight: 700, fontSize: '18px' } }, it.title));
   const im = lazyImg(img(it, kind, land ? 640 : 480), it.title);
   im.style.position = 'relative';
   box.appendChild(im);
@@ -392,10 +397,8 @@ function playButtons(it, playId = it.id, label = 'Play') {
 
 function watchedButton(it, onDone) {
   const played = it.kind === 'show' ? it.unplayedCount === 0 && it.childCount > 0 : it.userData?.played;
-  return h('button', { class: 'btn lg icon', title: played ? 'Mark unwatched' : 'Mark watched', style: played ? { color: 'var(--good)' } : null, html: icons.check, onclick: async () => {
-    await api(`/api/items/${it.id}/played`, { method: 'POST', body: { played: !played } });
-    toast(played ? 'Marked unwatched' : 'Marked watched', 'ok');
-    onDone();
+  return h('button', { class: 'btn lg icon', title: played ? 'Mark unwatched' : 'Mark watched', style: played ? { color: 'var(--good)' } : null, html: icons.check, onclick: async (e) => {
+    if (await run(e.currentTarget, () => api(`/api/items/${it.id}/played`, { method: 'POST', body: { played: !played } }), played ? 'Marked unwatched' : 'Marked watched')) onDone();
   } });
 }
 
@@ -431,20 +434,20 @@ function moreButton(it, d) {
       if (it.kind === 'movie' || it.kind === 'show') items.push({ label: 'Fix match…', icon: 'edit', onClick: () => fixMatch(it) });
       items.push({ label: 'Refresh metadata', icon: 'refresh', onClick: async () => {
         toast('Refreshing metadata…');
-        try { await api(`/api/items/${it.id}/refresh`, { method: 'POST' }); toast('Metadata refreshed', 'ok'); route(); } catch (ex) { toast(ex.message, 'error'); }
+        if (await run(null, () => api(`/api/items/${it.id}/refresh`, { method: 'POST' }), 'Metadata refreshed')) route();
       } });
-      if (it.metaLocked) items.push({ label: 'Unmatch (auto-match again)', icon: 'refresh', onClick: async () => { await api(`/api/items/${it.id}/unmatch`, { method: 'POST' }); toast('Unmatched; re-matching in background'); } });
+      if (it.metaLocked) items.push({ label: 'Unmatch (auto-match again)', icon: 'refresh', onClick: () => run(null, () => api(`/api/items/${it.id}/unmatch`, { method: 'POST' }), 'Unmatched; re-matching in background') });
       const cached = d.files?.length && d.files.every((f) => f.cached);
       items.push('-');
       if (cached) {
-        items.push({ label: 'Remove from SSD cache', icon: 'trash', onClick: async () => { await api(`/api/admin/cache/items/${it.id}`, { method: 'DELETE' }); toast('Removed from cache', 'ok'); route(); } });
+        items.push({ label: 'Remove from SSD cache', icon: 'trash', onClick: async () => { if (await run(null, () => api(`/api/admin/cache/items/${it.id}`, { method: 'DELETE' }), 'Removed from cache')) route(); } });
       } else {
         items.push({ label: it.kind === 'show' ? 'Cache all episodes on SSD' : 'Cache on SSD', icon: 'devices', onClick: async () => {
-          try { const r = await api(`/api/admin/cache/items/${it.id}`, { method: 'POST' }); toast(`Queued ${r.queued} file${r.queued === 1 ? '' : 's'} for the SSD cache`, 'ok'); } catch (ex) { toast(ex.message, 'error'); }
+          await run(null, () => api(`/api/admin/cache/items/${it.id}`, { method: 'POST' }), (r) => `Queued ${r.queued} file${r.queued === 1 ? '' : 's'} for the SSD cache`);
         } });
       }
       if (it.kind === 'show' || it.kind === 'episode') {
-        items.push({ label: 'Re-detect intro', icon: 'refresh', onClick: async () => { try { await api(`/api/items/${it.id}/intro/reset`, { method: 'POST' }); toast('Intro detection queued', 'ok'); } catch (ex) { toast(ex.message, 'error'); } } });
+        items.push({ label: 'Re-detect intro', icon: 'refresh', onClick: () => run(null, () => api(`/api/items/${it.id}/intro/reset`, { method: 'POST' }), 'Intro detection queued') });
       }
     }
     if (items.length) popupMenu(e.currentTarget, items);
@@ -474,7 +477,7 @@ function mediaView(ctx, d) {
   }
   info.push(h('h1', null, it.title));
   info.push(facts(it, [
-    isEp ? h('span', null, `S${it.season} E${it.episode}${it.episodeEnd ? '–' + it.episodeEnd : ''}`) : null,
+    isEp ? h('span', null, fmtEpisode(it)) : null,
     file ? h('span', { class: 'pill' }, [resLabel(file.width, file.height), file.hdr].filter(Boolean).join(' ') || file.container) : null,
     file?.cached ? h('span', { class: 'pill', title: 'Plays from the SSD cache' }, 'SSD') : null,
     d.segments?.find((s) => s.kind === 'intro') ? h('span', { class: 'pill', title: 'Intro detected' }, 'Intro ✓') : null,
@@ -491,8 +494,8 @@ function mediaView(ctx, d) {
   if (file) info.push(fileSummary(file));
   if (isEp) {
     info.push(h('div', { class: 'row', style: { marginTop: '18px' } },
-      d.prev ? h('a', { class: 'btn sm', href: `#/item/${d.prev.id}` }, h('span', { html: icons.chevL }), `S${d.prev.season}E${d.prev.episode}`) : null,
-      d.next ? h('a', { class: 'btn sm', href: `#/item/${d.next.id}` }, `Next: S${d.next.season}E${d.next.episode} ${d.next.title}`, h('span', { html: icons.chevR })) : null));
+      d.prev ? h('a', { class: 'btn sm', href: `#/item/${d.prev.id}` }, h('span', { html: icons.chevL }), fmtEpisode(d.prev)) : null,
+      d.next ? h('a', { class: 'btn sm', href: `#/item/${d.next.id}` }, `Next: ${fmtEpisode(d.next)} ${d.next.title}`, h('span', { html: icons.chevR })) : null));
   }
   const director = (it.cast || []).filter((p) => p.role === 'Director');
   if (director.length) info.push(h('p', { class: 'muted small' }, `Directed by ${director.map((p) => p.name).join(', ')}`));
@@ -583,7 +586,7 @@ async function showView(ctx, d) {
   if (it.genres?.length) info.push(h('div', { class: 'genres' }, it.genres.map((g) => h('span', null, g))));
   const btns = [];
   if (next) {
-    const lbl = `${next.userData?.position > 0 ? 'Resume' : 'Play'} S${next.season} E${next.episode}`;
+    const lbl = `${next.userData?.position > 0 ? 'Resume' : 'Play'} ${fmtEpisode(next)}`;
     btns.push(h('button', { class: 'btn primary lg', dataset: { focusKey: `show-play-${it.id}` }, onclick: () => play(next.id) }, h('span', { html: icons.play }), lbl));
   }
   btns.push(watchedButton(it, () => route()), favButton(it), moreButton(it, d));
