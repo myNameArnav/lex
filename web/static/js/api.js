@@ -23,8 +23,12 @@ export async function api(path, { method = 'GET', body, signal, keepalive } = {}
     try { data = JSON.parse(text); } catch { data = text; }
   }
   if (!res.ok) {
-    if (res.status === 401 && !path.startsWith('/api/auth/')) window.dispatchEvent(new CustomEvent('lex:unauthorized'));
-    throw new ApiError((data && data.error) || `HTTP ${res.status}`, res.status);
+    let msg = (data && data.error) || `HTTP ${res.status}`;
+    if (res.status === 401 && !path.startsWith('/api/auth/')) {
+      if (msg === 'not signed in') msg = 'Your session has ended';
+      window.dispatchEvent(new CustomEvent('lex:unauthorized'));
+    }
+    throw new ApiError(msg, res.status);
   }
   return data;
 }

@@ -1,27 +1,35 @@
-import { h, $, clear, icons, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrate, toast, modal, spinner, lazyImg, popupMenu, closePopupMenu, streamLabel, langName, channelName, confirmDialog, run, fmtEpisode, motionOK } from './ui.js';
+import { h, $, clear, icons, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrate, toast, modal, spinner, lazyImg, popupMenu, closePopupMenu, streamLabel, langName, channelName, confirmDialog, run, fmtEpisode, motionOK, emptyState } from './ui.js';
 import { api, img, castImg } from './api.js';
-import { openPlayer, isPlayerOpen } from './player.js';
+import { openPlayer, isPlayerOpen, closePlayer } from './player.js';
 import { installShortcuts, showShortcuts, MOD } from './shortcuts.js';
 
 // caps: { subtitleSearch, cacheEnabled } from the server (see /api/me).
 export const state = { me: null, caps: {}, serverName: 'Lex', libraries: [], version: '' };
 const app = document.getElementById('app');
-let mainEl = null;
+let mainEl = null, navEl = null, searchInput = null;
 let routeToken = 0;
 
 // ---------- boot ----------
-let shortcutsInstalled = false;
+installShortcuts({
+  focusSearch: () => { if (searchInput?.isConnected) { searchInput.focus(); searchInput.select(); } },
+  go: (hash) => { location.hash = hash; },
+  libraries: () => state.libraries,
+});
+
+// Session expiry (any 401): close whatever is open over the app and ask to
+// sign in again; signing in returns to the same route.
+window.addEventListener('lex:unauthorized', () => {
+  if (!state.me) return;
+  state.me = null;
+  routeToken++; // invalidates the current view, so its pollers and pending loads stop
+  leaveGuard = null;
+  document.querySelectorAll('dialog[open]').forEach((d) => d.close());
+  closePopupMenu();
+  if (isPlayerOpen()) closePlayer();
+  renderAuth(false, 'Your session ended. Sign in again to continue.');
+});
+
 async function boot() {
-  if (!shortcutsInstalled) {
-    shortcutsInstalled = true;
-    installShortcuts({
-      focusSearch: () => { if (searchInput?.isConnected) { searchInput.focus(); searchInput.select(); } },
-      go: (hash) => { location.hash = hash; },
-      libraries: () => state.libraries,
-    });
-  }
-  // Invalidate the current view too, so its pollers and pending loads stop.
-  window.addEventListener('lex:unauthorized', () => { if (state.me) { state.me = null; routeToken++; renderAuth(false); } });
   try {
     const info = await api('/api/public/info');
     state.serverName = info.serverName;
@@ -33,16 +41,29 @@ async function boot() {
     state.caps = me.caps || {};
     await startApp();
   } catch (e) {
-    if (e.status === 401) renderAuth(false);
-    else clear(app).appendChild(h('div', { class: 'empty' }, h('h2', null, 'Server unreachable'), h('p', null, e.message), h('button', { class: 'btn', onclick: () => location.reload() }, 'Retry')));
+    if (e.status === 401) return renderAuth(false);
+    const down = e.status === 0 || e.status >= 502;
+    clear(app).appendChild(h('main', { id: 'main' }, emptyState({
+      title: down ? 'Can’t reach Lex' : 'Something went wrong', text: down ? 'It may be restarting. Try again in a moment.' : e.message, alert: true,
+      actions: [h('button', { class: 'btn primary', onclick: () => { clear(app).appendChild(spinner()); boot(); } }, 'Try again')],
+    })));
   }
 }
 
-function renderAuth(setup) {
+const AUTH_ERRORS = {
+  'invalid username or password': 'Wrong username or password.',
+  'password must be between 12 and 72 bytes': 'Password must be at least 12 characters.',
+};
+
+// renderAuth shows the sign-in card, or the first-run admin form when setup
+// is set. notice says why the user is here (e.g. their session ended).
+function renderAuth(setup, notice = '') {
   clear(app);
-  const name = h('input', { id: 'auth-name', name: 'username', type: 'text', autocomplete: 'username', required: true, autofocus: true, 'aria-describedby': 'auth-error' });
-  const pass = h('input', { id: 'auth-password', name: 'password', type: 'password', autocomplete: setup ? 'new-password' : 'current-password', required: true, 'aria-describedby': setup ? 'auth-password-help auth-error' : 'auth-error' });
-  const pass2 = setup ? h('input', { id: 'auth-confirm', name: 'confirm-password', type: 'password', autocomplete: 'new-password', required: true, 'aria-describedby': 'auth-error' }) : null;
+  document.title = state.serverName;
+  const describe = (...ids) => [notice ? 'auth-notice' : null, ...ids].filter(Boolean).join(' ');
+  const name = h('input', { id: 'auth-name', name: 'username', type: 'text', autocomplete: 'username', autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', required: true, autofocus: true, 'aria-describedby': describe('auth-error') });
+  const pass = h('input', { id: 'auth-password', name: 'password', type: 'password', autocomplete: setup ? 'new-password' : 'current-password', required: true, minlength: setup ? 12 : null, maxlength: setup ? 72 : null, 'aria-describedby': setup ? 'auth-password-help auth-error' : 'auth-error' });
+  const pass2 = setup ? h('input', { id: 'auth-confirm', name: 'confirm-password', type: 'password', autocomplete: 'new-password', required: true, maxlength: 72, 'aria-describedby': 'auth-error' }) : null;
   const err = h('div', { class: 'err', id: 'auth-error', role: 'alert', 'aria-atomic': 'true' });
   const field = (label, input, help) => h('label', { class: 'field', for: input.id }, h('span', null, label), input, help ? h('div', { class: 'help', id: 'auth-password-help' }, help) : null);
   const invalid = (inputs) => inputs.forEach((input) => input.setAttribute('aria-invalid', 'true'));
@@ -52,7 +73,7 @@ function renderAuth(setup) {
     e.preventDefault();
     err.textContent = '';
     [name, pass, pass2].filter(Boolean).forEach((input) => input.removeAttribute('aria-invalid'));
-    if (setup && pass.value !== pass2.value) { err.textContent = 'Passwords do not match'; invalid([pass, pass2]); pass2.focus(); return; }
+    if (setup && pass.value !== pass2.value) { err.textContent = 'Passwords don’t match.'; invalid([pass, pass2]); pass2.focus(); return; }
     btn.disabled = true;
     try {
       const r = await api(setup ? '/api/setup' : '/api/auth/login', { method: 'POST', body: { name: name.value, password: pass.value } });
@@ -61,24 +82,32 @@ function renderAuth(setup) {
       await startApp();
       if (setup) location.hash = '#/settings/libraries';
     } catch (ex) {
-      err.textContent = ex.message;
+      // Setup was finished elsewhere (another tab or device).
+      if (setup && ex.status === 409) return renderAuth(false, 'Setup is already done. Sign in.');
+      err.textContent = AUTH_ERRORS[ex.message] || ex.message;
       if (ex.status === 401) invalid([name, pass]);
+      else if (setup && ex.status === 400) invalid([pass]);
       btn.disabled = false;
       pass.focus();
     }
   } },
   h('div', { class: 'logo' }, h('b', null, 'L'), h('span', null, state.serverName)),
   h('h1', null, setup ? 'Welcome! Create the admin account' : 'Sign in'),
+  notice ? h('p', { class: 'muted', id: 'auth-notice', role: 'status', style: { margin: 0 } }, notice) : null,
   setup ? h('p', { class: 'muted', style: { margin: 0 } }, 'This account manages libraries, users and settings.') : null,
-  field('Username', name), field('Password', pass, setup ? 'Use 12–72 bytes.' : null), pass2 ? field('Confirm password', pass2) : null, err, btn);
-  app.appendChild(h('div', { class: 'auth' }, form));
+  field('Username', name), field('Password', pass, setup ? 'At least 12 characters.' : null), pass2 ? field('Confirm password', pass2) : null, err, btn);
+  app.appendChild(h('main', { class: 'auth' }, form));
   name.focus();
 }
 
 async function startApp() {
+  history.scrollRestoration = 'manual';
   await loadLibraries();
   renderShell();
-  window.onhashchange = route;
+  // The URL being left, for the leave guard to put back (it may differ from
+  // the routed hash after in-page replaceState, e.g. the season tabs).
+  window.onhashchange = (e) => { if (!guarding) lastHash = new URL(e.oldURL).hash; route(); };
+  settled = false;
   route();
 }
 
@@ -88,36 +117,106 @@ export async function loadLibraries() {
 }
 
 // ---------- shell ----------
-let navEl, searchInput;
+const narrow = matchMedia('(max-width: 520px)');
+const searchPlaceholder = () => { if (searchInput) searchInput.placeholder = narrow.matches ? 'Search' : 'Search movies & shows'; };
+narrow.addEventListener('change', searchPlaceholder);
+
 function renderShell() {
   clear(app);
-  navEl = h('nav', { class: 'nav desktop' });
-  searchInput = h('input', { type: 'search', placeholder: 'Search movies & shows', 'aria-label': 'Search movies & shows', 'aria-keyshortcuts': 'Control+K Meta+K /', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', oninput: debounce((e) => {
+  navLinks = new Map();
+  navEl = h('nav', { class: 'nav', 'aria-label': 'Libraries', onscroll: navFade });
+  const typed = debounce((e) => {
     const q = e.target.value.trim();
-    if (q) location.hash = `#/search?q=${encodeURIComponent(q)}`;
-  }, 300), onkeydown: (e) => {
-    if (e.key === 'Escape') { e.target.value = ''; e.target.blur(); }
-    if (e.key === 'Enter' && e.target.value.trim()) location.hash = `#/search?q=${encodeURIComponent(e.target.value.trim())}`;
+    if (q) goSearch(q);
+    else if (onSearch()) leaveSearch();
+  }, 300);
+  searchInput = h('input', { type: 'search', 'aria-label': 'Search movies & shows', 'aria-keyshortcuts': 'Control+K Meta+K /', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', enterkeyhint: 'search', oninput: typed, onkeydown: (e) => {
+    if (e.key === 'Escape') {
+      typed.cancel();
+      e.target.value = '';
+      e.target.blur();
+      if (onSearch()) leaveSearch();
+    }
+    if (e.key === 'Enter' && e.target.value.trim()) {
+      typed.cancel();
+      goSearch(e.target.value.trim());
+      // Drop the phone keyboard so the results are visible.
+      if (matchMedia('(pointer: coarse)').matches) e.target.blur();
+    }
   } });
+  searchPlaceholder();
   const avatarBtn = h('button', { class: 'avatar', title: state.me.name, 'aria-label': `Account menu (${state.me.name})`, 'aria-haspopup': 'menu', 'aria-expanded': 'false', onclick: (e) => userMenu(e.currentTarget) }, state.me.name.slice(0, 1).toUpperCase());
   const top = h('header', { class: 'topbar' },
-    h('a', { class: 'logo', href: '#/' }, h('b', null, 'L'), h('span', null, state.serverName)),
+    h('a', { class: 'logo', href: '#/', 'aria-label': `${state.serverName} home` }, h('b', null, 'L'), h('span', null, state.serverName)),
     navEl,
     h('div', { class: 'spacer' }),
-    h('div', { class: 'search-box' }, h('span', { html: icons.search }), searchInput, h('kbd', { class: 'search-kbd hide-mobile', title: 'Keyboard shortcuts: press ?' }, `${MOD} K`)),
+    h('div', { class: 'search-box', role: 'search' }, h('span', { html: icons.search }), searchInput, h('kbd', { class: 'search-kbd hide-mobile', title: 'Keyboard shortcuts: press ?' }, `${MOD} K`)),
     state.me.isAdmin ? h('a', { class: 'btn icon ghost hide-mobile', href: '#/dashboard', title: 'Dashboard', html: icons.stats }) : null,
     avatarBtn);
-  mainEl = h('main');
-  app.append(top, mainEl);
+  mainEl = h('main', { id: 'main' });
+  // The router owns the hash, so the skip link moves focus itself.
+  const skip = h('a', { class: 'skip', href: '#main', onclick: (e) => { e.preventDefault(); focusMain(); } }, 'Skip to content');
+  app.append(skip, top, mainEl);
   renderNav();
 }
 
+// Nav links are built once per library list and updated in place, so focus
+// and the nav's own scroll position survive navigation.
+let navLinks = new Map(), navSig = '';
 function renderNav() {
   if (!navEl) return;
+  const sig = state.libraries.map((l) => `${l.id}\t${l.name}`).join('\n');
+  if (!navLinks.size || sig !== navSig) {
+    navSig = sig;
+    navLinks = new Map([['home', h('a', { href: '#/' }, 'Home')], ...state.libraries.map((l) => [l.id, h('a', { href: `#/library/${l.id}` }, l.name)])]);
+    navEl.replaceChildren(...navLinks.values());
+  }
   const cur = location.hash;
-  clear(navEl).append(
-    h('a', { href: '#/', class: cur === '' || cur === '#/' ? 'active' : '' }, 'Home'),
-    ...state.libraries.map((l) => h('a', { href: `#/library/${l.id}`, class: cur.startsWith(`#/library/${l.id}`) ? 'active' : '' }, l.name)));
+  let active = null;
+  for (const [id, a] of navLinks) {
+    const on = id === 'home' ? cur === '' || cur === '#/' || cur.startsWith('#/?') : cur === `#/library/${id}` || cur.startsWith(`#/library/${id}?`);
+    a.classList.toggle('active', on);
+    if (on) { a.setAttribute('aria-current', 'page'); active = a; } else a.removeAttribute('aria-current');
+  }
+  // Centre the active link if the row overflows and hides it (scrollIntoView could also scroll the page).
+  if (active) {
+    const x = active.offsetLeft - navEl.offsetLeft;
+    if (x < navEl.scrollLeft || x + active.offsetWidth > navEl.scrollLeft + navEl.clientWidth) navEl.scrollLeft = x - (navEl.clientWidth - active.offsetWidth) / 2;
+  }
+  navFade();
+}
+
+// Fade whichever edge of the nav row hides more links.
+function navFade() {
+  if (!navEl) return;
+  const { scrollLeft: x, scrollWidth: sw, clientWidth: cw } = navEl;
+  navEl.classList.toggle('fade-l', sw > cw + 1 && x > 4);
+  navEl.classList.toggle('fade-r', sw > cw + 1 && x + cw < sw - 4);
+}
+window.addEventListener('resize', debounce(navFade, 100));
+
+// ---------- search box ----------
+// A search adds one history entry: the first query pushes it (marked, so
+// clearing the box can step back to the page the search started from) and
+// later queries replace it. Results re-render in place while typing.
+const onSearch = () => location.hash.startsWith('#/search');
+function goSearch(q) {
+  const url = `#/search?q=${encodeURIComponent(q)}`;
+  if (!onSearch()) {
+    location.hash = url;
+    try { history.replaceState({ fromPage: true }, ''); } catch {}
+  } else if (parseHash().query.get('q') !== q) {
+    history.replaceState(history.state, '', url);
+    route();
+  }
+}
+let leavingSearch = false;
+function leaveSearch() {
+  if (searchInput) searchInput.value = '';
+  if (leavingSearch) return;
+  leavingSearch = true;
+  if (history.state?.fromPage) history.back();
+  else location.hash = '#/';
 }
 
 function userMenu(anchor) {
@@ -127,14 +226,31 @@ function userMenu(anchor) {
   if (state.me.isAdmin) items.push({ label: 'Dashboard & stats', icon: 'stats', onClick: () => { location.hash = '#/dashboard'; } });
   // Phones have no keyboard; iPads with one (or a trackpad) keep the entry.
   if (matchMedia('(any-pointer: fine)').matches) items.push({ label: 'Keyboard shortcuts', icon: 'keyboard', onClick: showShortcuts });
-  items.push('-', { label: 'Sign out', icon: 'logout', onClick: async () => { await api('/api/auth/logout', { method: 'POST' }).catch(() => {}); location.hash = ''; location.reload(); } });
+  items.push('-', { label: 'Sign out', icon: 'logout', onClick: signOut });
   if (state.version) items.push('-', { note: `Lex ${state.version}` });
   popupMenu(anchor, items);
 }
 
+// The session cookie is HttpOnly, so only the server can end it: if the
+// request fails, say so rather than reload into the same signed-in state.
+async function signOut() {
+  if (leaveGuard?.() && !(await confirmDiscard())) return;
+  try {
+    await api('/api/auth/logout', { method: 'POST' });
+  } catch {
+    toast('Couldn’t sign out: Lex is unreachable. Try again.', 'error');
+    return;
+  }
+  leaveGuard = null;
+  location.hash = '';
+  location.reload();
+}
+
 function debounce(fn, ms) {
   let t;
-  return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  const d = (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  d.cancel = () => clearTimeout(t);
+  return d;
 }
 
 // ---------- router ----------
@@ -144,48 +260,165 @@ function parseHash() {
   return { parts: path.split('/').filter(Boolean), query: new URLSearchParams(qs || '') };
 }
 
-export async function route() {
+// Leave guard: a view with unsaved edits registers (while rendering) a
+// function returning true while it is dirty; navigating away, or reloading,
+// asks first. Every route clears it, so a view re-registers on each render.
+let leaveGuard = null;
+export function setLeaveGuard(fn) { leaveGuard = fn; }
+window.addEventListener('beforeunload', (e) => { if (leaveGuard?.()) { e.preventDefault(); e.returnValue = true; } });
+const confirmDiscard = () => confirmDialog({ title: 'Discard changes?', message: 'You have unsaved changes. Leave this page and discard them?', okLabel: 'Discard changes', danger: true });
+
+// focusAfterRoute(key): after the next route, focus the element with
+// data-focus-key=key (e.g. the library sort select that changed the hash)
+// instead of the page heading.
+let pendingFocusKey = null;
+export function focusAfterRoute(key) { pendingFocusKey = key; }
+
+let lastHash = '', shownHash = null, lastSection, settled = false, guarding = false;
+
+// route renders the view for location.hash. A normal navigation keeps the
+// old view for up to 200 ms before showing a spinner, then restores the
+// scroll saved in the history entry (Back/Forward) or starts at the top, and
+// moves focus to the new page's h1. soft re-renders in place: no spinner,
+// same scroll and shelf positions, focus back on the same data-focus-key.
+// Views get ctx = { token, query, restore, isCurrent() }; restore is the saved
+// { y, shelves, loaded } (or null) so a view can load enough to reach it.
+export async function route({ soft = false } = {}) {
   if (!state.me) return;
   closePopupMenu();
+  if (!soft && leaveGuard?.()) {
+    if (guarding) return;
+    const back = lastHash;
+    guarding = true;
+    const ok = await confirmDiscard();
+    guarding = false;
+    if (!ok) {
+      if (location.hash !== back) history.replaceState(history.state, '', back || location.pathname);
+      renderNav();
+      return;
+    }
+  }
+  leaveGuard = null;
   const token = ++routeToken;
+  leavingSearch = false;
   const { parts, query } = parseHash();
+  const [section, id] = parts;
+  // Refining a search keeps the old results up until the new ones arrive.
+  soft ||= section === 'search' && lastSection === 'search' && shownHash !== null;
+  lastHash = location.hash;
+  lastSection = section;
   renderNav();
-  window.scrollTo(0, 0);
-  clear(mainEl).appendChild(spinner());
-  const [section, id, sub] = parts;
   if (section !== 'search' && searchInput) searchInput.value = '';
-  const ctx = { token, query, isCurrent: () => token === routeToken };
+  const restore = soft ? captureScroll() : history.state?.scroll || null;
+  const active = document.activeElement;
+  const focusKey = pendingFocusKey || (soft ? active?.dataset?.focusKey : null);
+  const focusWasInMain = mainEl.contains(active) && active !== mainEl;
+  pendingFocusKey = null;
+  const ctx = { token, query, restore, isCurrent: () => token === routeToken };
+  const spin = soft ? 0 : setTimeout(() => { if (ctx.isCurrent()) clear(mainEl).appendChild(spinner()); }, 200);
+  let view;
   try {
-    let view;
     switch (section) {
       case undefined: view = await homeView(ctx); break;
       case 'library': view = await libraryView(ctx, +id); break;
       case 'item': view = await itemView(ctx, +id); break;
       case 'search': view = await searchView(ctx, query.get('q') || ''); break;
-      case 'settings': { const m = await import('./admin.js'); view = await m.settingsView(ctx, id || 'preferences'); break; }
-      case 'dashboard': { const m = await import('./admin.js'); view = await m.dashboardView(ctx, id || 'live'); break; }
-      default: view = h('div', { class: 'empty' }, h('h2', null, 'Not found'));
+      case 'settings': { const m = await loadAdmin(); view = await m.settingsView(ctx, id || 'preferences'); break; }
+      case 'dashboard': { const m = await loadAdmin(); view = await m.dashboardView(ctx, id || 'live'); break; }
+      default: view = notFound();
     }
-    if (!ctx.isCurrent()) return;
-    clear(mainEl).appendChild(view);
   } catch (e) {
-    if (!ctx.isCurrent()) return;
-    clear(mainEl).appendChild(h('div', { class: 'empty' }, h('h2', null, 'Something went wrong'), h('p', null, e.message)));
+    view = errorView(e, section);
   }
+  if (!ctx.isCurrent()) return;
+  clearTimeout(spin);
+  mainEl.replaceChildren(view);
+  shownHash = location.hash;
+  const h1 = mainEl.querySelector('h1');
+  document.title = section && h1 ? `${h1.textContent.trim()} · ${state.serverName}` : state.serverName;
+  if (restore) restoreScroll(restore);
+  else window.scrollTo(0, 0);
+  const keyed = focusKey && [...mainEl.querySelectorAll('[data-focus-key]')].find((el) => el.dataset.focusKey === focusKey);
+  const busy = isPlayerOpen() || document.querySelector('dialog[open]');
+  if (keyed) keyed.focus({ preventScroll: true });
+  // Announce the new page by focusing its heading, except after typing in the
+  // search box, on first load and on soft refreshes that didn't lose focus.
+  else if (!busy && settled && !searchInput?.contains(document.activeElement) && (!soft || (focusWasInMain && !mainEl.contains(document.activeElement)))) {
+    if (h1) { h1.setAttribute('tabindex', '-1'); h1.focus({ preventScroll: true }); }
+    else focusMain();
+  }
+  settled = true;
 }
+
+// main is focusable only while focused: with a permanent tabindex every click
+// on plain content would focus it.
+function focusMain() {
+  mainEl.setAttribute('tabindex', '-1');
+  mainEl.addEventListener('blur', () => mainEl.removeAttribute('tabindex'), { once: true });
+  mainEl.focus({ preventScroll: true });
+}
+
+// admin.js is loaded on first use. A failed fetch (server down) reads as a
+// network error so the route offers "Try again"; browsers remember a failed
+// module URL, so the retry asks for a fresh one.
+let adminModule = null, adminFails = 0;
+function loadAdmin() {
+  adminModule ||= import(adminFails ? `./admin.js?retry=${adminFails}` : './admin.js').catch((e) => {
+    adminModule = null;
+    adminFails++;
+    throw e instanceof TypeError ? Object.assign(new Error('Network error: server unreachable'), { status: 0 }) : e;
+  });
+  return adminModule;
+}
+
+function notFound() {
+  return emptyState({ title: 'Not found', text: 'This page doesn’t exist.', actions: [h('a', { class: 'btn primary', href: '#/' }, 'Go home')] });
+}
+
+function errorView(e, section) {
+  if (e.status === 404) return emptyState({ title: 'Not found', text: section === 'item' ? 'This title isn’t in your library any more.' : 'This page doesn’t exist.', actions: [h('a', { class: 'btn primary', href: '#/' }, 'Go home')] });
+  const actions = [h('button', { class: 'btn primary', onclick: () => route() }, 'Try again'), section ? h('a', { class: 'btn', href: '#/' }, 'Go home') : null].filter(Boolean);
+  // 0: no response; 502–504: a proxy in front of Lex while it restarts.
+  if (e.status === 0 || e.status >= 502) return emptyState({ title: 'Can’t reach Lex', text: 'It may be restarting. Try again in a moment.', alert: true, actions });
+  return emptyState({ title: 'Something went wrong', text: e.message, alert: true, actions });
+}
+
+// ---------- scroll restoration ----------
+// Each history entry keeps its page scroll, shelf positions and how many grid
+// cards were loaded (saved shortly after scrolling stops), so Back returns to
+// the same place.
+function captureScroll() {
+  return {
+    y: Math.round(scrollY),
+    shelves: [...mainEl.querySelectorAll('.shelf-track')].map((t) => Math.round(t.scrollLeft)),
+    loaded: mainEl.querySelectorAll('.grid > .card').length,
+  };
+}
+function restoreScroll({ y = 0, shelves = [] }) {
+  mainEl.querySelectorAll('.shelf-track').forEach((t, i) => { if (shelves[i]) t.scrollLeft = shelves[i]; });
+  window.scrollTo(0, y);
+}
+let scrollTimer = 0;
+function saveScroll() {
+  clearTimeout(scrollTimer);
+  scrollTimer = 0;
+  // Only while the shown view belongs to this entry (not mid-navigation).
+  if (!state.me || !mainEl?.isConnected || location.hash !== shownHash) return;
+  try { history.replaceState({ ...history.state, scroll: captureScroll() }, ''); } catch {} // Safari rate-limits replaceState
+}
+document.addEventListener('scroll', () => { clearTimeout(scrollTimer); scrollTimer = setTimeout(saveScroll, 200); }, { capture: true, passive: true });
+// A click can navigate before the debounce fires: save first.
+document.addEventListener('click', () => { if (scrollTimer) saveScroll(); }, true);
 
 export function play(itemId, start = null) {
   openPlayer({ itemId, start, onClose: () => { if (!isPlayerOpen()) refreshSoft(); } });
 }
 
-// Re-render the current view quietly (progress bars etc.) after playback.
-async function refreshSoft() {
-  const y = window.scrollY;
-  const focusKey = document.activeElement?.dataset.focusKey;
-  await route();
-  window.scrollTo(0, y);
-  if (focusKey) [...mainEl.querySelectorAll('[data-focus-key]')].find((el) => el.dataset.focusKey === focusKey)?.focus({ preventScroll: true });
-}
+// refreshSoft re-renders the current view in place (after playback or an
+// in-page action): no spinner, scroll and shelf positions kept, and focus
+// returns to the control with the same data-focus-key.
+export function refreshSoft() { return route({ soft: true }); }
+
 
 // ---------- cards ----------
 function subtitleFor(it) {
@@ -232,7 +465,7 @@ function shelf(title, items, kind, moreHref) {
   const track = h('div', { class: 'shelf-track' }, items.map((it) => kind === 'landscape' ? landCard(it) : posterCard(it)));
   const scroll = (dir) => track.scrollBy({ left: dir * track.clientWidth * 0.85, behavior: motionOK() ? 'smooth' : 'auto' });
   return h('section', { class: 'shelf' },
-    h('div', { class: 'shelf-head' }, h('h2', { class: 'section-title' }, title), moreHref ? h('a', { class: 'more', href: moreHref }, 'See all') : null),
+    h('div', { class: 'shelf-head' }, h('h2', { class: 'section-title' }, title), moreHref ? h('a', { class: 'more', href: moreHref, 'aria-label': `See all: ${title}` }, 'See all') : null),
     h('div', { class: 'shelf-scroll' },
       h('button', { class: 'shelf-arrow left hide-mobile', html: icons.chevL, onclick: () => scroll(-1), 'aria-label': 'Scroll left' }),
       track,
@@ -242,7 +475,7 @@ function shelf(title, items, kind, moreHref) {
 // ---------- home ----------
 async function homeView() {
   const data = await api('/api/home');
-  const wrap = h('div', { style: { paddingTop: '26px', paddingBottom: '40px' } });
+  const wrap = h('div', { style: { paddingTop: '26px', paddingBottom: '40px' } }, h('h1', { class: 'sr-only' }, 'Home'));
   if (!data.libraries.length) {
     wrap.appendChild(h('div', { class: 'empty' },
       h('h2', null, 'No libraries yet'),
@@ -263,20 +496,22 @@ async function homeView() {
 // ---------- library ----------
 async function libraryView(ctx, id) {
   const lib = state.libraries.find((l) => l.id === id) || (await loadLibraries(), state.libraries.find((l) => l.id === id));
-  if (!lib) return h('div', { class: 'empty' }, h('h2', null, 'Library not found'));
+  if (!lib) return emptyState({ title: 'Library not found', text: 'It may have been removed.', actions: [h('a', { class: 'btn primary', href: '#/' }, 'Go home')] });
   const q = ctx.query;
   const opts = { sort: q.get('sort') || 'title', desc: q.get('desc') === '1', filter: q.get('filter') || '', genre: q.get('genre') || '' };
-  const setQ = (patch) => {
+  // key: the control to focus once the re-rendered view is in.
+  const setQ = (patch, key) => {
     const n = { ...opts, ...patch };
     const p = new URLSearchParams();
     if (n.sort !== 'title') p.set('sort', n.sort);
     if (n.desc) p.set('desc', '1');
     if (n.filter) p.set('filter', n.filter);
     if (n.genre) p.set('genre', n.genre);
+    focusAfterRoute(key);
     location.hash = `#/library/${id}${p.toString() ? '?' + p : ''}`;
   };
   const genres = await api(`/api/genres?library=${id}`).catch(() => []);
-  const sel = (label, value, options, on) => h('select', { 'aria-label': label, onchange: (e) => on(e.target.value) }, options.map(([v, l]) => h('option', { value: v, selected: v === value }, l)));
+  const sel = (label, key, value, options, on) => h('select', { 'aria-label': label, dataset: { focusKey: key }, onchange: (e) => on(e.target.value) }, options.map(([v, l]) => h('option', { value: v, selected: v === value }, l)));
   const count = h('span', { class: 'count' });
   const grid = h('div', { class: 'grid' });
   const sentinel = h('div', { style: { height: '40px' } });
@@ -290,10 +525,10 @@ async function libraryView(ctx, id) {
   const page = h('div', { class: 'page' },
     h('div', { class: 'row' }, h('h1', { class: 'page-title' }, lib.name), count),
     h('div', { class: 'toolbar' },
-      sel('Sort titles', opts.sort, [['title', 'Title'], ['year', 'Year'], ['added', 'Date added'], ['latest', 'Latest episode/added'], ['rating', 'Rating'], ['played', 'Recently watched'], ['random', 'Random']], (v) => setQ({ sort: v, desc: ['added', 'latest', 'rating', 'played', 'year'].includes(v) })),
-      h('button', { class: 'btn sm', title: 'Reverse order', onclick: () => setQ({ desc: !opts.desc }) }, opts.desc ? '↓ Desc' : '↑ Asc'),
-      sel('Filter titles', opts.filter, [['', 'All'], ['unplayed', 'Unwatched'], ['played', 'Watched'], ['inprogress', 'In progress'], ['favorite', 'Favorites']], (v) => setQ({ filter: v })),
-      genres.length ? sel('Filter by genre', opts.genre, [['', 'All genres'], ...genres.map((g) => [g, g])], (v) => setQ({ genre: v })) : null,
+      sel('Sort titles', 'sort-select', opts.sort, [['title', 'Title'], ['year', 'Year'], ['added', 'Date added'], ['latest', 'Latest episode/added'], ['rating', 'Rating'], ['played', 'Recently watched'], ['random', 'Random']], (v) => setQ({ sort: v, desc: ['added', 'latest', 'rating', 'played', 'year'].includes(v) }, 'sort-select')),
+      h('button', { class: 'btn sm', title: 'Reverse order', dataset: { focusKey: 'sort-dir' }, onclick: () => setQ({ desc: !opts.desc }, 'sort-dir') }, opts.desc ? '↓ Desc' : '↑ Asc'),
+      sel('Filter titles', 'filter-select', opts.filter, [['', 'All'], ['unplayed', 'Unwatched'], ['played', 'Watched'], ['inprogress', 'In progress'], ['favorite', 'Favorites']], (v) => setQ({ filter: v }, 'filter-select')),
+      genres.length ? sel('Filter by genre', 'genre-select', opts.genre, [['', 'All genres'], ...genres.map((g) => [g, g])], (v) => setQ({ genre: v }, 'genre-select')) : null,
       h('div', { class: 'spacer' }),
       random),
     grid, sentinel);
@@ -318,7 +553,7 @@ async function libraryView(ctx, id) {
       if (total === 0) grid.replaceWith(h('div', { class: 'empty' },
         h('h2', null, opts.filter === 'favorite' && !opts.genre ? 'No favorites yet' : 'Nothing here'),
         h('p', null, opts.filter === 'favorite' && !opts.genre ? 'Open a title and select the heart to add it to your favorites.' : opts.filter || opts.genre ? 'No titles match these filters.' : 'The library is empty or still scanning.'),
-        opts.filter || opts.genre ? h('button', { class: 'btn', onclick: () => setQ({ filter: '', genre: '' }) }, 'Clear filters') : null));
+        opts.filter || opts.genre ? h('button', { class: 'btn', onclick: () => setQ({ filter: '', genre: '' }, 'filter-select') }, 'Clear filters') : null));
     } finally {
       loading = false;
     }
@@ -327,6 +562,8 @@ async function libraryView(ctx, id) {
   // pages leave a retry button, since the observer won't fire again while
   // the sentinel stays in view.
   await load();
+  // Back to a scrolled grid: load as many pages as were showing.
+  while (ctx.restore && offset < ctx.restore.loaded && offset < total && ctx.isCurrent()) await load();
   const more = async () => {
     if (loading) return;
     clear(sentinel);
@@ -612,7 +849,7 @@ async function showView(ctx, d) {
       const eps = await api(`/api/items/${s.id}/children`);
       if (active !== s || !ctx.isCurrent()) return;
       clear(list).append(...eps.map((e) => episodeRow(e)), ...(s.overview ? [h('p', { class: 'muted', style: { maxWidth: '760px' } }, s.overview)] : []));
-      history.replaceState(null, '', `#/item/${it.id}?season=${s.id}`);
+      history.replaceState(history.state, '', `#/item/${it.id}?season=${s.id}`);
     } catch (e) {
       if (active === s && ctx.isCurrent()) clear(list).append(h('p', { class: 'bad', role: 'alert' }, e.message), h('button', { class: 'btn', onclick: () => showSeason(s) }, 'Retry'));
     } finally {
@@ -665,7 +902,8 @@ function episodeRow(e) {
 
 // ---------- search ----------
 async function searchView(ctx, q) {
-  if (searchInput && searchInput.value !== q) searchInput.value = q;
+  // Leave the box alone while it holds this query (e.g. with a trailing space being typed).
+  if (searchInput && searchInput.value.trim() !== q) searchInput.value = q;
   const r = await api(`/api/search?q=${encodeURIComponent(q)}`);
   const page = h('div', { class: 'page' }, h('h1', { class: 'page-title' }, `Results for “${q}”`));
   const total = r.movies.length + r.shows.length + r.episodes.length;

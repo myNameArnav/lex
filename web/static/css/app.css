@@ -30,7 +30,7 @@
   --sal: env(safe-area-inset-left, 0px);
   --radius: 10px;
   --shadow: 0 10px 30px rgba(0, 0, 0, .45);
-  --top: 60px;
+  --top: calc(60px + var(--sat)); /* fixed top bar, including the status-bar inset */
   --poster-w: 160px;
   --land-w: 300px;
   font-synthesis: none;
@@ -39,6 +39,8 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
+/* A stray wide element must never make phones pan sideways. */
+body { overflow-x: clip; }
 /* Keep focused controls and scroll targets clear of the fixed top bar and
    the sticky settings save bar. */
 html { scroll-padding-top: calc(var(--top) + 12px); }
@@ -68,6 +70,12 @@ img { display: block; }
 .dim { color: var(--text3); }
 .small { font-size: 12px; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+code, .mono { overflow-wrap: anywhere; }
+/* Skip link: off-screen until focused (first Tab on any page). */
+.skip { position: absolute; left: -999px; top: 8px; z-index: 100; padding: 8px 14px; border-radius: 8px; background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+.skip:focus { left: max(12px, var(--sal)); top: calc(8px + var(--sat)); }
+/* Route focus targets: focused to move the reading position, not to show a ring. */
+main:focus, h1[tabindex='-1']:focus { outline: none; }
 .row { display: flex; align-items: center; gap: 10px; }
 .wrap { flex-wrap: wrap; }
 .grow { flex: 1; }
@@ -120,6 +128,7 @@ input[type=text], input[type=password], input[type=number], input[type=search], 
 }
 textarea { height: auto; padding: 10px 12px; }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+input[aria-invalid=true] { border-color: var(--bad); }
 select { padding-right: 28px; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a3a9b7' stroke-width='3'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
 .field { display: grid; gap: 6px; align-content: start; min-width: 0; }
 .field select, .field input { width: 100%; }
@@ -137,7 +146,7 @@ select { padding-right: 28px; appearance: none; background-image: url("data:imag
 @media (pointer: coarse) {
   /* iOS zooms into any focused control under 16px. */
   input[type=text], input[type=password], input[type=number], input[type=search], select, textarea { font-size: 16px; }
-  /* Touch targets. The ≤900px two-row top bar still fits: 6 + 40 + 4 + 40 + 6 < 100. */
+  /* Touch targets. The ≤600px two-row top bar still fits: 6 + 40 + 4 + 40 + 6 < 100. */
   .btn.sm { height: 40px; padding: 0 14px; }
   .btn.icon.sm { width: 40px; }
 }
@@ -145,7 +154,7 @@ select { padding-right: 28px; appearance: none; background-image: url("data:imag
 /* ---------- top bar ---------- */
 .topbar {
   position: fixed; top: 0; left: 0; right: 0; height: var(--top); z-index: 50;
-  display: flex; align-items: center; gap: 14px; padding: 0 22px;
+  display: flex; align-items: center; gap: 14px; padding: var(--sat) max(22px, var(--sar)) 0 max(22px, var(--sal));
   background: linear-gradient(to bottom, rgba(12,13,16,.96), rgba(12,13,16,.85));
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid rgba(255,255,255,.04);
@@ -157,9 +166,15 @@ select { padding-right: 28px; appearance: none; background-image: url("data:imag
 .nav a { padding: 7px 12px; border-radius: 8px; color: var(--text2); font-weight: 600; white-space: nowrap; }
 .nav a:hover { color: var(--text); background: rgba(255,255,255,.05); }
 .nav a.active { color: var(--text); background: rgba(255,255,255,.09); }
+/* Overflowing nav: fade the edge(s) that hide more links. */
+.nav.fade-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
+.nav.fade-l { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent); }
+.nav.fade-l.fade-r { -webkit-mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
 .search-box { position: relative; width: 260px; }
 .search-box input { width: 100%; padding-left: 34px; height: 36px; background: rgba(255,255,255,.06); border-color: transparent; }
-.search-box input:focus { background: var(--bg2); }
+.search-box input:focus { background: var(--bg2); border-color: var(--accent); }
+/* Taps on the magnifier reach the input. */
+.search-box > span { pointer-events: none; }
 .search-box svg { position: absolute; left: 10px; top: 9px; width: 18px; height: 18px; color: var(--text3); }
 .avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--bg4); display: grid; place-items: center; font-weight: 700; cursor: pointer; border: none; flex: none; }
 .menu {
@@ -178,8 +193,24 @@ select { padding-right: 28px; appearance: none; background-image: url("data:imag
   .avatar { width: 40px; height: 40px; }
   .menu button, .menu a { min-height: 44px; }
 }
+/* The ⌘K hint only where there is a keyboard-and-mouse. */
+@media (min-width: 901px) and (hover: hover) { .search-box input { padding-right: 52px; } }
+@media (hover: none) { .search-box .search-kbd { display: none; } }
+/* Tablets and landscape phones: one 60px row; the search box keeps the free
+   width and the nav shrinks and scrolls. Phones in portrait: two rows. */
+@media (max-width: 900px) {
+  .topbar { gap: 10px; padding: var(--sat) max(12px, var(--sar)) 0 max(12px, var(--sal)); }
+  .topbar > .spacer { display: none; }
+  .search-box { width: auto; flex: 1; min-width: 160px; }
+}
+@media (max-width: 600px) {
+  :root { --top: calc(100px + var(--sat)); }
+  .topbar { flex-wrap: wrap; align-content: center; row-gap: 4px; padding: calc(6px + var(--sat)) max(12px, var(--sar)) 6px max(12px, var(--sal)); }
+  .topbar .nav { order: 10; width: 100%; margin: 0 -4px; }
+  .search-box { min-width: 0; }
+}
 
-main { padding-top: var(--top); min-height: 100vh; }
+main { padding: var(--top) var(--sar) 0 var(--sal); min-height: 100vh; }
 .page { padding: 26px 34px 60px; }
 .page-title { font-size: 28px; font-weight: 800; letter-spacing: -.02em; margin: 0 0 4px; }
 .section-title { font-size: 19px; font-weight: 700; margin: 0; letter-spacing: -.01em; }
@@ -372,6 +403,8 @@ body:has(.save-bar) .toasts { bottom: calc(80px + var(--sab)); }
 .toggle-row .lbl { display: grid; gap: 2px; }
 .toggle-row .lbl b { font-weight: 600; }
 .save-bar { position: sticky; bottom: 0; z-index: 5; padding: 12px 0 calc(12px + var(--sab)); margin-top: -4px; background: rgba(12,13,16,.94); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-top: 1px solid var(--line); display: flex; gap: 10px; }
+/* Landscape phones: a slimmer save bar leaves room for the form. */
+@media (max-width: 900px) and (max-height: 500px) { .save-bar { padding: 6px 0 calc(6px + var(--sab)); } }
 
 table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tbl th { text-align: left; color: var(--text3); font-weight: 700; font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -598,8 +631,6 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   .health { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   :root { --poster-w: 124px; --land-w: 240px; }
   .page { padding: 20px 16px 50px; }
-  .topbar { padding: 0 12px; gap: 10px; }
-  .search-box { width: auto; flex: 1; }
   .shelf-head { margin: 0 16px 10px; }
   .shelf-track { padding: 4px 16px 12px; gap: 12px; scroll-padding: 0 16px; }
   .hero-inner { flex-direction: column; padding: 24px 16px; gap: 20px; }
@@ -630,14 +661,11 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   .player:not(.hide-ui) .p-subs { bottom: max(var(--sub-bottom, 10%), calc(160px + env(safe-area-inset-bottom))); }
   .vol input { display: none; }
   .hide-mobile { display: none !important; }
-  :root { --top: 100px; }
-  .topbar { flex-wrap: wrap; align-content: center; row-gap: 4px; padding: 6px 12px; }
-  .topbar .nav { order: 10; width: 100%; margin: 0 -4px; }
 }
 @media (max-width: 900px) and (pointer: fine) { .nav a { padding: 5px 10px; } }
 @media (min-width: 901px) { .mobile-only { display: none !important; } }
 @media (max-width: 520px) {
-  .logo span { display: none; }
+  .topbar .logo span { display: none; }
   .p-time { font-size: 12px; margin: 0 4px; }
   .p-ends { display: none; }
   .upnext { left: 10px; right: 10px; width: auto; }
@@ -645,7 +673,6 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 
 /* keyboard shortcuts */
 kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; background: var(--bg3); color: var(--text); font: 600 12px/18px ui-monospace, Menlo, Consolas, monospace; text-align: center; }
-.search-box input { padding-right: 52px; }
 .search-box .search-kbd { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text3); background: transparent; font-size: 11px; }
 .search-box input:focus ~ .search-kbd, .search-box input:not(:placeholder-shown) ~ .search-kbd { display: none; }
 .shortcuts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 18px 28px; }

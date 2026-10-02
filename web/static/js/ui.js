@@ -420,7 +420,7 @@ export function popupMenu(anchor, items) {
   return menu;
 }
 
-export function spinner() { return h('div', { class: 'loading' }, h('div', { class: 'spinner' })); }
+export function spinner() { return h('div', { class: 'loading', role: 'status', 'aria-label': 'Loading' }, h('div', { class: 'spinner' })); }
 
 export function lazyImg(src, alt = '', onFail) {
   const img = h('img', { alt, loading: 'lazy', decoding: 'async' });

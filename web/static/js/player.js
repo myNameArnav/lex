@@ -17,6 +17,8 @@ export function openPlayer(opts) {
 
 export function isPlayerOpen() { return !!current; }
 
+export function closePlayer() { current?.close(); }
+
 const END_FMT = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 const DIRECT_STARTUP_TIMEOUT = 15000;
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];

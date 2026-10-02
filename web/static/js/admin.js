@@ -1,4 +1,4 @@
-import { h, clear, icons, toast, modal, confirmDialog, spinner, toggle, fmtBytes, fmtBitrate, fmtTime, fmtDate, timeAgo, fmtUptime, fmtDuration, LANG_OPTIONS, $, run, staleBanner, motionOK, KIND_LABELS, METHOD_LABEL, reasonLabel } from './ui.js';
+import { h, clear, icons, toast, modal, confirmDialog, spinner, toggle, fmtBytes, fmtBitrate, fmtTime, fmtDate, timeAgo, fmtUptime, fmtDuration, LANG_OPTIONS, $, run, staleBanner, motionOK, KIND_LABELS, METHOD_LABEL, reasonLabel, emptyState } from './ui.js';
 import { api, img } from './api.js';
 import { state, loadLibraries, route } from './app.js';
 import { prefs, DEFAULTS, QUALITIES } from './prefs.js';
@@ -480,7 +480,7 @@ async function aboutSection() {
 const DASH = [['live', 'Live', 'broadcast'], ['playback', 'Playback', 'stats'], ['library', 'Library', 'library']];
 
 export async function dashboardView(ctx, tab) {
-  if (!state.me.isAdmin) return h('div', { class: 'empty' }, 'Admins only');
+  if (!state.me.isAdmin) return emptyState({ title: 'Admins only', text: 'Ask the server owner for access.', actions: [h('a', { class: 'btn primary', href: '#/' }, 'Go home')] });
   if (tab === 'history') tab = 'playback'; // merged into Playback
   const content = await ({ live: liveTab, playback: playbackTab, library: libraryTab }[tab] || liveTab)(ctx);
   return h('div', { class: 'page' },
