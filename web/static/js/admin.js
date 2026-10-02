@@ -5,10 +5,12 @@ import { prefs, DEFAULTS, QUALITIES } from './prefs.js';
 import { capsSummary } from './caps.js';
 import { lineChart, columnChart, sparkline, barList, SERIES } from './charts.js';
 
-// Timers owned by the current admin view; cleared on navigation, when the
-// view is re-rendered (ctx no longer current) and when the session expires.
-let timers = [], pollers = [];
-function stopTimers() { timers.forEach(clearInterval); timers = []; pollers = []; }
+// Pollers owned by the current admin view. Each stops at its next tick once
+// its view is no longer current (navigated away or re-rendered; a navigation
+// cancelled by the leave guard keeps them running), and all stop when the
+// session expires.
+let pollers = [];
+function stopTimers() { pollers.forEach((p) => clearInterval(p.t)); pollers = []; }
 // every polls fn every ms while ctx is current. Ticks are skipped while the
 // tab is hidden or a dialog is open (a re-render would pull the dialog's
 // opener out from under it), and run at once when the tab is shown again.
@@ -16,8 +18,9 @@ function stopTimers() { timers.forEach(clearInterval); timers = []; pollers = []
 // a row onFail(lastOkAt) is called, and onRecover() after the next success.
 function every(ctx, ms, fn, { onFail, onRecover } = {}) {
   let fails = 0, lastOk = Date.now(), busy = false;
-  const tick = async () => {
-    if (!ctx.isCurrent()) { clearInterval(t); return; }
+  const p = {};
+  p.tick = async () => {
+    if (!ctx.isCurrent()) { clearInterval(p.t); pollers = pollers.filter((x) => x !== p); return; }
     if (busy || document.hidden || document.querySelector('dialog[open]')) return;
     busy = true;
     try {
@@ -31,14 +34,12 @@ function every(ctx, ms, fn, { onFail, onRecover } = {}) {
       busy = false;
     }
   };
-  const t = setInterval(tick, ms);
-  timers.push(t);
-  pollers.push(tick);
-  return t;
+  p.t = setInterval(p.tick, ms);
+  pollers.push(p);
+  return p.t;
 }
-window.addEventListener('hashchange', stopTimers);
 window.addEventListener('lex:unauthorized', stopTimers);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) pollers.forEach((f) => f()); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) pollers.forEach((p) => p.tick()); });
 
 // ======================================================================
 // Settings
