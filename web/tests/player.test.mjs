@@ -79,6 +79,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
   deps['./ui.js'].icons = { play: 'play', pause: 'pause' };
   deps['./ui.js'].langName = value => value;
   deps['./ui.js'].toast = () => {};
+  deps['./ui.js'].releaseToasts = () => {};
   deps['./ui.js'].METHOD_LABEL = { direct: 'Direct Play', remux: 'Direct Stream', transcode: 'Transcode' };
   deps['./ui.js'].reasonLabel = value => value;
   deps['./ui.js'].fmtEpisode = it => `S${it.season} E${it.episode}`;

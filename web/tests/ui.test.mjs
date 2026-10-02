@@ -30,6 +30,7 @@ function fakeDom() {
     appendChild(c) { c.parentNode?._drop(c); c.parentNode = this; this.childNodes.push(c); return c; }
     replaceChildren(...cs) { this.childNodes.forEach((c) => { c.parentNode = null; }); this.childNodes = []; cs.forEach((c) => this.appendChild(c)); }
     remove() { this.parentNode?._drop(this); }
+    contains(n) { for (let x = n; x; x = x.parentNode) if (x === this) return true; return false; }
     _drop(c) { this.childNodes = this.childNodes.filter((x) => x !== c); c.parentNode = null; }
     focus() { document.activeElement = this; }
   }
@@ -133,6 +134,23 @@ test('toasts fired before the live region settles keep their order', async () =>
   assert.deepEqual(toastTexts(dom), ['First', 'Second']);
   ui.toast('third');
   assert.deepEqual(toastTexts(dom), ['First', 'Second', 'Third'], 'later toasts go in at once');
+});
+
+test('toasts shown in a dialog or the player outlive it', async () => {
+  const { ui, dom, flushFrames } = await loadUI();
+  const player = dom.document.createElement('div');
+  dom.body.appendChild(player);
+  dom.document.querySelector = (sel) => (sel === '.player' && player.parentNode ? player : null);
+  ui.toast('stats copied');
+  flushFrames();
+  const box = player.children[0];
+  assert.equal(box.className, 'toasts', 'the player hosts the stack while it is open');
+  player.remove();
+  ui.releaseToasts(player);
+  assert.equal(box.parentNode, dom.body);
+  assert.deepEqual(toastTexts(dom), ['Stats copied']);
+  ui.releaseToasts(dom.document.createElement('dialog'));
+  assert.equal(box.parentNode, dom.body, 'other elements leave the stack alone');
 });
 
 test('run disables the button while busy, toasts and reports the outcome', async () => {

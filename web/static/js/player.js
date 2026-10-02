@@ -1,7 +1,7 @@
 // Full-screen player: picks a playback plan from the server, plays it via
 // direct <video src> or the MSE engine, and renders controls + stats.
 
-import { h, icons, resLabel, fmtTime, fmtBitrate, fmtBytes, streamLabel, toast, clear, langName, channelName, modal, containTab, METHOD_LABEL, reasonLabel, fmtEpisode } from './ui.js';
+import { h, icons, resLabel, fmtTime, fmtBitrate, fmtBytes, streamLabel, toast, releaseToasts, clear, langName, channelName, modal, containTab, METHOD_LABEL, reasonLabel, fmtEpisode } from './ui.js';
 import { api, img } from './api.js';
 import { detectCaps } from './caps.js';
 import { prefs, QUALITIES } from './prefs.js';
@@ -1472,6 +1472,7 @@ class Player {
     this.teardown();
     this.destroyASS();
     this.root.remove();
+    releaseToasts(this.root);
     if (this.background?.isConnected) this.background.inert = this.backgroundWasInert;
     if (this.restoreFocus?.isConnected) this.restoreFocus.focus();
     document.body.style.overflow = '';

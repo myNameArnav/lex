@@ -152,12 +152,18 @@ let toastBox;
 // player (aria-modal hides everything outside it from screen readers).
 function toastHost() {
   const fs = document.fullscreenElement;
-  return [...document.querySelectorAll('dialog[open]')].at(-1) || (fs && fs.tagName !== 'VIDEO' ? fs : null) || document.querySelector('.player') || document.body;
+  return [...document.querySelectorAll('dialog[open]')].at(-1) || (fs?.isConnected && fs.tagName !== 'VIDEO' ? fs : null) || document.querySelector('.player') || document.body;
 }
 function rehomeToasts() {
   if (toastBox?.childElementCount) { const host = toastHost(); if (toastBox.parentNode !== host) host.appendChild(toastBox); }
 }
 document.addEventListener('fullscreenchange', rehomeToasts);
+
+// releaseToasts moves visible toasts out of el, a dialog or the player that
+// is closing (call it once el is closed or removed), so they outlive it.
+export function releaseToasts(el) {
+  if (toastBox && el.contains(toastBox)) rehomeToasts();
+}
 
 function dropToast(t) { t._gone = true; clearTimeout(t._timer); t.remove(); }
 function capToasts() { while (toastBox.childElementCount > 3) dropToast(toastBox.firstElementChild); }
@@ -232,7 +238,7 @@ export function modal({ title, body, actions = [], wide = false, onClose, parent
     closed = true;
     window.removeEventListener('hashchange', close);
     bg.close();
-    if (toastBox && bg.contains(toastBox)) toastHost().appendChild(toastBox);
+    releaseToasts(bg);
     bg.remove();
     onClose && onClose();
   };
@@ -369,8 +375,10 @@ export function popupMenu(anchor, items) {
     return b;
   }));
   // Kept on <body>: the top bar's backdrop-filter would make it the
-  // containing block of a fixed-position child.
-  document.body.appendChild(menu);
+  // containing block of a fixed-position child. Inside a dialog or the
+  // player it joins that layer, since everything outside it is inert or
+  // covered.
+  (anchor.closest('dialog, .player') || document.body).appendChild(menu);
   const r = anchor.getBoundingClientRect();
   const mh = menu.offsetHeight, vh = innerHeight;
   if (r.bottom + 6 + mh <= vh - 8) menu.style.top = `${r.bottom + 6}px`;

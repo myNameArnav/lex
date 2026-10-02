@@ -352,7 +352,8 @@ main { padding: var(--top) var(--sar) 0 var(--sal); min-height: 100vh; }
 .toast .toast-x { pointer-events: auto; flex: none; width: 30px; height: 30px; margin: -6px -10px -6px 0; display: grid; place-items: center; border: 0; border-radius: 6px; background: none; color: var(--text2); cursor: pointer; }
 .toast .toast-x:hover { background: rgba(255,255,255,.08); color: var(--text); }
 .toast .toast-x svg { width: 14px; height: 14px; }
-body:has(.save-bar) .toasts { bottom: calc(80px + var(--sab)); }
+/* Only the page's own stack: in a phone dialog it is pinned to the top. */
+body:has(.save-bar) > .toasts { bottom: calc(80px + var(--sab)); }
 /* In the player: under the title bar, clear of the seek bar and toolbar. */
 .player .toasts { position: absolute; top: calc(76px + var(--sat)); bottom: auto; }
 @media (max-width: 520px) {

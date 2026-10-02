@@ -276,6 +276,15 @@ export function focusAfterRoute(key) { pendingFocusKey = key; }
 
 let lastHash = '', shownHash = null, lastSection, settled = false, guarding = false;
 
+// replaceHash records in-page state in the address (e.g. the season tabs)
+// without routing. Use it instead of history.replaceState, so the entry
+// keeps its saved scroll and the shown view stays tied to it.
+export function replaceHash(hash) {
+  const shown = location.hash === shownHash;
+  history.replaceState(history.state, '', hash);
+  if (shown) shownHash = location.hash;
+}
+
 // route renders the view for location.hash. A normal navigation keeps the
 // old view for up to 200 ms before showing a spinner, then restores the
 // scroll saved in the history entry (Back/Forward) or starts at the top, and
@@ -562,8 +571,11 @@ async function libraryView(ctx, id) {
   // pages leave a retry button, since the observer won't fire again while
   // the sentinel stays in view.
   await load();
-  // Back to a scrolled grid: load as many pages as were showing.
-  while (ctx.restore && offset < ctx.restore.loaded && offset < total && ctx.isCurrent()) await load();
+  // Back to a scrolled grid: load as many pages as were showing. A failure
+  // here just stops early; scrolling down retries through the sentinel.
+  try {
+    while (ctx.restore && offset < ctx.restore.loaded && offset < total && ctx.isCurrent()) await load();
+  } catch {}
   const more = async () => {
     if (loading) return;
     clear(sentinel);
@@ -849,7 +861,7 @@ async function showView(ctx, d) {
       const eps = await api(`/api/items/${s.id}/children`);
       if (active !== s || !ctx.isCurrent()) return;
       clear(list).append(...eps.map((e) => episodeRow(e)), ...(s.overview ? [h('p', { class: 'muted', style: { maxWidth: '760px' } }, s.overview)] : []));
-      history.replaceState(history.state, '', `#/item/${it.id}?season=${s.id}`);
+      replaceHash(`#/item/${it.id}?season=${s.id}`);
     } catch (e) {
       if (active === s && ctx.isCurrent()) clear(list).append(h('p', { class: 'bad', role: 'alert' }, e.message), h('button', { class: 'btn', onclick: () => showSeason(s) }, 'Retry'));
     } finally {
