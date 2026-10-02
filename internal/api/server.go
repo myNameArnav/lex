@@ -456,6 +456,12 @@ func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
 	}
 	p := r.URL.Path
 	a, ok := s.static[p]
+	if !ok && path.Ext(p) != "" {
+		// A missing file (e.g. iOS probing /apple-touch-icon.png) is a 404,
+		// not the app shell: the UI routes with the hash, never the path.
+		http.NotFound(w, r)
+		return
+	}
 	if !ok || p == "/" {
 		// SPA: unknown paths get the app shell.
 		a = s.static["/index.html"]
