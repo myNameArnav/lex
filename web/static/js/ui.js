@@ -73,7 +73,7 @@ export function timeAgo(ts) {
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   if (s < 86400 * 30) return `${Math.floor(s / 86400)}d ago`;
-  return new Date(ts * 1000).toLocaleDateString();
+  return new Date(ts * 1000).toLocaleDateString(undefined, { dateStyle: 'medium' });
 }
 
 export function fmtUptime(sec) {
@@ -99,32 +99,112 @@ export function channelName(ch) {
   return { 1: 'Mono', 2: 'Stereo', 6: '5.1', 8: '7.1' }[ch] || (ch ? `${ch}ch` : '');
 }
 
+// Language plus the track title, or just the title when it already names
+// the language ("English SDH") or the track has no language tag.
+function trackName(s, sep) {
+  const lang = langName(s.language);
+  const t = s.title && s.title !== lang ? s.title : '';
+  if (!t) return lang;
+  return !s.language || t.toLowerCase().includes(lang.toLowerCase()) ? t : `${lang}${sep}${t}`;
+}
+
 export function streamLabel(s) {
+  const codec = (s.codec || '').toUpperCase().replace('HDMV_PGS_SUBTITLE', 'PGS').replace('SUBRIP', 'SRT');
   if (s.type === 'audio') {
-    return [s.title || langName(s.language), s.codec?.toUpperCase(), channelName(s.channels)].filter(Boolean).join(' · ') + (s.default ? ' (default)' : '');
+    return [trackName(s, ' · '), codec, channelName(s.channels)].filter(Boolean).join(' · ') + (s.default ? ' (default)' : '');
   }
   if (s.type === 'subtitle') {
-    const parts = [s.title && s.title !== langName(s.language) ? `${langName(s.language)} – ${s.title}` : langName(s.language)];
+    const parts = [trackName(s, ' – ')];
     if (s.forced) parts.push('Forced');
-    parts.push(s.external ? `${(s.codec || '').toUpperCase()} external` : (s.codec || '').toUpperCase().replace('HDMV_PGS_SUBTITLE', 'PGS').replace('SUBRIP', 'SRT'));
+    parts.push(codec);
+    if (s.external) parts.push('External');
     if (!s.textSub) parts.push('burn-in');
-    return parts.join(' · ');
+    return parts.filter(Boolean).join(' · ');
   }
   return s.codec;
 }
 
+// "S1 E3", or "S1 E3–4" for a multi-episode file.
+export function fmtEpisode(it) {
+  if (it?.episode == null) return it?.season != null ? `S${it.season}` : '';
+  return `S${it.season ?? 0} E${it.episode}${it.episodeEnd ? `–${it.episodeEnd}` : ''}`;
+}
+
+export const KIND_LABELS = { movies: 'Movies', shows: 'TV Shows', mixed: 'Mixed' };
+
+// Playback method names, Title Case everywhere in the UI.
+export const METHOD_LABEL = { direct: 'Direct Play', remux: 'Direct Stream', transcode: 'Transcode' };
+
+// reasonLabel turns a server conversion reason into UI copy ("forced remux"
+// means the user picked the method in the player).
+export function reasonLabel(r) {
+  const m = /^forced (direct|remux|transcode)$/.exec(r);
+  return m ? `${METHOD_LABEL[m[1]]} chosen in player settings` : r === 'forced direct play' ? 'Direct Play chosen in player settings' : r;
+}
+
+export const motionOK = () => !matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 // ---------- toasts & modals ----------
 
 let toastBox;
-// An open dialog is drawn over everything in <body>, so toasts go inside the topmost one.
-const toastHost = () => [...document.querySelectorAll('dialog[open]')].at(-1) || document.body;
-export function toast(msg, kind = '') {
-  if (!toastBox) toastBox = h('div', { class: 'toasts' });
+// An open dialog is in the top layer, so toasts go inside the topmost one;
+// otherwise into the fullscreen element (only its subtree is drawn) or the
+// player (aria-modal hides everything outside it from screen readers).
+function toastHost() {
+  const fs = document.fullscreenElement;
+  return [...document.querySelectorAll('dialog[open]')].at(-1) || (fs && fs.tagName !== 'VIDEO' ? fs : null) || document.querySelector('.player') || document.body;
+}
+function rehomeToasts() {
+  if (toastBox?.childElementCount) { const host = toastHost(); if (toastBox.parentNode !== host) host.appendChild(toastBox); }
+}
+document.addEventListener('fullscreenchange', rehomeToasts);
+
+function dropToast(t) { t._gone = true; clearTimeout(t._timer); t.remove(); }
+function capToasts() { while (toastBox.childElementCount > 3) dropToast(toastBox.firstElementChild); }
+
+// Toasts waiting for the next frame: a live region only announces changes
+// made after it is in the page, so a newly attached box gets them a frame late.
+let toastQueue = null;
+
+// toast shows a short status message. kind: '' | 'ok' | 'error'.
+// A visible toast with the same key (or, without a key, the same text) is
+// updated and its timer restarted instead of stacking another one.
+// ms defaults to 3s, or 7s for errors and long messages.
+export function toast(msg, kind = '', { key, ms } = {}) {
+  msg = String(msg ?? '');
+  msg = msg.charAt(0).toUpperCase() + msg.slice(1);
+  if (!toastBox) toastBox = h('div', { class: 'toasts', role: 'status', 'aria-live': 'polite' });
   const host = toastHost();
-  if (toastBox.parentNode !== host) host.appendChild(toastBox);
-  const t = h('div', { class: `toast ${kind}` }, msg);
-  toastBox.appendChild(t);
-  setTimeout(() => t.remove(), kind === 'error' ? 6000 : 3000);
+  const attached = toastBox.parentNode === host;
+  if (!attached) host.appendChild(toastBox);
+  const dur = ms ?? (kind === 'error' || msg.length > 60 ? 7000 : 3000);
+  let t = [...toastBox.children, ...(toastQueue || [])].find((x) => !x._gone && (key ? x.dataset.key === key : !x.dataset.key && x._msg === msg));
+  if (t) {
+    clearTimeout(t._timer);
+  } else {
+    t = h('div', { dataset: key ? { key } : null });
+    if (attached && !toastQueue) {
+      toastBox.appendChild(t);
+      capToasts();
+    } else {
+      if (!toastQueue) {
+        toastQueue = [];
+        requestAnimationFrame(() => {
+          const q = toastQueue;
+          toastQueue = null;
+          q.forEach((x) => { if (!x._gone) toastBox.appendChild(x); });
+          capToasts();
+        });
+      }
+      toastQueue.push(t);
+    }
+  }
+  t._msg = msg;
+  t.className = `toast ${kind}`;
+  if (kind === 'error') t.setAttribute('role', 'alert'); else t.removeAttribute('role');
+  t.replaceChildren(h('span', null, msg));
+  if (kind === 'error') t.appendChild(h('button', { class: 'toast-x', type: 'button', 'aria-label': 'Dismiss', html: icons.close, onclick: () => dropToast(t) }));
+  t._timer = setTimeout(() => dropToast(t), dur);
 }
 
 // Keep keyboard focus in an overlay while allowing native controls to handle
@@ -141,55 +221,202 @@ export function containTab(e, root) {
 }
 
 let modalId = 0;
-export function modal({ title, body, actions = [], wide = false, onClose, parent = document.body }) {
+// modal opens a dialog. It closes on ×, Escape, navigation (hashchange) and,
+// when dismissible, a click on the backdrop.
+export function modal({ title, body, actions = [], wide = false, onClose, parent = document.body, dismissible = true }) {
   const titleId = `dialog-title-${++modalId}`;
   const bg = h('dialog', { class: 'modal-bg', 'aria-labelledby': titleId, 'aria-modal': 'true' });
   let closed = false;
   const close = () => {
     if (closed) return;
     closed = true;
+    window.removeEventListener('hashchange', close);
     bg.close();
     if (toastBox && bg.contains(toastBox)) toastHost().appendChild(toastBox);
     bg.remove();
     onClose && onClose();
   };
+  window.addEventListener('hashchange', close);
   bg.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
   bg.addEventListener('close', close);
   bg.addEventListener('keydown', (e) => { if (e.target.closest('dialog') === bg) containTab(e, bg); });
-  bg.addEventListener('mousedown', (e) => { if (e.target === bg) close(); });
+  bg.addEventListener('mousedown', (e) => { if (e.target === bg && dismissible) close(); });
   const foot = actions.length ? h('div', { class: 'modal-foot' }, actions) : null;
   bg.appendChild(h('div', { class: `modal ${wide ? 'wide' : ''}` },
     h('div', { class: 'modal-head' }, h('h2', { id: titleId }, title), h('button', { class: 'btn icon ghost sm', 'aria-label': 'Close dialog', onclick: close, html: icons.close })),
     h('div', { class: 'modal-body' }, body),
     foot));
+  // A dialog opened over a popup menu (e.g. the ? key) returns focus to its anchor.
+  activeMenu?.close(true);
   parent.appendChild(bg);
   bg.showModal(); // Native focus containment, background inertness and focus restoration.
   return { close, el: bg };
 }
 
-export function confirmDialog(message, okLabel = 'OK', danger = false) {
+// confirmDialog resolves true when the user confirms. Call it positionally,
+// confirmDialog(message, okLabel, danger, title), or with an object
+// { message, okLabel, danger, title }. danger gives a solid red button.
+export function confirmDialog(message, okLabel = 'OK', danger = false, title = 'Confirm') {
+  if (message && typeof message === 'object' && !(message instanceof Node)) ({ message, okLabel = 'OK', danger = false, title = 'Confirm' } = message);
   return new Promise((resolve) => {
     let done = false;
     const m = modal({
-      title: 'Confirm', body: h('p', { style: { margin: 0 } }, message),
+      title, body: h('p', { style: { margin: 0 } }, message),
       actions: [
         h('button', { class: 'btn', onclick: () => { done = true; m.close(); resolve(false); } }, 'Cancel'),
-        h('button', { class: `btn ${danger ? 'danger' : 'primary'}`, onclick: () => { done = true; m.close(); resolve(true); } }, okLabel),
+        h('button', { class: `btn ${danger ? 'danger solid' : 'primary'}`, onclick: () => { done = true; m.close(); resolve(true); } }, okLabel),
       ],
       onClose: () => { if (!done) resolve(false); },
     });
   });
 }
 
+// run performs an async action for a button: while fn runs the button is
+// disabled and aria-busy (optionally showing busyLabel), so double clicks
+// can't submit twice. A failure toasts its message; okMsg (a string, or a
+// function of fn's result) toasts on success. Resolves true on success and
+// false on failure or when the button was already busy. btn may be null.
+export async function run(btn, fn, okMsg, { busyLabel } = {}) {
+  if (btn?.disabled) return false;
+  let saved = null, hadFocus = false;
+  if (btn) {
+    hadFocus = document.activeElement === btn;
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    if (busyLabel) { saved = [...btn.childNodes]; btn.textContent = busyLabel; }
+  }
+  try {
+    const res = await fn();
+    const ok = typeof okMsg === 'function' ? okMsg(res) : okMsg;
+    if (ok) toast(ok, 'ok');
+    return true;
+  } catch (e) {
+    if (e?.name !== 'AbortError') toast(e?.message || String(e), 'error');
+    return false;
+  } finally {
+    if (btn?.isConnected) {
+      if (saved) btn.replaceChildren(...saved);
+      btn.disabled = false;
+      btn.removeAttribute('aria-busy');
+      // Disabling a focused button drops focus to <body>; put it back.
+      if (hadFocus && (!document.activeElement || document.activeElement === document.body)) btn.focus({ preventScroll: true });
+    }
+  }
+}
+
+// staleBanner marks a polled view as out of date while the server can't be
+// reached. Put .el (an empty live region until needed) above the view and
+// pass hooks(key) to every() for each poller: after repeated failures the
+// banner says how old the data is and target is dimmed; it clears once every
+// failing poller has recovered. fail(t, key) / ok(key) can also be called
+// directly; t = null means nothing has loaded yet.
+export function staleBanner(target) {
+  const el = h('div', { role: 'status' });
+  const failing = new Map();
+  const show = () => {
+    target?.classList.toggle('stale', failing.size > 0);
+    if (!failing.size) { el.replaceChildren(); return; }
+    const times = [...failing.values()];
+    const since = times.includes(null) ? null : Math.min(...times);
+    el.replaceChildren(h('div', { class: 'panel stale-banner small' }, since
+      ? `Can’t reach the server — showing data from ${new Date(since).toLocaleTimeString()}. Retrying…`
+      : 'Can’t reach the server. Retrying…'));
+  };
+  const b = {
+    el,
+    fail(t = Date.now(), key = '') { if (!failing.has(key)) { failing.set(key, t); show(); } },
+    ok(key = '') { if (failing.delete(key)) show(); },
+    hooks: (key = '') => ({ onFail: (t) => b.fail(t, key), onRecover: () => b.ok(key) }),
+  };
+  return b;
+}
+
+// emptyState renders a centred message for empty, error and not-found views.
+// actions: buttons or links; alert announces it; level: heading tag.
+export function emptyState({ title, text, actions = [], alert = false, level = 'h1' } = {}) {
+  return h('div', { class: 'empty', role: alert ? 'alert' : null },
+    h(level, null, title),
+    text ? h('p', null, text) : null,
+    actions.length ? h('div', { class: 'row wrap empty-actions' }, actions) : null);
+}
+
+// ---------- popup menus ----------
+
+// The open popup menu: { anchor, close(restoreFocus) }.
+let activeMenu = null;
+export function closePopupMenu() { activeMenu?.close(false); }
+
+// popupMenu opens a menu for anchor (a button). items: { label, icon?,
+// onClick } | '-' (separator) | { note } (dim text). Opening it again from
+// the same anchor closes it. Arrow keys, Home/End and Escape work as in a
+// native menu; it closes on outside clicks, navigation, resize and when the
+// page scroll moves the anchor. onClick may be async: a rejection toasts.
 export function popupMenu(anchor, items) {
-  document.querySelectorAll('.menu.popup').forEach((m) => m.remove());
-  const r = anchor.getBoundingClientRect();
-  const menu = h('div', { class: 'menu popup', style: { position: 'fixed', top: `${r.bottom + 6}px`, right: `${Math.max(8, window.innerWidth - r.right)}px` } },
-    items.map((it) => it === '-' ? h('hr') : it.note ? h('div', { class: 'menu-note' }, it.note)
-      : h('button', { onclick: () => { menu.remove(); anchor.focus(); it.onClick(); } }, it.icon ? h('span', { html: icons[it.icon] }) : null, it.label)));
+  if (activeMenu) {
+    const same = activeMenu.anchor === anchor;
+    activeMenu.close(false);
+    if (same) return null;
+  }
+  const buttons = [];
+  const menu = h('div', { class: 'menu popup', role: 'menu', style: { position: 'fixed' } }, items.map((it) => {
+    if (it === '-') return h('hr', { role: 'separator' });
+    if (it.note) return h('div', { class: 'menu-note', role: 'none' }, it.note);
+    const b = h('button', { type: 'button', role: 'menuitem', tabindex: '-1', onclick: () => {
+      close(true);
+      Promise.resolve().then(it.onClick).catch((e) => { if (e?.name !== 'AbortError') toast(e?.message || String(e), 'error'); });
+    } }, it.icon ? h('span', { html: icons[it.icon] }) : null, it.label);
+    buttons.push(b);
+    return b;
+  }));
+  // Kept on <body>: the top bar's backdrop-filter would make it the
+  // containing block of a fixed-position child.
   document.body.appendChild(menu);
-  const off = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('mousedown', off, true); } };
-  setTimeout(() => document.addEventListener('mousedown', off, true));
+  const r = anchor.getBoundingClientRect();
+  const mh = menu.offsetHeight, vh = innerHeight;
+  if (r.bottom + 6 + mh <= vh - 8) menu.style.top = `${r.bottom + 6}px`;
+  else if (r.top - 6 - mh >= 8) menu.style.bottom = `${vh - r.top + 6}px`;
+  else menu.style.top = `${Math.max(8, Math.min(r.bottom + 6, vh - mh - 8))}px`;
+  menu.style.right = `${Math.max(8, document.documentElement.clientWidth - r.right)}px`;
+
+  const onDown = (e) => { if (!menu.contains(e.target) && !anchor.contains(e.target)) close(false); };
+  const onScroll = (e) => {
+    if (menu.contains(e.target)) return;
+    const n = anchor.getBoundingClientRect();
+    if (Math.abs(n.top - r.top) > 1 || Math.abs(n.left - r.left) > 1) close(false);
+  };
+  const onAway = () => close(false);
+  const onKey = (e) => {
+    const i = buttons.indexOf(document.activeElement), n = buttons.length;
+    let next = null;
+    if (e.key === 'ArrowDown') next = buttons[i < 0 ? 0 : (i + 1) % n];
+    else if (e.key === 'ArrowUp') next = buttons[i < 0 ? n - 1 : (i - 1 + n) % n];
+    else if (e.key === 'Home') next = buttons[0];
+    else if (e.key === 'End') next = buttons[n - 1];
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); return; }
+    // Without preventDefault the browser moves on from the anchor.
+    else if (e.key === 'Tab') { close(false); anchor.focus({ preventScroll: true }); return; }
+    if (next) { e.preventDefault(); next.focus(); }
+  };
+  const close = (restore) => {
+    if (activeMenu?.menu !== menu) return;
+    activeMenu = null;
+    menu.remove();
+    anchor.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('mousedown', onDown, true);
+    document.removeEventListener('scroll', onScroll, true);
+    window.removeEventListener('hashchange', onAway);
+    window.removeEventListener('resize', onAway);
+    if (restore && anchor.isConnected) anchor.focus({ preventScroll: true });
+  };
+  activeMenu = { anchor, menu, close };
+  menu.addEventListener('keydown', onKey);
+  document.addEventListener('mousedown', onDown, true);
+  document.addEventListener('scroll', onScroll, { capture: true, passive: true });
+  window.addEventListener('hashchange', onAway);
+  window.addEventListener('resize', onAway);
+  anchor.setAttribute('aria-haspopup', 'menu');
+  anchor.setAttribute('aria-expanded', 'true');
+  buttons[0]?.focus({ preventScroll: true });
   return menu;
 }
 
@@ -257,7 +484,3 @@ export const icons = {
   drive: svg('<rect x="2" y="13" width="20" height="8" rx="2"/><path d="M5 13 7.5 4h9L19 13"/><path d="M6 17h.01M10 17h.01"/>'),
   shuffle: svg('<path d="M16 3h5v5M4 20 21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/>'),
 };
-
-export function icon(name, cls = '') {
-  return h('span', { class: `ic ${cls}`, html: icons[name] || '' });
-}

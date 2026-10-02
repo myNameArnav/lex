@@ -1,7 +1,7 @@
 // Full-screen player: picks a playback plan from the server, plays it via
 // direct <video src> or the MSE engine, and renders controls + stats.
 
-import { h, icons, resLabel, fmtTime, fmtBitrate, fmtBytes, streamLabel, toast, clear, langName, channelName, modal, containTab } from './ui.js';
+import { h, icons, resLabel, fmtTime, fmtBitrate, fmtBytes, streamLabel, toast, clear, langName, channelName, modal, containTab, METHOD_LABEL, reasonLabel, fmtEpisode } from './ui.js';
 import { api, img } from './api.js';
 import { detectCaps } from './caps.js';
 import { prefs, QUALITIES } from './prefs.js';
@@ -17,7 +17,6 @@ export function openPlayer(opts) {
 
 export function isPlayerOpen() { return !!current; }
 
-const METHOD_LABEL = { direct: 'Direct Play', remux: 'Direct Stream', transcode: 'Transcode' };
 const END_FMT = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 const DIRECT_STARTUP_TIMEOUT = 15000;
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -31,12 +30,8 @@ const lang1to3 = (l) => LANG1[(l || '').toLowerCase()] || l;
 // m:ss; positions are always m:ss.
 const secs = (s) => (s < 600 ? `${Math.round(s)}s` : fmtTime(s));
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
-// The server says "copy" and "forced remux"; the UI calls remuxing Direct Stream.
+// The server says "copy"; the UI says "copied".
 const copied = (s) => (s || '').replace(/ \(copy\)$/, ' · copied');
-const reasonLabel = (r) => {
-  const m = /^forced (direct|remux|transcode)$/.exec(r);
-  return m ? `${METHOD_LABEL[m[1]]} chosen in player settings` : r === 'forced direct play' ? 'Direct Play chosen in player settings' : r;
-};
 
 function pickAudio(file, lang) {
   const auds = (file.info?.streams || []).filter((s) => s.type === 'audio');
@@ -348,7 +343,7 @@ class Player {
     const it = this.item;
     clear(this.titleEl);
     if (it.kind === 'episode') {
-      this.titleEl.append(h('b', null, this.detail.show?.title || it.showTitle || ''), h('span', null, `S${it.season} · E${it.episode} — ${it.title}`));
+      this.titleEl.append(h('b', null, this.detail.show?.title || it.showTitle || ''), h('span', null, `${fmtEpisode(it)} — ${it.title}`));
     } else {
       this.titleEl.append(h('b', null, it.title), h('span', null, [it.year, resLabel(this.file?.width, this.file?.height)].filter(Boolean).join(' · ')));
     }
@@ -691,7 +686,7 @@ class Player {
   nudgeSubs(d) {
     if (!this.subById(this.subtitle)?.textSub) return;
     this.setSubOffset(this.subOffset + d);
-    toast(`Subtitle timing ${this.subOffset > 0 ? '+' : ''}${this.subOffset.toFixed(1)}s`);
+    toast(`Subtitle timing ${this.subOffset > 0 ? '+' : ''}${this.subOffset.toFixed(1)}s`, '', { key: 'subOffset' });
   }
 
   // Find subtitles on OpenSubtitles.com and add them to this file.
@@ -1384,7 +1379,7 @@ class Player {
       h('img', { src: img(next, 'thumb', 480), alt: '' }),
       h('div', { class: 'b' },
         h('div', { class: 'small muted' }, 'Up next'),
-        h('b', null, `S${next.season} · E${next.episode} — ${next.title}`),
+        h('b', null, `${fmtEpisode(next)} — ${next.title}`),
         h('div', { class: 'row' },
           h('button', { class: 'btn primary sm', onclick: () => this.playNext() }, icons.play ? h('span', { html: icons.play, style: { width: '16px', display: 'inline-flex' } }) : null, prefs.get('autoplayNext') ? ['Play in ', count, 's'] : 'Play now'),
           h('button', { class: 'btn sm', onclick: () => { clearInterval(this.cdTimer); card.remove(); } }, 'Hide'))));
@@ -1437,7 +1432,7 @@ class Player {
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: it.kind === 'episode' ? it.title : it.title,
-        artist: it.kind === 'episode' ? `${this.detail.show?.title || ''} · S${it.season}E${it.episode}` : String(it.year || ''),
+        artist: it.kind === 'episode' ? `${this.detail.show?.title || ''} · ${fmtEpisode(it)}` : String(it.year || ''),
         artwork: [{ src: img(it, it.kind === 'episode' ? 'thumb' : 'poster', 480), sizes: '480x480', type: 'image/jpeg' }],
       });
       const ms = navigator.mediaSession;

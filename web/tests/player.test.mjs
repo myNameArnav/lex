@@ -79,6 +79,9 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
   deps['./ui.js'].icons = { play: 'play', pause: 'pause' };
   deps['./ui.js'].langName = value => value;
   deps['./ui.js'].toast = () => {};
+  deps['./ui.js'].METHOD_LABEL = { direct: 'Direct Play', remux: 'Direct Stream', transcode: 'Transcode' };
+  deps['./ui.js'].reasonLabel = value => value;
+  deps['./ui.js'].fmtEpisode = it => `S${it.season} E${it.episode}`;
   const source = await readFile(new URL('../static/js/player.js', import.meta.url), 'utf8');
   const module = new vm.SourceTextModule(source + '\nexport { Player };', { context });
   await module.link(specifier => {
