@@ -1186,8 +1186,9 @@ async function playbackTab(ctx) {
       sec?.scrollIntoView({ behavior: motionOK() ? 'smooth' : 'auto' });
       sec?.querySelector('h2')?.focus({ preventScroll: true });
     } }, 'Jump to history') : null);
-  // Paging through history keeps you at the table (Back restores its own scroll).
-  if (ctx.query.get('offset') && !ctx.restore) requestAnimationFrame(() => document.getElementById('history')?.scrollIntoView());
+  // Paging through history keeps you at the table (Back restores its own
+  // scroll). Pager links always carry offset, so Newer to the first page too.
+  if (ctx.query.has('offset') && !ctx.restore) requestAnimationFrame(() => document.getElementById('history')?.scrollIntoView());
   if (!st.plays) {
     return h('div', null, range,
       emptyState({ level: 'h2', title: `No plays in the last ${days} days`, text: 'Plays are recorded when a session ends.' }),
@@ -1339,8 +1340,8 @@ async function historySection(ctx, days) {
   const offset = Math.max(0, +ctx.query.get('offset') || 0);
   const rows = await api(`/api/admin/history?limit=100&offset=${offset}`);
   if (!rows.length && !offset) return null;
-  const page = (o) => `#/dashboard/playback?days=${days}${o ? `&offset=${o}` : ''}`;
-  const pager = (label, o) => h('a', { class: 'btn sm', href: page(o), onclick: () => focusAfterRoute('history') }, label);
+  const page = (o) => `#/dashboard/playback?days=${days}&offset=${o}`;
+  const pager = (label, o) => h('a', { class: 'btn sm', href: page(o), onclick: (e) => { if (!e.ctrlKey && !e.metaKey && !e.shiftKey) focusAfterRoute('history'); } }, label);
   const reasons = (r) => r.reasons ? r.reasons.split('; ').map(reasonLabel).join('; ') : '';
   return h('section', { id: 'history', style: { marginTop: '28px' } },
     h('div', { class: 'toolbar' }, h('h2', { class: 'section-title', tabindex: '-1', dataset: { focusKey: 'history' } }, 'History · all time'),
@@ -1365,5 +1366,5 @@ async function historySection(ctx, days) {
         h('td', { class: 'nowrap h-num', 'data-label': 'Stalls' }, r.bufferEvents ? `${r.bufferEvents} (${r.bufferSeconds.toFixed(0)}s)` : '0'),
         h('td', { class: 'small h-output' }, [r.videoOut, r.audioOut].filter(Boolean).join(' / ')),
         h('td', { class: 'small h-client' }, `${r.client}`, h('div', { class: 'dim mono' }, `${r.ip}${r.remote ? ' · remote' : ''}`))))))
-      : h('div', { class: 'empty' }, h('h3', null, 'No older plays'), h('p', null, h('a', { class: 'btn sm', href: page(0) }, 'Back to the newest plays'))));
+      : h('div', { class: 'empty' }, h('h3', null, 'No older plays'), h('p', null, pager('Back to the newest plays', 0))));
 }
