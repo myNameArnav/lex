@@ -43,7 +43,7 @@ const LANG1 = { en: 'eng', es: 'spa', fr: 'fre', de: 'ger', it: 'ita', pt: 'por'
 const lang1to3 = (l) => LANG1[(l || '').toLowerCase()] || l;
 
 // Back/forward icons carry the configured number of seconds.
-const skipIcon = (dir, n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${dir < 0 ? '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>' : '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>'}<text x="12" y="15.5" font-size="${n >= 100 ? 6 : 7.5}" text-anchor="middle" fill="currentColor" stroke="none" font-weight="700" font-family="system-ui">${n}</text></svg>`;
+const skipIcon = (dir, n) => (n = Math.round(+n) || 0, `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${dir < 0 ? '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>' : '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>'}<text x="12" y="15.5" font-size="${n >= 100 ? 6 : 7.5}" text-anchor="middle" fill="currentColor" stroke="none" font-weight="700" font-family="system-ui">${n}</text></svg>`);
 
 // Stats panel formatting: durations in whole seconds up to ten minutes, then
 // m:ss; positions are always m:ss.
@@ -148,8 +148,6 @@ async function retryApi(path, opts, { cancelled = () => false, retries = 6, onRe
 
 class Player {
   constructor({ itemId, start = null, onClose, reuseHistory = false }) {
-    this.itemId = itemId;
-    this.requestedStart = start;
     this.onClose = onClose;
     this.sessionId = null;
     this.engine = null;
@@ -297,7 +295,9 @@ class Player {
     // a compatibility mousemove before every tap's click, which would show
     // the controls just before the tap toggles them hidden again.
     this.root.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse') this.poke(); });
-    this.root.addEventListener('pointerdown', (e) => { this.lastPointer = e.pointerType; }, true);
+    // Whether the controls were up when the tap began: tapping the video can
+    // move focus (Firefox focuses it), and focusin shows them before the click.
+    this.root.addEventListener('pointerdown', (e) => { this.lastPointer = e.pointerType; this.hiddenAtDown = this.root.classList.contains('hide-ui'); }, true);
     this.root.addEventListener('focusin', () => this.poke());
     // A mouse resting on the controls (e.g. reading the seek preview) keeps them up.
     for (const el of this.root.querySelectorAll(':scope > .p-top, :scope > .p-bot')) {
@@ -311,7 +311,7 @@ class Player {
         if (performance.now() < (this.skipClickUntil || 0)) { this.skipClickUntil = 0; return; }
         if (this.menu) { this.closeMenu(); return; }
         // A tap (touch or pen, also on touch laptops) toggles the controls.
-        if (this.lastPointer && this.lastPointer !== 'mouse') { this.toggleUI(); return; }
+        if (this.lastPointer && this.lastPointer !== 'mouse') { this.toggleUI(this.hiddenAtDown); return; }
         this.togglePlay();
       }
     });
@@ -393,6 +393,9 @@ class Player {
 
   // ---------- loading ----------
   async start(itemId, start) {
+    // Retry repeats this when the item itself didn't load (also the next episode's).
+    this.itemId = itemId;
+    this.requestedStart = start;
     this.bufferRebuilds = 0;
     this.upNextDismissed = false;
     try {
@@ -709,24 +712,26 @@ class Player {
     this.setStatus('');
     this.hideError();
     this.video.pause();
-    const again = () => {
-      this.hideError();
-      // The item itself may never have loaded.
-      if (this.item) this.replan();
-      else this.start(this.itemId, this.requestedStart);
-    };
     this.errEl = h('div', { class: 'p-error', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'p-err-title', 'aria-describedby': 'p-err-msg' }, h('div', null,
       h('h2', { id: 'p-err-title', style: { margin: 0 } }, title),
       h('p', { id: 'p-err-msg', class: 'muted', style: { margin: 0 } }, msg),
       h('div', { class: 'row wrap' },
-        retry ? h('button', { class: 'btn primary', onclick: again }, 'Retry') : null,
-        transcode && this.item && this.plan && this.plan.method !== 'transcode' ? h('button', { class: 'btn', onclick: () => { this.hideError(); this.mode = 'transcode'; this.replan({ mode: 'transcode' }); } }, 'Try transcoding') : null,
+        retry ? h('button', { class: 'btn primary', onclick: () => this.retry() }, 'Retry') : null,
+        transcode && this.item && this.plan && this.plan.method !== 'transcode' ? h('button', { class: 'btn', onclick: () => { this.hideError(); this.mode = 'transcode'; this.replan({ mode: 'transcode', resume: true }); } }, 'Try transcoding') : null,
         h('button', { class: 'btn', onclick: () => this.close() }, 'Close'))));
     this.root.appendChild(this.errEl);
     for (const el of this.root.querySelectorAll(':scope > .p-top, :scope > .p-bot')) el.inert = true;
     this.closeMenu();
     this.showUI(true);
     this.errEl.querySelector('button').focus();
+  }
+
+  // The error paused the video; Retry means play again. The item itself (or
+  // the next episode) may never have loaded.
+  retry() {
+    this.hideError();
+    if (this.item && String(this.item.id) === String(this.itemId)) this.replan({ resume: true });
+    else this.start(this.itemId, this.requestedStart);
   }
 
   hideError() {
@@ -1139,7 +1144,7 @@ class Player {
   }
 
   showUI(on) { this.root.classList.toggle('hide-ui', !on); }
-  toggleUI() { if (this.root.classList.contains('hide-ui')) this.poke(); else this.showUI(false); }
+  toggleUI(hidden = this.root.classList.contains('hide-ui')) { if (hidden) this.poke(); else this.showUI(false); }
 
   toggleFullscreen() {
     if (document.fullscreenElement) document.exitFullscreen();

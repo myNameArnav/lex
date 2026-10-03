@@ -714,6 +714,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .p-error { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.7); z-index: 5; }
 .p-error > div { max-width: 520px; text-align: center; padding: 20px; display: grid; gap: 14px; justify-items: center; }
 .p-error .row { justify-content: center; }
+/* Subtitles would overlap the message and its buttons. */
+.player:has(.p-error) .p-subs, .player:has(.p-error) canvas.JASSUB { visibility: hidden; }
 .p-menu { position: absolute; right: max(20px, var(--sar)); bottom: calc(90px + var(--sab)); width: 320px; max-height: min(70vh, calc(100% - 120px - var(--sab))); overflow: auto; overscroll-behavior: contain; background: rgba(24,25,30,.94); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,.1); border-radius: 14px; box-shadow: 0 16px 48px rgba(0,0,0,.55); padding: 0 6px 6px; /* no top padding: scrolled rows can't show above the sticky header */ z-index: 4; font-size: 14px; animation: pm-in .14s ease-out; }
 @keyframes pm-in { from { opacity: 0; transform: translateY(6px) scale(.98) } to { opacity: 1; transform: none } }
 .p-menu .pm-title { padding: 16px 12px 6px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: rgba(255,255,255,.5); }
