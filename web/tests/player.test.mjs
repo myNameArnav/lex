@@ -525,3 +525,39 @@ test('stats on or off redraws an open Settings menu so its switch matches', asyn
   f.player.statsChanged();
   assert.equal(menus, 1);
 });
+
+test('Retry resumes playback, and reloads the next episode if that never loaded', async () => {
+  const f = await fixture();
+  f.video.playable = true;
+  await f.player.attach(30);
+  f.player.started = true;
+  f.player.itemId = 1;
+  f.video.currentTime = 42;
+  f.video.pause(); // showError pauses the video
+  f.player.retry();
+  await f.advance(1000);
+  assert.equal(f.requests.at(-1).start, 42);
+  assert.equal(f.video.paused, false, 'Retry plays again');
+  // Up next failed to load: Retry must not replan the previous episode.
+  const starts = [];
+  f.player.start = (id, at) => starts.push([id, at]);
+  Object.assign(f.player, { itemId: 9, requestedStart: 0 });
+  const plans = f.requests.length;
+  f.player.retry();
+  await f.flush();
+  assert.deepEqual(starts, [[9, 0]]);
+  assert.equal(f.requests.length, plans);
+});
+
+test('a tap toggles the controls from how they looked when it began', async () => {
+  const f = await fixture();
+  delete f.player.showUI; delete f.player.poke;
+  const shown = [];
+  f.player.root.querySelector = () => null;
+  f.player.showUI = on => shown.push(on);
+  // Hidden at pointerdown, though focusin already showed them: stay shown.
+  f.player.toggleUI(true);
+  assert.deepEqual(shown, [true]);
+  f.player.toggleUI(false);
+  assert.deepEqual(shown, [true, false]);
+});
