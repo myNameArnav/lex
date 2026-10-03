@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 // Run the actual Player methods with a native video whose play() stays
 // pending and never emits an error, as in the Firefox MKV startup hang.
-async function fixture({ method = 'direct', hls = false, blocked = false, rejectRemux = false, apiGate = null, openGate = null, apiFailures = [], progressError = null, prefValues = {}, fetchImpl = null } = {}) {
+async function fixture({ method = 'direct', hls = false, blocked = false, rejectRemux = false, unsupportedRemux = false, apiGate = null, openGate = null, apiFailures = [], progressError = null, prefValues = {}, fetchImpl = null } = {}) {
   let now = 0;
   let timerID = 0;
   const timers = new Map();
@@ -71,6 +71,8 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
     './mse.js': { MseEngine: class {
       async open() {
         if (openGate) await (typeof openGate === 'function' ? openGate() : openGate);
+        // MediaSource.addSourceBuffer refusing the stream's codecs.
+        if (unsupportedRemux && player.plan.method === 'remux') throw new DOMException("Can't play type", 'NotSupportedError');
         if (rejectRemux && player.plan.method === 'remux') {
           video.error = { code: 3, message: 'Decode failed' };
           video.dispatchEvent(new Event('error'));
@@ -214,6 +216,16 @@ test('a failed remux plan can still fall back to transcode', async () => {
   assert.equal(f.player.plan.method, 'transcode');
   assert.equal(f.player.started, true);
   assert.equal(f.player.playBtn.innerHTML, 'pause');
+});
+
+test('a stream type the browser refuses falls back to transcode instead of a dead end', async () => {
+  const f = await fixture({ unsupportedRemux: true });
+  void f.player.attach(0);
+  await f.advance(15000);
+  assert.deepEqual(f.requests.map(r => r.mode), ['remux', 'transcode']);
+  assert.equal(f.player.plan.method, 'transcode');
+  assert.equal(f.player.started, true);
+  assert.deepEqual(f.errors, []);
 });
 
 test('the old native play rejection does not hide the spinner during MSE startup', async () => {

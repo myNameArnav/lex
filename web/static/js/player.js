@@ -566,6 +566,9 @@ class Player {
   // A plan (or the item) couldn't be loaded.
   planFailed(e) {
     if (e.status === 410) this.stopByServer(e.message);
+    // MSE refused the stream's type (addSourceBuffer): a codec problem, so
+    // fall back as for a decode error.
+    else if (e.name === 'NotSupportedError' && this.plan) this.fallback(`The browser rejected the stream (${e.message})`);
     else this.showError(e.message);
   }
 
@@ -665,7 +668,8 @@ class Player {
       return this.replan({ mode: this.plan.method });
     }
     if (decode) return this.fallback(msg);
-    this.showError(msg, { retry: status !== 503 });
+    // 500: the server couldn't produce this stream (e.g. a remux), which a transcode may fix.
+    this.showError(msg, { retry: status !== 503, transcode: status === 500 });
   }
 
   async fallback(reason) {
@@ -1281,7 +1285,7 @@ class Player {
   // UI tick refreshes it too.
   renderEnds() {
     const d = this.duration(), left = d - (this.dragT ?? this.video.currentTime);
-    const txt = isFinite(d) && d && left > 0 ? `Ends at: ${END_FMT.format(Date.now() + (left / (this.video.playbackRate || 1)) * 1000)}` : '';
+    const txt = isFinite(d) && d && left > 0 && !this.video.ended ? `Ends at: ${END_FMT.format(Date.now() + (left / (this.video.playbackRate || 1)) * 1000)}` : '';
     if (this.endsEl.textContent !== txt) this.endsEl.textContent = txt;
   }
 
@@ -1860,6 +1864,8 @@ class Player {
     window.removeEventListener('pagehide', this.onHide);
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     if (document.pictureInPictureElement === this.video) document.exitPictureInPicture().catch(() => {});
+    // e.g. subtitle search, when Back closed the player under it.
+    for (const d of this.root.querySelectorAll('dialog[open]')) d.close();
     this.teardown();
     this.destroyASS();
     this.root.remove();
