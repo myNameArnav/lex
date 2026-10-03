@@ -97,7 +97,7 @@ func (s *Server) hlsSegment(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, err := s.sessionFor(r, f, p.SessionID, method)
 	if err != nil {
-		writeErr(w, 403, err.Error())
+		writeSessionErr(w, err)
 		return
 	}
 	s.Sess.Touch(sess, 1)

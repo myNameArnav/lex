@@ -127,6 +127,10 @@ export class MseEngine {
   }
 
   async evict(aggressive) {
+    // remove() on an ended MediaSource reopens it, and then the video never
+    // fires 'ended'. Nothing more is appended after end of stream anyway; a
+    // seek outside the buffer goes through load(), which clears eos.
+    if (this.eos) return;
     const t = this.video.currentTime;
     const gen = this.gen;
     // Removal extends to the next video keyframe. A tiny back buffer can
@@ -405,6 +409,10 @@ export class MseEngine {
 
   tick() {
     if (this.destroyed || this.bufferFailed || !this.sb) return;
+    // Anything that reopened the source after end of stream: close it again.
+    if (this.eos && this.ms.readyState === 'open' && !this.sb.updating) {
+      try { this.ms.endOfStream(); } catch {}
+    }
     const v = this.video;
     const t = v.currentTime;
     // Jump small gaps (audio/video start mismatch after a seek).

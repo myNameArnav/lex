@@ -1,11 +1,13 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -97,5 +99,45 @@ func TestSubDeleteOnlyByDownloaderOrAdmin(t *testing.T) {
 	}
 	if code := del(legacy, admin); code != 200 {
 		t.Fatalf("admin delete = %d", code)
+	}
+}
+
+// Without an OpenSubtitles key the search answers 400 with code "no_key"
+// (so the player can explain it) without reading the file, and downloaded
+// subtitles say who fetched them (the client shows Remove only to them and
+// admins).
+func TestSubSearchNoKeyAndDownloadedBy(t *testing.T) {
+	s, h := securityServer(t)
+	owner, _ := s.St.CreateInitialAdmin("owner", "test-password-123")
+	for _, q := range []string{
+		`INSERT INTO libraries(id,name,kind,paths,created_at) VALUES(1,'Movies','movies','[]',0)`,
+		`INSERT INTO items(id,library_id,kind,title,sort_title,added_at,updated_at) VALUES(1,1,'movie','Dune','dune',0,0)`,
+		`INSERT INTO files(id,item_id,library_id,path,size,mtime,added_at) VALUES(1,1,1,'/missing/dune.mkv',1,1,0)`,
+	} {
+		if _, err := s.St.DB().Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tok, _ := s.St.CreateToken(owner.ID, "Test", "127.0.0.1")
+	r := httptest.NewRequest("GET", "http://lex.test/api/files/1/subsearch?lang=eng", nil)
+	r.AddCookie(&http.Cookie{Name: "lex_token", Value: tok})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	var body struct{ Error, Code string }
+	json.Unmarshal(w.Body.Bytes(), &body)
+	if w.Code != 400 || body.Code != "no_key" || body.Error == "" {
+		t.Fatalf("search without a key = %d %s, want 400 with code no_key", w.Code, w.Body)
+	}
+
+	if _, err := s.St.AddDownloadedSub(&store.DownloadedSub{FileID: 1, Path: "/d/1-2.srt", Language: "eng", UserID: owner.ID}); err != nil {
+		t.Fatal(err)
+	}
+	st := s.downloadedStreams(1)
+	if len(st) != 1 || st[0].DownloadedBy != owner.ID || !st[0].Downloaded {
+		t.Fatalf("downloaded streams = %+v, want one by user %d", st, owner.ID)
+	}
+	b, _ := json.Marshal(st[0])
+	if !strings.Contains(string(b), fmt.Sprintf(`"downloadedBy":%d`, owner.ID)) {
+		t.Fatalf("stream JSON %s lacks downloadedBy", b)
 	}
 }
