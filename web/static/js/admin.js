@@ -1,6 +1,6 @@
 import { h, clear, icons, toast, modal, confirmDialog, spinner, toggle, fmtBytes, fmtBitrate, fmtTime, fmtDate, timeAgo, fmtUptime, fmtDuration, LANG_OPTIONS, $, run, staleBanner, motionOK, KIND_LABELS, METHOD_LABEL, reasonLabel, emptyState } from './ui.js';
 import { api, img } from './api.js';
-import { state, loadLibraries, route, refreshSoft, setLeaveGuard } from './app.js';
+import { state, loadLibraries, route, refreshSoft, setLeaveGuard, focusAfterRoute } from './app.js';
 import { prefs, DEFAULTS, QUALITIES } from './prefs.js';
 import { capsSummary } from './caps.js';
 import { lineChart, columnChart, sparkline, barList, SERIES } from './charts.js';
@@ -60,10 +60,13 @@ const SECTIONS = [
 ];
 
 export async function settingsView(ctx, section) {
-  const nav = h('nav', { class: 'side-nav' },
+  // Following a link keeps focus on it (not on the page heading).
+  const link = ([id, label, ic]) => h('a', { href: `#/settings/${id}`, class: id === section ? 'active' : '', 'aria-current': id === section ? 'page' : null,
+    dataset: { focusKey: `settings-nav-${id}` }, onclick: () => focusAfterRoute(`settings-nav-${id}`) }, h('span', { html: icons[ic] }), label);
+  const nav = h('nav', { class: 'side-nav', 'aria-label': 'Settings sections' },
     h('div', { class: 'grp' }, 'You'),
-    SECTIONS.filter((s) => !s[3]).map(([id, label, ic]) => h('a', { href: `#/settings/${id}`, class: id === section ? 'active' : '' }, h('span', { html: icons[ic] }), label)),
-    state.me.isAdmin ? [h('div', { class: 'grp' }, 'Server'), SECTIONS.filter((s) => s[3]).map(([id, label, ic]) => h('a', { href: `#/settings/${id}`, class: id === section ? 'active' : '' }, h('span', { html: icons[ic] }), label))] : null);
+    SECTIONS.filter((s) => !s[3]).map(link),
+    state.me.isAdmin ? [h('div', { class: 'grp' }, 'Server'), SECTIONS.filter((s) => s[3]).map(link)] : null);
   const content = h('div');
   const def = SECTIONS.find((s) => s[0] === section);
   if (!def || (def[3] && !state.me.isAdmin)) content.appendChild(h('div', { class: 'empty' }, 'Not available'));
@@ -71,11 +74,30 @@ export async function settingsView(ctx, section) {
     preferences: prefsSection, account: accountSection, server: serverSection, transcoding: transcodingSection,
     metadata: metadataSection, cache: cacheSection, libraries: librariesSection, users: usersSection, devices: devicesSection, logs: logsSection, about: aboutSection,
   })[section](ctx));
+  // On narrow screens the nav is a horizontal strip: once the view is shown,
+  // bring the current section into view (scrollLeft, so the page doesn't scroll).
+  requestAnimationFrame(() => {
+    const a = nav.querySelector('a.active');
+    if (a && nav.scrollWidth > nav.clientWidth) nav.scrollLeft += a.getBoundingClientRect().left - nav.getBoundingClientRect().left - (nav.clientWidth - a.offsetWidth) / 2;
+  });
   return h('div', { class: 'page' }, h('h1', { class: 'page-title', style: { marginBottom: '22px' } }, 'Settings'), h('div', { class: 'side-layout' }, nav, content));
 }
 
+// field wraps a control with its label and help. The label alone names the
+// control; the help describes it (so it isn't read as part of the name).
+// help may be text or a ready .help element.
+let fieldId = 0;
 function field(label, input, help) {
-  return h('label', { class: 'field' }, h('span', null, label), input, help ? h('div', { class: 'help' }, help) : null);
+  const id = `field-${++fieldId}`;
+  const helpEl = help == null ? null : help instanceof Node ? help : h('div', { class: 'help' }, help);
+  if (helpEl) helpEl.id = `${id}-h`;
+  if (input.matches?.('input, select, textarea')) {
+    // aria-label for plain text: Chrome would read the label's CSS uppercase into the name.
+    if (typeof label === 'string') input.setAttribute('aria-label', label);
+    else input.setAttribute('aria-labelledby', `${id}-l`);
+    if (helpEl) input.setAttribute('aria-describedby', [helpEl.id, input.getAttribute('aria-describedby')].filter(Boolean).join(' '));
+  }
+  return h('label', { class: 'field' }, h('span', { id: `${id}-l` }, label), input, helpEl);
 }
 
 let toggleId = 0;
@@ -129,17 +151,65 @@ function prefsSection() {
     h('div', null, h('button', { class: 'btn', onclick: () => { prefs.reset(); toast('Reset to defaults', 'ok'); route(); } }, 'Reset to defaults')));
 }
 
+// formErrors gives a form an inline error line (role=alert) and helpers to
+// flag fields: fail(msg, ...inputs) marks them invalid and focuses the first.
+function formErrors(id, inputs) {
+  const err = h('div', { class: 'err', role: 'alert', id });
+  for (const i of inputs) {
+    i.setAttribute('aria-describedby', [i.getAttribute('aria-describedby'), id].filter(Boolean).join(' '));
+    i.addEventListener('input', () => i.removeAttribute('aria-invalid'));
+  }
+  const reset = () => { err.textContent = ''; inputs.forEach((i) => i.removeAttribute('aria-invalid')); };
+  const fail = (msg, ...bad) => {
+    err.textContent = msg;
+    bad.forEach((i) => i.setAttribute('aria-invalid', 'true'));
+    bad[0]?.focus();
+  };
+  return { err, reset, fail };
+}
+
+// Runs a form's request through run() (busy button, no double submits), with
+// the server's error shown inline instead of as a toast; pick(message) names
+// the inputs to flag. Resolves true on success.
+async function submitInline(btn, errors, fn, okMsg, pick = () => []) {
+  let failed = null;
+  const ok = await run(btn, async () => {
+    try { return await fn(); } catch (ex) { failed = ex; throw Object.assign(new Error(ex.message), { name: 'AbortError' }); }
+  }, okMsg);
+  if (failed) errors.fail(upper(failed.message), ...pick(failed.message));
+  return ok;
+}
+
+const PW_RULE = { minlength: 12, maxlength: 72 };
+const PW_MSG = 'Use 12–72 bytes (at least 12 characters).';
+const pwLength = (v) => { const n = new TextEncoder().encode(v).length; return n >= 12 && n <= 72; };
+
 function accountSection() {
-  const cur = h('input', { type: 'password', autocomplete: 'current-password' });
-  const n1 = h('input', { type: 'password', autocomplete: 'new-password' });
-  const n2 = h('input', { type: 'password', autocomplete: 'new-password' });
-  return h('div', { class: 'form' }, h('div', { class: 'form-section' }, h('h2', null, `Signed in as ${state.me.name}`),
+  const cur = h('input', { type: 'password', name: 'current-password', autocomplete: 'current-password', required: true });
+  const n1 = h('input', { type: 'password', name: 'new-password', autocomplete: 'new-password', required: true, ...PW_RULE });
+  const n2 = h('input', { type: 'password', name: 'confirm-password', autocomplete: 'new-password', required: true, ...PW_RULE });
+  const errors = formErrors('account-pw-err', [cur, n1, n2]);
+  const btn = h('button', { class: 'btn primary', type: 'submit' }, 'Change password');
+  // Wrong or empty tries count toward the sign-in limit, so nothing is sent
+  // until the form is complete.
+  const onsubmit = async (e) => {
+    e.preventDefault();
+    errors.reset();
+    const empty = [cur, n1, n2].filter((i) => !i.value);
+    if (empty.length) return errors.fail(empty[0] === cur ? 'Enter your current password' : 'Enter the new password twice', ...empty);
+    if (!pwLength(n1.value)) return errors.fail(PW_MSG, n1);
+    if (n1.value !== n2.value) return errors.fail('The new passwords don’t match', n2);
+    if (await submitInline(btn, errors, () => api('/api/me/password', { method: 'PUT', body: { current: cur.value, new: n1.value } }), 'Password changed; other devices were signed out',
+      (m) => (/current/i.test(m) ? [cur] : /password must/i.test(m) ? [n1] : []))) cur.value = n1.value = n2.value = '';
+  };
+  return h('div', { class: 'form' }, h('form', { class: 'form-section', style: { maxWidth: '480px' }, novalidate: true, onsubmit },
+    h('h2', null, `Signed in as ${state.me.name}`),
     h('p', { class: 'muted', style: { margin: 0 } }, state.me.isAdmin ? 'Administrator' : 'User'),
+    // Lets password managers file the new password under this account.
+    h('input', { type: 'text', name: 'username', autocomplete: 'username', value: state.me.name, hidden: true, readonly: true, tabindex: -1 }),
     field('Current password', cur), field('New password', n1, 'Use 12–72 bytes.'), field('Confirm new password', n2),
-    h('div', null, h('button', { class: 'btn primary', onclick: async (e) => {
-      if (n1.value !== n2.value) return toast('Passwords do not match', 'error');
-      if (await run(e.currentTarget, () => api('/api/me/password', { method: 'PUT', body: { current: cur.value, new: n1.value } }), 'Password changed; other devices were signed out')) cur.value = n1.value = n2.value = '';
-    } }, 'Change password'))));
+    errors.err,
+    h('div', null, btn)));
 }
 
 // ---------- server config (shared by several sections) ----------
@@ -153,7 +223,16 @@ async function configForm(build) {
   let clean = JSON.stringify(cfg);
   const dirty = () => JSON.stringify(draft) !== clean;
   const bind = (k, conv = (x) => x) => (v) => { draft[k] = conv(v); };
-  const num = (k, attrs = {}) => h('input', { type: 'number', value: draft[k], ...attrs, oninput: (e) => { draft[k] = Number(e.target.value); } });
+  // Number fields: an empty (or unreadable) field keeps the saved value, and
+  // shows it again on leaving the field. Save checks the ranges first.
+  const controls = new Map();
+  const num = (k, attrs = {}) => {
+    const input = h('input', { type: 'number', inputmode: 'numeric', value: draft[k], ...attrs,
+      oninput: (e) => { const v = e.target.valueAsNumber; draft[k] = Number.isNaN(v) ? cfg[k] : v; input.setCustomValidity(''); },
+      onblur: () => { if (input.value === '' && !input.validity.badInput) { input.value = draft[k]; mark(); } } });
+    controls.set(k, input);
+    return input;
+  };
   const text = (k, attrs = {}) => h('input', { type: 'text', value: draft[k] ?? '', ...attrs, oninput: (e) => { draft[k] = e.target.value; } });
   // A comma-separated list shown in a box that wraps; a new line counts as a comma.
   const list = (k, attrs = {}) => h('textarea', { rows: 2, value: draft[k] ?? '', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', ...attrs,
@@ -162,13 +241,29 @@ async function configForm(build) {
   const note = h('span', { class: 'muted small', hidden: true }, 'Unsaved changes');
   const save = h('button', { class: 'btn primary', type: 'submit', disabled: true }, 'Save changes');
   const mark = () => { const d = dirty(); if (!save.hasAttribute('aria-busy')) save.disabled = !d; note.hidden = !d; };
+  // Step mismatches are allowed on purpose (the server doesn't enforce
+  // steps, and stored values may be off-step), but every setting is a whole number.
+  const invalid = () => [...controls.values()].find((i) => {
+    i.setCustomValidity(i.value !== '' && !Number.isInteger(i.valueAsNumber) && !i.validity.badInput ? 'Enter a whole number.' : '');
+    return i.validity.rangeOverflow || i.validity.rangeUnderflow || i.validity.badInput || i.validity.customError;
+  });
+  const labelOf = (i) => i.getAttribute('aria-label') || '';
   const onSubmit = async (e) => {
     e.preventDefault();
+    const bad = invalid();
+    if (bad) { bad.focus(); bad.reportValidity(); return; }
     if (!dirty()) return;
+    let reset = [];
     const ok = await run(save, async () => {
+      const sent = { ...draft };
       cfg = await api('/api/admin/config', { method: 'PUT', body: draft });
       Object.assign(draft, cfg);
       clean = JSON.stringify(draft);
+      // The server puts values it can't use back to defaults: show what it kept.
+      for (const [k, input] of controls) {
+        if (sent[k] !== cfg[k]) reset.push(labelOf(input) || k);
+        input.value = cfg[k];
+      }
       state.caps = { ...state.caps, subtitleSearch: !!cfg.openSubtitlesKey?.trim(), cacheEnabled: !!cfg.cacheEnabled };
       if (cfg.serverName && cfg.serverName !== state.serverName) {
         state.serverName = cfg.serverName;
@@ -176,10 +271,12 @@ async function configForm(build) {
         if (logo) { logo.querySelector('span').textContent = cfg.serverName; logo.setAttribute('aria-label', `${cfg.serverName} home`); }
         document.title = `Settings · ${cfg.serverName}`;
       }
-    }, 'Settings saved', { busyLabel: 'Saving…' });
-    if (ok) mark();
+    }, () => (reset.length ? null : 'Settings saved'), { busyLabel: 'Saving…' });
+    if (!ok) return;
+    mark();
+    if (reset.length) toast(`Saved, but some values were out of range and were reset: ${reset.join(', ')}`, 'error');
   };
-  // novalidate: out-of-range numbers are left to the server for now.
+  // novalidate: Save checks the number fields itself (see invalid()).
   const form = h('form', { class: 'form cols', novalidate: true, onsubmit: onSubmit, oninput: mark, onchange: mark },
     build({ draft, num, text, list, tg, bind, info }), h('div', { class: 'save-bar' }, save, note));
   setLeaveGuard(() => form.isConnected && dirty());
@@ -443,7 +540,7 @@ function libraryModal(lib) {
   };
   const m = modal({ title: lib ? `Edit ${lib.name}` : 'Add library', wide: true, dismissible: false, body: [
     field('Name', name),
-    h('label', { class: 'field' }, h('span', null, 'Type'), typeSel, typeHelp),
+    field('Type', typeSel, typeHelp),
     h('div', { class: 'field', role: 'group', 'aria-labelledby': foldersId }, h('span', { id: foldersId }, 'Folders'), chips, folderNote),
     browser.el,
     live,
@@ -500,15 +597,21 @@ function folderBrowser(onPick, starts) {
 }
 
 // ---------- users & devices ----------
+// Both tables become stacked rows on narrow screens (.tbl.stack); data-label
+// names the cells whose header is then hidden.
+const actionsTh = () => h('th', null, h('span', { class: 'sr-only' }, 'Actions'));
+const fmtDay = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '');
+
 async function usersSection() {
   const users = await api('/api/admin/users');
-  const tbl = h('table', { class: 'tbl' }, h('tr', null, h('th', null, 'Name'), h('th', null, 'Role'), h('th', null, 'Created'), h('th')),
-    users.map((u) => h('tr', null, h('td', null, h('b', null, u.name, u.id === state.me.id ? [' ', h('span', { class: 'dim' }, '(you)')] : null)), h('td', null, u.isAdmin ? 'Admin' : 'User'), h('td', null, fmtDate(u.createdAt)),
-      h('td', { style: { textAlign: 'right' } }, h('div', { class: 'row', style: { justifyContent: 'flex-end' } },
-        h('button', { class: 'btn sm', onclick: (e) => {
-          const pw = prompt(`New password for ${u.name}:`);
-          if (pw) run(e.currentTarget, () => api(`/api/admin/users/${u.id}`, { method: 'PUT', body: { password: pw } }), 'Password reset');
-        } }, 'Reset password'),
+  const tbl = h('table', { class: 'tbl stack' }, h('tr', null, h('th', null, 'Name'), h('th', null, 'Role'), h('th', null, 'Created'), actionsTh()),
+    users.map((u) => h('tr', null, h('td', null, h('b', null, u.name, u.id === state.me.id ? [' ', h('span', { class: 'dim' }, '(you)')] : null)), h('td', null, u.isAdmin ? 'Admin' : 'User'),
+      h('td', { class: 'nowrap', 'data-label': 'Created' }, fmtDay(u.createdAt)),
+      h('td', null, h('div', { class: 'row wrap tbl-actions' },
+        // Resetting your own password here would sign you out everywhere.
+        u.id === state.me.id
+          ? h('a', { class: 'btn sm', href: '#/settings/account', dataset: { focusKey: 'settings-nav-account' }, onclick: () => focusAfterRoute('settings-nav-account') }, 'Change password')
+          : h('button', { class: 'btn sm', 'aria-label': `Reset password for ${u.name}`, onclick: () => resetPasswordModal(u) }, 'Reset password'),
         // Your own role can only be changed by another admin.
         u.id !== state.me.id ? h('button', { class: 'btn sm', dataset: { focusKey: `user-admin-${u.id}` }, onclick: async (e) => {
           const btn = e.currentTarget;
@@ -521,25 +624,87 @@ async function usersSection() {
           const btn = e.currentTarget;
           if (await confirmDialog(`Delete user ${u.name}?`, 'Delete', true) && await run(btn, () => api(`/api/admin/users/${u.id}`, { method: 'DELETE' }))) route();
         } }, 'Delete') : null)))));
-  const name = h('input', { type: 'text', placeholder: 'Username' });
-  const pw = h('input', { type: 'password', placeholder: 'Password (12–72 bytes)', autocomplete: 'new-password' });
-  let admin = false;
   return h('div', { class: 'form' },
     h('div', { class: 'form-section' }, h('h2', null, 'Users'), h('div', { class: 'table-wrap' }, tbl)),
-    h('div', { class: 'form-section' }, h('h2', null, 'Add user'),
-      h('div', { class: 'form-grid' }, name, pw),
-      toggleRow('Administrator', 'Can change settings, libraries and see stats.', false, (v) => { admin = v; }),
-      h('div', null, h('button', { class: 'btn primary', onclick: async (e) => {
-        if (await run(e.currentTarget, () => api('/api/admin/users', { method: 'POST', body: { name: name.value, password: pw.value, isAdmin: admin } }), 'User created')) route();
-      } }, 'Create user'))));
+    addUserForm());
+}
+
+function addUserForm() {
+  const name = h('input', { type: 'text', name: 'new-user-name', dataset: { focusKey: 'user-new-name' }, autocomplete: 'off', autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', required: true, maxlength: 64 });
+  const pw = h('input', { type: 'password', name: 'new-user-password', dataset: { focusKey: 'user-new-password' }, autocomplete: 'new-password', required: true, ...PW_RULE });
+  const errors = formErrors('add-user-err', [name, pw]);
+  const btn = h('button', { class: 'btn primary', type: 'submit', dataset: { focusKey: 'user-create' } }, 'Create user');
+  let admin = false;
+  const onsubmit = async (e) => {
+    e.preventDefault();
+    errors.reset();
+    if (!name.value.trim()) return errors.fail('Enter a username', name);
+    if (!pwLength(pw.value)) return errors.fail(PW_MSG, pw);
+    const nm = name.value.trim();
+    if (await submitInline(btn, errors, () => api('/api/admin/users', { method: 'POST', body: { name: nm, password: pw.value, isAdmin: admin } }), `Created ${nm}`,
+      (m) => (/password/i.test(m) ? [pw] : [name]))) refreshSoft();
+  };
+  return h('form', { class: 'form-section', novalidate: true, onsubmit }, h('h2', null, 'Add user'),
+    h('div', { class: 'form-grid' }, field('Username', name), field('Password', pw, 'Use 12–72 bytes.')),
+    toggleRow('Administrator', 'Can change settings, libraries and see stats.', false, (v) => { admin = v; }),
+    errors.err,
+    h('div', null, btn));
+}
+
+// An admin sets a new password for someone else; it signs them out everywhere.
+function resetPasswordModal(u) {
+  const formId = `reset-pw-${u.id}`;
+  const pw = h('input', { type: 'password', name: 'new-password', autocomplete: 'new-password', required: true, ...PW_RULE });
+  const errors = formErrors(`${formId}-err`, [pw]);
+  const show = h('label', { class: 'row small muted', style: { gap: '8px', cursor: 'pointer' } },
+    h('input', { type: 'checkbox', onchange: (e) => { pw.type = e.target.checked ? 'text' : 'password'; } }), 'Show password');
+  const btn = h('button', { class: 'btn primary', type: 'submit', form: formId }, 'Reset password');
+  const onsubmit = async (e) => {
+    e.preventDefault();
+    errors.reset();
+    if (!pwLength(pw.value)) return errors.fail(PW_MSG, pw);
+    if (await submitInline(btn, errors, () => api(`/api/admin/users/${u.id}`, { method: 'PUT', body: { password: pw.value } }), `Password reset for ${u.name}`, () => [pw])) m.close();
+  };
+  const m = modal({ title: `Reset password for ${u.name}`, body: h('form', { id: formId, novalidate: true, onsubmit, style: { display: 'grid', gap: '12px' } },
+    field('New password', pw, `Use 12–72 bytes. ${u.name} will be signed out on all devices.`), show, errors.err),
+  actions: [h('button', { class: 'btn', type: 'button', onclick: () => m.close() }, 'Cancel'), btn] });
+  pw.focus();
 }
 
 async function devicesSection() {
   const devs = await api('/api/admin/devices');
+  const signOut = async (e, d) => {
+    const btn = e.currentTarget;
+    if (d.current) {
+      // Same as the account menu's Sign out.
+      if (await run(btn, () => api('/api/auth/logout', { method: 'POST' }))) { setLeaveGuard(null); location.hash = ''; location.reload(); }
+      return;
+    }
+    if (!(await confirmDialog(`Sign out ${d.userName} on ${d.client} (${d.ip})? They’ll need to sign in again.`, 'Sign out', true, 'Sign out device?'))) return;
+    if (!(await run(btn, () => api(`/api/admin/devices/${d.prefix}`, { method: 'DELETE' }), `Signed out ${d.userName} on ${d.client}`))) return;
+    // The row goes away: keep focus in the list, on the next row's button.
+    const i = devs.indexOf(d), next = devs[i + 1] || devs[i - 1];
+    if (next) focusAfterRoute(`device-${next.prefix}`);
+    refreshSoft();
+  };
   return h('div', { class: 'form' }, h('div', { class: 'form-section' }, h('h2', null, 'Signed-in devices'),
-    h('div', { class: 'table-wrap' }, h('table', { class: 'tbl' }, h('tr', null, h('th', null, 'User'), h('th', null, 'Client'), h('th', null, 'IP'), h('th', null, 'Signed in'), h('th', null, 'Last seen'), h('th')),
-      devs.map((d) => h('tr', null, h('td', null, d.userName), h('td', null, d.client), h('td', { class: 'mono' }, d.ip), h('td', null, fmtDate(d.created)), h('td', null, timeAgo(d.lastSeen)),
-        h('td', null, h('button', { class: 'btn sm danger', onclick: async (e) => { if (await run(e.currentTarget, () => api(`/api/admin/devices/${d.prefix}`, { method: 'DELETE' }))) route(); } }, 'Sign out'))))))));
+    h('div', { class: 'table-wrap' }, h('table', { class: 'tbl stack' }, h('tr', null, h('th', null, 'User'), h('th', null, 'Client'), h('th', null, 'IP'), h('th', null, 'Signed in'), h('th', null, 'Last seen'), actionsTh()),
+      devs.map((d) => h('tr', null, h('td', null, h('b', null, d.userName)),
+        h('td', null, d.client, d.current ? [' ', h('span', { class: 'chip this-device' }, 'This device')] : null),
+        h('td', { class: 'mono' }, d.ip), h('td', { 'data-label': 'Signed in' }, fmtDate(d.created)), h('td', { 'data-label': 'Last seen' }, timeAgo(d.lastSeen)),
+        h('td', null, h('div', { class: 'row wrap tbl-actions' }, h('button', { class: 'btn sm danger', dataset: { focusKey: `device-${d.prefix}` },
+          'aria-label': d.current ? 'Sign out here (this device)' : `Sign out ${d.userName} on ${d.client} (${d.ip})`, onclick: (e) => signOut(e, d) }, d.current ? 'Sign out here' : 'Sign out')))))))));
+}
+
+// keepFocus re-renders box with rebuild() and, if focus was inside it, puts
+// it back on the control with the same data-focus-key; when that one is gone,
+// on the one keyed next (if given) or the box's first keyed control.
+function keepFocus(box, rebuild, next = null) {
+  const k = box.contains(document.activeElement) ? document.activeElement.dataset.focusKey : null;
+  rebuild();
+  if (k === undefined || k === null) return;
+  const keyed = [...box.querySelectorAll('[data-focus-key]')];
+  (keyed.find((el) => el.dataset.focusKey === k) || keyed.find((el) => el.dataset.focusKey === next) || keyed[0])?.focus({ preventScroll: true });
 }
 
 function taskRow(label, running, text) {
@@ -550,6 +715,7 @@ function taskRow(label, running, text) {
 async function cacheSection(ctx) {
   const statusBox = h('div', { class: 'form-section' });
   const listBox = h('div', { class: 'form-section' });
+  let listSig = null, nextKey = null;
   const render = async () => {
     const r = await api('/api/admin/cache');
     if (!ctx.isCurrent()) return;
@@ -564,16 +730,25 @@ async function cacheSection(ctx) {
         h('dt', null, 'Copying'), h('dd', null, st.current ? `${st.current.name} — ${Math.round((st.current.done / st.current.size) * 100)}% of ${fmtBytes(st.current.size)} at ${fmtBytes(st.current.speed)}/s (${st.current.reason})` : 'nothing'),
         h('dt', null, 'Queue'), h('dd', null, st.queued.length ? st.queued.map((j) => j.name).join(', ') : 'empty'),
         st.lastError ? [h('dt', null, 'Last error'), h('dd', { class: 'bad' }, st.lastError)] : null));
-    clear(listBox).append(h('div', { class: 'row' }, h('h2', { class: 'grow' }, 'Cached files'),
-      r.entries.length ? h('button', { class: 'btn sm danger', onclick: async (e) => {
+    // The list (and its buttons) is rebuilt only when it changes, or once a
+    // minute for the "… ago" times.
+    const sig = `${Math.floor(Date.now() / 60000)}|${r.entries.map((e) => `${e.itemId}:${e.lastAccess}`).join()}`;
+    if (sig === listSig) return;
+    listSig = sig;
+    keepFocus(listBox, () => clear(listBox).append(h('div', { class: 'row' }, h('h2', { class: 'grow' }, 'Cached files'),
+      r.entries.length ? h('button', { class: 'btn sm danger', dataset: { focusKey: 'cache-clear' }, onclick: async (e) => {
         const btn = e.currentTarget;
         if (await confirmDialog('Delete every cached copy? Originals are not touched.', 'Clear', true) && await run(btn, () => api('/api/admin/cache/clear', { method: 'POST', body: { kind: 'media' } }))) refresh();
       } }, 'Clear cache') : null),
     r.entries.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'tbl' },
       h('tr', null, ['Title', 'Size', 'Cached', 'Last used', 'Reason', ''].map((t) => h('th', null, t))),
-      r.entries.map((e) => h('tr', null, h('td', null, h('a', { href: `#/item/${e.itemId}` }, e.title), h('div', { class: 'dim small ellipsis', style: { maxWidth: '380px' } }, e.name)), h('td', { class: 'nowrap' }, fmtBytes(e.size)), h('td', { class: 'nowrap' }, timeAgo(e.addedAt)), h('td', { class: 'nowrap' }, timeAgo(e.lastAccess)), h('td', null, e.reason),
-        h('td', null, h('button', { class: 'btn sm', onclick: async (ev) => { if (await run(ev.currentTarget, () => api(`/api/admin/cache/items/${e.itemId}`, { method: 'DELETE' }))) refresh(); } }, 'Remove'))))))
-      : h('p', { class: 'muted', style: { margin: 0 } }, 'Nothing cached yet. Files are copied when played (and upcoming episodes are prefetched).'));
+      r.entries.map((e) => h('tr', null, h('td', null, h('a', { href: `#/item/${e.itemId}`, dataset: { focusKey: `cache-item-${e.itemId}` } }, e.title), h('div', { class: 'dim small ellipsis', style: { maxWidth: '380px' } }, e.name)), h('td', { class: 'nowrap' }, fmtBytes(e.size)), h('td', { class: 'nowrap' }, timeAgo(e.addedAt)), h('td', { class: 'nowrap' }, timeAgo(e.lastAccess)), h('td', null, e.reason),
+        h('td', null, h('button', { class: 'btn sm', dataset: { focusKey: `cache-remove-${e.itemId}` }, 'aria-label': `Remove ${e.title} from the cache`, onclick: async (ev) => {
+          const i = r.entries.indexOf(e), next = r.entries[i + 1] || r.entries[i - 1];
+          nextKey = next ? `cache-remove-${next.itemId}` : null;
+          if (await run(ev.currentTarget, () => api(`/api/admin/cache/items/${e.itemId}`, { method: 'DELETE' }), `Removed ${e.title} from the cache`)) refresh();
+        } }, 'Remove'))))))
+      : h('p', { class: 'muted', style: { margin: 0 } }, 'Nothing cached yet. Files are copied when played (and upcoming episodes are prefetched).')), nextKey);
   };
   const refresh = () => render().catch(() => {});
   const form = await configForm(({ draft, num, text, tg }) => [
@@ -597,33 +772,68 @@ async function cacheSection(ctx) {
 }
 
 // ---------- tasks & logs ----------
+// Polled every few seconds. Only the status lines are replaced (Scan now is
+// built once), and new log lines are appended, so focus and a text selection
+// in the log survive the refresh.
 async function logsSection(ctx) {
-  const tasks = h('div', { class: 'form-section' });
-  const logBox = h('div', { class: 'logs' });
+  const status = h('div', { style: { display: 'grid', gap: '16px' } });
+  const tasks = h('div', { class: 'form-section' }, h('h2', null, 'Background tasks'), status,
+    h('div', { class: 'row' }, h('button', { class: 'btn sm', dataset: { focusKey: 'scan-now' }, onclick: async (e) => {
+      if (await run(e.currentTarget, () => api('/api/admin/scan', { method: 'POST', body: {} }), 'Scanning all libraries')) renderTasks().catch(() => {});
+    } }, 'Scan now')));
+  const logBox = h('div', { class: 'logs', tabindex: 0, role: 'region', 'aria-label': 'Server log' });
   let follow = true;
   logBox.addEventListener('scroll', () => { follow = logBox.scrollTop + logBox.clientHeight >= logBox.scrollHeight - 20; });
   const renderTasks = async () => {
     const t = await api('/api/admin/tasks');
     if (!ctx.isCurrent()) return;
     const s = t.scan, m = t.metadata;
-    clear(tasks).append(h('h2', null, 'Background tasks'),
+    status.replaceChildren(
       taskRow('Library scan', s.running, s.running ? `${s.phase}${s.library ? ' · ' + s.library : ''}${s.phase === 'probing' ? ` · ${s.probeDone}/${s.probeTotal} ${s.current}` : ''}` : `idle · last finished ${timeAgo(s.finishedAt)} (found ${s.found}, +${s.added}, −${s.removed}, changed ${s.changed})`),
       taskRow('Metadata', m.running, m.running ? `${m.done}/${m.total} · ${m.current}` : `idle · last run ${timeAgo(m.lastRun)} (${m.matched} matched, ${m.missing} not found)`),
       taskRow('Intro detection', t.intro.running, !t.intro.available ? 'unavailable (ffmpeg without chromaprint)' : t.intro.running ? `${t.intro.done}/${t.intro.seasons} seasons · ${t.intro.current} · ${t.intro.found} found` : `idle · last run ${timeAgo(t.intro.lastRun)}`),
       taskRow('SSD cache', !!t.cache.current, !t.cache.enabled ? 'disabled' : t.cache.current ? `copying ${t.cache.current.name} · ${Math.round((t.cache.current.done / t.cache.current.size) * 100)}% · ${fmtBytes(t.cache.current.speed)}/s${t.cache.queued.length ? ` · ${t.cache.queued.length} queued` : ''}` : `idle · ${t.cache.files} files, ${fmtBytes(t.cache.usedBytes)} of ${fmtBytes(t.cache.maxBytes)}`),
-      t.trickplay ? taskRow('Seek previews', t.trickplay.running, !t.trickplay.enabled ? 'disabled' : t.trickplay.running ? `generating ${t.trickplay.current} · ${t.trickplay.pending} left` : t.trickplay.paused ? `paused while something is playing · ${t.trickplay.pending} left` : t.trickplay.pending ? `${t.trickplay.pending} waiting` : `idle · all done${t.trickplay.failed ? ` (${t.trickplay.failed} failed)` : ''}`) : null,
-      h('div', { class: 'task' }, h('b', null, 'ffmpeg jobs'), `${t.remuxJobs} remux · ${t.transcodeJobs} transcode`),
-      h('div', { class: 'row' }, h('button', { class: 'btn sm', onclick: async (e) => { if (await run(e.currentTarget, () => api('/api/admin/scan', { method: 'POST', body: {} }))) renderTasks().catch(() => {}); } }, 'Scan now')));
+      t.trickplay ? taskRow('Seek previews', t.trickplay.running, !t.trickplay.enabled ? 'disabled' : t.trickplay.running ? `generating ${t.trickplay.current} · ${t.trickplay.pending} left` : t.trickplay.paused ? `paused while something is playing · ${t.trickplay.pending} left` : t.trickplay.pending ? `${t.trickplay.pending} waiting` : `idle · all done${t.trickplay.failed ? ` (${t.trickplay.failed} failed)` : ''}`) : '',
+      h('div', { class: 'task' }, h('b', null, 'ffmpeg jobs'), `${t.remuxJobs} remux · ${t.transcodeJobs} transcode`));
   };
+  const today = () => new Date().toDateString();
+  const stamp = (t) => (new Date(t).toDateString() === today() ? new Date(t).toLocaleTimeString() : new Date(t).toLocaleString());
+  const key = (l) => `${l.t}|${l.level}|${l.msg}`;
+  const lineEl = (l) => h('div', { class: l.level }, `${stamp(l.t)} ${l.level.padEnd(5)} ${l.msg}`);
+  let shown = []; // keys of the rendered lines, oldest first
+  let text = [];
   const renderLogs = async () => {
     const lines = await api('/api/admin/logs');
     if (!ctx.isCurrent()) return;
-    clear(logBox).append(...lines.map((l) => h('div', { class: l.level }, `${new Date(l.t).toLocaleTimeString()} ${l.level.padEnd(5)} ${l.msg}`)));
+    // Don't move lines under a selection the user is making or copying.
+    const sel = getSelection();
+    if (sel && !sel.isCollapsed && logBox.contains(sel.anchorNode)) return;
+    const keys = lines.map(key);
+    const at = shown.length ? keys.lastIndexOf(shown[shown.length - 1]) : -1;
+    if (at < 0) {
+      logBox.replaceChildren(...lines.map(lineEl));
+    } else {
+      logBox.append(...lines.slice(at + 1).map(lineEl));
+      // The server keeps a fixed number of lines: drop the ones it dropped.
+      while (logBox.childElementCount > lines.length) logBox.firstElementChild.remove();
+    }
+    shown = keys;
+    text = lines.map((l) => `${new Date(l.t).toISOString()} ${l.level.padEnd(5)} ${l.msg}`);
     if (follow) logBox.scrollTop = logBox.scrollHeight;
+  };
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text.join('\n'));
+      toast('Log copied', 'ok');
+    } catch {
+      getSelection().selectAllChildren(logBox);
+      toast('Press Ctrl+C (⌘C) to copy the selected log');
+    }
   };
   await renderTasks();
   await renderLogs();
-  const page = h('div', { class: 'form', style: { maxWidth: 'none' } }, tasks, h('div', { class: 'form-section' }, h('h2', null, 'Log'), logBox));
+  const page = h('div', { class: 'form', style: { maxWidth: 'none' } }, tasks,
+    h('div', { class: 'form-section' }, h('div', { class: 'row' }, h('h2', { class: 'grow' }, 'Log'), h('button', { class: 'btn sm', type: 'button', onclick: copy }, 'Copy log')), logBox));
   const banner = staleBanner(page);
   every(ctx, 2000, renderTasks, banner.hooks('tasks'));
   every(ctx, 3000, renderLogs, banner.hooks('logs'));
