@@ -28,7 +28,10 @@ export async function api(path, { method = 'GET', body, signal, keepalive } = {}
       if (msg === 'not signed in') msg = 'Your session has ended';
       window.dispatchEvent(new CustomEvent('lex:unauthorized'));
     }
-    throw new ApiError(msg, res.status);
+    const err = new ApiError(msg, res.status);
+    // Some errors carry a machine-readable code (e.g. 'no_key').
+    if (data && data.code) err.code = data.code;
+    throw err;
   }
   return data;
 }
