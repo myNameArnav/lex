@@ -21,6 +21,7 @@ PATTERNS = {
 }
 PRIVATE_NAMES = {".env", ".DS_Store", "lex.db", "lex.db-wal", "lex.db-shm"}
 PRIVATE_SUFFIXES = {".db", ".sqlite", ".sqlite3", ".key", ".pem", ".log"}
+URL_CREDENTIALS = re.compile(rb"[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9._%+-]*:\Z")
 violations = []
 
 
@@ -34,6 +35,9 @@ def check(path, content, location):
         if pattern.search(content):
             violations.append((location, path, label))
     for match in re.finditer(rb"\b[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b", content):
+        # "scheme://user:secret@host" is a URL's credentials, not an address.
+        if URL_CREDENTIALS.search(content[max(0, match.start() - 256):match.start()]):
+            continue
         if match.group(1).lower() not in {b"example.com", b"example.org", b"example.net", b"example.invalid"}:
             violations.append((location, path, "non-example email address"))
 
