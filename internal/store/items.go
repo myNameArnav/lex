@@ -423,6 +423,7 @@ type ListQuery struct {
 	Search    string
 	Limit     int
 	Offset    int
+	Seed      int64 // sort=random: a non-zero seed gives a stable order across pages
 }
 
 func (s *Store) ListItems(uid int64, q ListQuery) ([]*Item, int, error) {
@@ -453,7 +454,11 @@ func (s *Store) ListItems(uid int64, q ListQuery) ([]*Item, int, error) {
 	case "played":
 		conds = append(conds, `CASE WHEN i.kind='show' THEN NOT EXISTS(SELECT 1 FROM items e LEFT JOIN user_data u2 ON u2.item_id=e.id AND u2.user_id=:uid WHERE e.show_id=i.id AND e.kind='episode' AND COALESCE(u2.played,0)=0) ELSE COALESCE(ud.played,0)=1 END`)
 	case "inprogress":
-		conds = append(conds, "COALESCE(ud.position,0)>0")
+		// A show is in progress once any episode is started or watched while
+		// some are still unwatched.
+		conds = append(conds, `CASE WHEN i.kind='show' THEN EXISTS(SELECT 1 FROM items e JOIN user_data u2 ON u2.item_id=e.id AND u2.user_id=:uid WHERE e.show_id=i.id AND e.kind='episode' AND (u2.position>0 OR u2.played=1))
+			AND EXISTS(SELECT 1 FROM items e LEFT JOIN user_data u2 ON u2.item_id=e.id AND u2.user_id=:uid WHERE e.show_id=i.id AND e.kind='episode' AND COALESCE(u2.played,0)=0)
+			ELSE COALESCE(ud.position,0)>0 END`)
 	case "favorite":
 		conds = append(conds, "COALESCE(ud.favorite,0)=1")
 	}
@@ -475,13 +480,19 @@ func (s *Store) ListItems(uid int64, q ListQuery) ([]*Item, int, error) {
 	case "rating":
 		order = fmt.Sprintf("i.rating %s, i.sort_title", dir)
 	case "played":
-		order = fmt.Sprintf("COALESCE(ud.last_played,0) %s, i.sort_title", dir)
+		// Shows have no user data of their own: use their latest episode activity.
+		order = fmt.Sprintf("CASE WHEN i.kind='show' THEN COALESCE((SELECT MAX(u2.last_played) FROM items e JOIN user_data u2 ON u2.item_id=e.id AND u2.user_id=:uid WHERE e.show_id=i.id),0) ELSE COALESCE(ud.last_played,0) END %s, i.sort_title", dir)
 	case "premiere":
 		order = fmt.Sprintf("i.premiere %s, i.sort_title", dir)
 	case "latest":
 		order = fmt.Sprintf("CASE WHEN i.kind='show' THEN COALESCE((SELECT MAX(e.added_at) FROM items e WHERE e.show_id=i.id),i.added_at) ELSE i.added_at END %s, i.id %s", dir, dir)
 	case "random":
 		order = "random()"
+		if seed := randomSeed(q.Seed); seed != 0 {
+			// A seeded hash of the id: the same order on every page and on Back.
+			x := fmt.Sprintf("(i.id * %d %% %d)", seed, randomPrime)
+			order = fmt.Sprintf("%s * %s %% %d, i.id", x, x, randomPrime)
+		}
 	}
 	if q.Limit <= 0 || q.Limit > 500 {
 		q.Limit = 500
@@ -489,6 +500,17 @@ func (s *Store) ListItems(uid int64, q ListQuery) ([]*Item, int, error) {
 	where += fmt.Sprintf(" ORDER BY %s LIMIT %d OFFSET %d", order, q.Limit, q.Offset)
 	items, err := s.queryItemsUD(udSelect(where), args...)
 	return items, total, err
+}
+
+const randomPrime = 2147483647
+
+// randomSeed folds a client seed into 1..randomPrime-1 (0: unseeded), which
+// keeps every product in the random order within 64 bits.
+func randomSeed(seed int64) int64 {
+	if seed < 0 {
+		seed = -(seed % randomPrime)
+	}
+	return seed % randomPrime
 }
 
 func (s *Store) Genres(libID int64) ([]string, error) {
