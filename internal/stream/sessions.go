@@ -73,6 +73,17 @@ type Session struct {
 	lastBeat  time.Time
 	active    int         // open HTTP responses
 	jobMu     *sync.Mutex // serialises seeks/replacements for this session
+	ended     chan struct{}
+}
+
+// Ended is closed when the session ends (player closed, expired or stopped
+// by an admin), so open media responses can be cut off.
+func (s *Session) Ended() <-chan struct{} { return s.ended }
+
+func (s *Session) end() {
+	if s.ended != nil {
+		close(s.ended)
+	}
 }
 
 type Manager struct {
@@ -133,6 +144,7 @@ func (m *Manager) Open(s *Session) (*Session, error) {
 	s.streamKey = store.RandomToken(16)
 	s.lastTick, s.lastBeat = now, now
 	s.jobMu = &sync.Mutex{}
+	s.ended = make(chan struct{})
 	m.m[s.ID] = s
 	return s, nil
 }
@@ -295,6 +307,7 @@ func (m *Manager) Stop(id string, uid int64) {
 		return
 	}
 	delete(m.m, id)
+	s.end()
 	j := s.job
 	m.mu.Unlock()
 	if j != nil {
@@ -453,6 +466,7 @@ func (m *Manager) loop() {
 			// players still heartbeat, so they survive.
 			if s.active <= 0 && now.Unix()-s.LastSeen > 45 {
 				delete(m.m, id)
+				s.end()
 				ended = append(ended, s)
 			}
 		}

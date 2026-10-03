@@ -3,11 +3,16 @@ package api
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"lex/internal/cache"
 	"lex/internal/store"
 	"lex/internal/stream"
 )
@@ -56,5 +61,54 @@ func TestKilledSessionAnswers410(t *testing.T) {
 	}
 	if n := len(s.Sess.Snapshot()); n != 0 {
 		t.Fatalf("stopped session re-created: %d sessions", n)
+	}
+}
+
+// An admin Stop also ends a Direct Play response that is already open, so
+// the browser can't keep playing what the connection still delivers.
+func TestKillCutsOpenDirectResponse(t *testing.T) {
+	s, _ := securityServer(t)
+	s.Sess = stream.NewManager(s.St, s.Log)
+	s.Cache = cache.New(s.St, s.Log, t.TempDir())
+	u, err := s.St.CreateInitialAdmin("admin", "test-password-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const size = 256 << 20
+	path := filepath.Join(t.TempDir(), "big.mp4")
+	fh, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fh.Truncate(size)
+	fh.Close()
+	lib, _ := s.St.CreateLibrary("Movies", "movies", []string{filepath.Dir(path)})
+	itemID, _ := s.St.InsertItem(&store.Item{LibraryID: lib.ID, Kind: "movie", Title: "Big", Path: path})
+	fileID, err := s.St.InsertFile(&store.File{ItemID: itemID, LibraryID: lib.ID, Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Sess.Open(&stream.Session{ID: "sess1", UserID: u.ID, ItemID: itemID, FileID: fileID}); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.SetPathValue("id", strconv.FormatInt(fileID, 10))
+		s.direct(w, r.WithContext(context.WithValue(r.Context(), userKey, u)))
+	}))
+	defer srv.Close()
+	res, err := http.Get(srv.URL + "/?sid=sess1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if _, err := io.ReadFull(res.Body, make([]byte, 1<<20)); err != nil {
+		t.Fatal(err)
+	}
+	if !s.Sess.Kill("sess1") {
+		t.Fatal("kill: no session")
+	}
+	n, err := io.Copy(io.Discard, res.Body)
+	if err == nil || n+1<<20 >= size {
+		t.Fatalf("response kept going after the stop: read %d more bytes, err %v", n, err)
 	}
 }

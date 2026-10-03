@@ -265,7 +265,38 @@ func (s *Server) direct(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "private, no-transform")
 	cw := &countingWriter{ResponseWriter: w, n: func(n int) { s.Sess.AddBytes(sess, n) }}
+	// An admin Stop ends the session: cut this response off too, so the
+	// browser can't keep playing from the open connection. The deadline
+	// fails a write blocked on a full socket; endedReader stops the copy.
+	if ended := sess.Ended(); ended != nil {
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			select {
+			case <-ended:
+				_ = http.NewResponseController(w).SetWriteDeadline(time.Now())
+			case <-done:
+			}
+		}()
+		http.ServeContent(cw, r, "", st.ModTime(), &endedReader{ReadSeeker: fh, ended: ended})
+		return
+	}
 	http.ServeContent(cw, r, "", st.ModTime(), fh)
+}
+
+// endedReader fails reads once its session has ended.
+type endedReader struct {
+	io.ReadSeeker
+	ended <-chan struct{}
+}
+
+func (e *endedReader) Read(b []byte) (int, error) {
+	select {
+	case <-e.ended:
+		return 0, stream.ErrStopped
+	default:
+		return e.ReadSeeker.Read(b)
+	}
 }
 
 // streamFile runs ffmpeg and pipes fragmented MP4 to the client. Backpressure
