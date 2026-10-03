@@ -24,6 +24,7 @@ export const DEFAULTS = {
   skipBack: 10,
   skipFwd: 30,
   heartbeat: 10,
+  shortcuts: true,     // single-key app shortcuts (p, /, ?, g then a key)
 };
 
 let cache = null;

@@ -32,7 +32,18 @@ func (s *Server) issueToken(w http.ResponseWriter, r *http.Request, u *store.Use
 		Name: "lex_token", Value: tok, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode,
 		Secure: s.isHTTPS(r), Expires: time.Now().Add(365 * 24 * time.Hour),
 	})
-	writeJSON(w, map[string]any{"user": u, "token": tok})
+	writeJSON(w, map[string]any{"user": u, "token": tok, "caps": s.caps(u)})
+}
+
+// caps tells the UI which optional features are usable, so it can hide
+// actions that would only fail: subtitle search needs an OpenSubtitles key,
+// and the SSD cache actions are admin-only and need the cache enabled.
+func (s *Server) caps(u *store.User) map[string]bool {
+	c := s.St.Config()
+	return map[string]bool{
+		"subtitleSearch": strings.TrimSpace(c.OpenSubtitlesKey) != "",
+		"cacheEnabled":   u.IsAdmin && c.CacheEnabled,
+	}
 }
 
 func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
@@ -140,7 +151,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	if len(prefs) == 0 {
 		prefs = []byte("{}")
 	}
-	writeJSON(w, map[string]any{"user": u, "prefs": prefs, "serverName": s.St.Config().ServerName, "version": s.Version})
+	writeJSON(w, map[string]any{"user": u, "prefs": prefs, "serverName": s.St.Config().ServerName, "version": s.Version, "caps": s.caps(u)})
 }
 
 func (s *Server) savePrefs(w http.ResponseWriter, r *http.Request) {

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestSessionOwnership(t *testing.T) {
@@ -68,5 +69,47 @@ func TestConcurrentTranscodeLimitAndRemux(t *testing.T) {
 	s, _ := m.Open(&Session{ID: "remux", UserID: 1, ItemID: 99})
 	if _, err := m.AttachJob(s, 1, false, func() (*Job, error) { return &Job{done: make(chan struct{}), Params: Params{VideoCopy: true}}, nil }); err != nil {
 		t.Fatalf("remux blocked by transcode limit: %v", err)
+	}
+}
+
+func TestKilledSessionStaysStopped(t *testing.T) {
+	m := &Manager{m: map[string]*Session{}}
+	if _, err := m.Open(&Session{ID: "s", UserID: 1, ItemID: 10, FileID: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if !m.Kill("s") {
+		t.Fatal("Kill of a live session reported false")
+	}
+	if m.Get("s") != nil {
+		t.Fatal("killed session still listed")
+	}
+	// The player's next media request, heartbeat or replan must not revive it.
+	if _, err := m.Find("s", 1, 100); !errors.Is(err, ErrStopped) {
+		t.Fatalf("Find after Kill: %v, want ErrStopped", err)
+	}
+	if _, err := m.Heartbeat("s", 1, 50, false, ClientStats{}); !errors.Is(err, ErrStopped) {
+		t.Fatalf("Heartbeat after Kill: %v, want ErrStopped", err)
+	}
+	if _, err := m.Open(&Session{ID: "s", UserID: 1, ItemID: 10, FileID: 100}); !errors.Is(err, ErrStopped) {
+		t.Fatalf("Open after Kill: %v, want ErrStopped", err)
+	}
+	if m.Active() != 0 {
+		t.Fatal("killed session re-created")
+	}
+	// A new play gets a new id and is unaffected.
+	if _, err := m.Open(&Session{ID: "fresh", UserID: 1, ItemID: 10, FileID: 100}); err != nil {
+		t.Fatalf("new session after Kill: %v", err)
+	}
+	// Unknown ids are not tombstoned.
+	if m.Kill("nope") {
+		t.Fatal("Kill of an unknown session reported true")
+	}
+	if _, err := m.Open(&Session{ID: "nope", UserID: 1, ItemID: 10, FileID: 100}); err != nil {
+		t.Fatalf("unknown id blocked: %v", err)
+	}
+	// The tombstone expires.
+	m.pruneKilled(time.Now().Add(killedTTL + time.Second))
+	if _, err := m.Find("s", 1, 100); err != nil {
+		t.Fatalf("tombstone not pruned: %v", err)
 	}
 }

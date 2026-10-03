@@ -73,22 +73,44 @@ type Session struct {
 	lastBeat  time.Time
 	active    int         // open HTTP responses
 	jobMu     *sync.Mutex // serialises seeks/replacements for this session
+	ended     chan struct{}
+}
+
+// Ended is closed when the session ends (player closed, expired or stopped
+// by an admin), so open media responses can be cut off.
+func (s *Session) Ended() <-chan struct{} { return s.ended }
+
+func (s *Session) end() {
+	if s.ended != nil {
+		close(s.ended)
+	}
 }
 
 type Manager struct {
 	// OnEnd is called when a session ends (player closed or expired).
 	OnEnd func(id string)
 	// Slots enforces the transcode limit together with HLS jobs.
-	Slots  *Transcodes
-	st     *store.Store
-	log    *logx.Logger
-	mu     sync.Mutex
-	m      map[string]*Session
+	Slots *Transcodes
+	st    *store.Store
+	log   *logx.Logger
+	mu    sync.Mutex
+	m     map[string]*Session
+	// killed remembers sessions an admin stopped, so the player's next media
+	// request or heartbeat can't quietly re-open them.
+	killed map[string]time.Time
 	jobSeq int
 }
 
+// ErrStopped is returned for a session an admin stopped from the dashboard.
+var ErrStopped = errors.New("Playback was stopped by the server admin")
+
+// killedTTL is how long a stopped session id stays blocked. The player gets
+// a fresh id whenever it is opened again, so this only needs to outlast the
+// old player's retries.
+const killedTTL = 10 * time.Minute
+
 func NewManager(st *store.Store, log *logx.Logger) *Manager {
-	mgr := &Manager{st: st, log: log, m: map[string]*Session{}, Slots: &Transcodes{}}
+	mgr := &Manager{st: st, log: log, m: map[string]*Session{}, killed: map[string]time.Time{}, Slots: &Transcodes{}}
 	go mgr.loop()
 	return mgr
 }
@@ -100,6 +122,9 @@ func (m *Manager) Open(s *Session) (*Session, error) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, ok := m.killed[s.ID]; ok {
+		return nil, ErrStopped
+	}
 	now := time.Now()
 	if old, ok := m.m[s.ID]; ok {
 		if old.UserID != s.UserID || old.ItemID != s.ItemID {
@@ -119,6 +144,7 @@ func (m *Manager) Open(s *Session) (*Session, error) {
 	s.streamKey = store.RandomToken(16)
 	s.lastTick, s.lastBeat = now, now
 	s.jobMu = &sync.Mutex{}
+	s.ended = make(chan struct{})
 	m.m[s.ID] = s
 	return s, nil
 }
@@ -137,6 +163,9 @@ func (m *Manager) Get(id string) *Session {
 func (m *Manager) Find(id string, uid, fileID int64) (*Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, ok := m.killed[id]; ok {
+		return nil, ErrStopped
+	}
 	s := m.m[id]
 	if s != nil && (s.UserID != uid || s.FileID != fileID) {
 		return nil, errors.New("session belongs to another user or file")
@@ -226,6 +255,10 @@ func (m *Manager) Touch(s *Session, delta int) {
 // Heartbeat records playback position and client stats.
 func (m *Manager) Heartbeat(id string, uid int64, pos float64, paused bool, cs ClientStats) (*Session, error) {
 	m.mu.Lock()
+	if _, ok := m.killed[id]; ok {
+		m.mu.Unlock()
+		return nil, ErrStopped
+	}
 	s := m.m[id]
 	if s == nil || s.UserID != uid {
 		m.mu.Unlock()
@@ -274,6 +307,7 @@ func (m *Manager) Stop(id string, uid int64) {
 		return
 	}
 	delete(m.m, id)
+	s.end()
 	j := s.job
 	m.mu.Unlock()
 	if j != nil {
@@ -394,10 +428,16 @@ func (m *Manager) TotalRate() float64 {
 	return t
 }
 
-// Kill stops a session from the dashboard.
+// Kill stops a session from the dashboard and blocks its id for killedTTL.
 func (m *Manager) Kill(id string) bool {
 	m.mu.Lock()
 	_, ok := m.m[id]
+	if ok {
+		if m.killed == nil {
+			m.killed = map[string]time.Time{}
+		}
+		m.killed[id] = time.Now()
+	}
 	m.mu.Unlock()
 	if ok {
 		m.Stop(id, 0)
@@ -411,6 +451,7 @@ func (m *Manager) loop() {
 	for now := range t.C {
 		var ended []*Session
 		m.mu.Lock()
+		m.pruneKilled(now)
 		for id, s := range m.m {
 			b := s.bytes
 			if dt := now.Sub(s.lastTick).Seconds(); dt > 0 {
@@ -425,6 +466,7 @@ func (m *Manager) loop() {
 			// players still heartbeat, so they survive.
 			if s.active <= 0 && now.Unix()-s.LastSeen > 45 {
 				delete(m.m, id)
+				s.end()
 				ended = append(ended, s)
 			}
 		}
@@ -434,6 +476,14 @@ func (m *Manager) loop() {
 				s.job.Stop()
 			}
 			m.finish(s)
+		}
+	}
+}
+
+func (m *Manager) pruneKilled(now time.Time) {
+	for id, at := range m.killed {
+		if now.Sub(at) > killedTTL {
+			delete(m.killed, id)
 		}
 	}
 }

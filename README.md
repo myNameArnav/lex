@@ -60,14 +60,14 @@ frames from the films.</sub>
   lazily, cached on disk and resized for the grid. Cast portraits use the same
   server cache, so browsers do not contact image providers directly. Manual "Fix match" and refresh.
 - **Playback**
-  - **Direct play**: the original file with HTTP range requests (zero CPU).
-  - **Direct stream (remux)**: ffmpeg repackages to fragmented MP4 without touching
+  - **Direct Play**: the original file with HTTP range requests (zero CPU).
+  - **Direct Stream (remux)**: ffmpeg repackages to fragmented MP4 without touching
     video; unsupported audio (EAC3, DTS, TrueHD…) becomes AAC. Performance depends on the file and hardware.
   - **Transcode**: H.264 via libx264 (or `h264_v4l2m2m`), bitrate/resolution caps,
     image-subtitle (PGS/VobSub) burn-in, optional HDR→SDR tone mapping.
   - The browser reports its codecs; the server picks the cheapest method and records
     *why* (e.g. "audio codec eac3 not supported"). If the browser fails anyway, the
-    player falls back direct → remux → transcode automatically.
+    player falls back Direct Play → Direct Stream → Transcode automatically.
   - Remux/transcode output keeps the file's own timestamps and is fed to the browser
     via Media Source Extensions: seeking restarts ffmpeg at the target, and once the
     client's forward buffer is full it stops reading, TCP backpressure pauses ffmpeg,
@@ -82,28 +82,40 @@ frames from the films.</sub>
   Large subtitle tracks load progressively while they're extracted.
 - **Seek previews** – thumbnail sprites generated in the background from keyframes
   at the lowest priority, shown while hovering or dragging the seek bar.
-- **Player** – resume, next-episode autoplay with countdown, subtitle/audio switching,
-  quality & method menus, speed, PiP, Media Session keys, keyboard
-  shortcuts (`space/k`, `←/→`, `f`, `m`, `c`, `i`, `n`, `g/h`, `0-9`), touch double-tap seek,
-  and a **stats for nerds** overlay (codecs in/out, reasons, buffer health graph,
-  download speed, dropped frames, stalls, server ffmpeg speed/fps/CPU/throttling).
+- **Player** – resume, an Up next card that plays the next episode after a
+  countdown (Cancel stops it for that episode), an end card for movies (Back to
+  details / Play from start), subtitle/audio switching, quality & method menus,
+  speed (kept until the player closes), PiP, Media Session keys, keyboard
+  shortcuts (`space/k`, `←/→` or `j/l`, `↑/↓`, `f`, `m`, `c`, `i`, `n`, `s`, `g/h`, `0-9`),
+  touch controls (tap to show or hide the controls, double-tap the sides to seek),
+  a reconnecting notice when the server drops out, and a **stats for nerds**
+  overlay (codecs in/out, reasons, buffer health graph, download speed, dropped
+  frames, stalls, server ffmpeg speed/fps/CPU/throttling).
 - **Interface** – a two-row player toolbar on narrow screens, keyboard-accessible
   episode playback and seek controls, labeled settings, and dialogs that contain
   focus and return it when closed. Playback actions appear before long synopses;
-  empty filtered libraries offer a clear-filters action.
+  empty filtered libraries offer a clear-filters action. Continue Watching cards
+  have a ⋯ menu (Mark watched, Remove from Continue Watching), library grids show
+  three posters a row on phones, and Random opens a random title's page. Safe-area
+  insets keep controls clear of notches and home bars.
 - **Dashboard** – live CPU (per core), RAM/swap, SoC temperature, clock, Pi
   under-voltage/throttle flags, network & disk I/O, storage, process memory, and every
-  active stream with client buffer, bandwidth, stalls and ffmpeg state (kill button).
-  Playback analytics (watch time per day, methods, stall rate by method, top titles,
-  users, clients, conversion reasons, time of day), library breakdowns (codecs,
-  resolutions, HDR, containers, sizes) and full play history.
-- **Users** – multiple accounts, per-user watch state, admin roles, device sign-out,
-  login rate limiting, bcrypt passwords, HttpOnly cookies, and cross-origin
+  active stream with client buffer, bandwidth, stalls and ffmpeg state, on the Live
+  tab. **Stop** ends a stream and tells the viewer it was stopped by the admin.
+  The Playback tab has analytics for 7 to 365 days (watch time per day, or per week
+  for long ranges; methods, stall rate by method, top titles, users, clients,
+  conversion reasons, time of day; each chart's values can be shown as a table)
+  and the paged play history over all time. The Library tab breaks the library down by codec,
+  resolution, HDR, container and size.
+- **Users** – multiple accounts, per-user watch state, admin roles (an admin can't
+  change their own role), device sign-out, login rate limiting, bcrypt passwords, HttpOnly cookies, and cross-origin
   protection for browser mutations.
 - **Settings** – everything above is toggleable: methods, transcode limits, encoder,
   preset/CRF/threads/nice, audio channels/bitrate, tone mapping, fragment & keyframe
-  sizes, remote bitrate cap, local networks, scanning, metadata providers. Per-device
-  playback prefs (quality, method, buffer ahead/behind, languages, subtitle style).
+  sizes, remote bitrate cap, local networks, scanning, metadata providers. Forms
+  show unsaved changes and ask before you leave them. Per-device playback prefs
+  (quality, method, buffer ahead/behind, languages, subtitle style, single-key
+  shortcuts).
 
 - **Media cache & intros** – optional disk cache with size/free-space limits,
   next-episode prefetch, and intro detection when FFmpeg supports Chromaprint.
@@ -257,7 +269,12 @@ unsupported.
 Press `?` (or `Ctrl`/`⌘` + `/`) anywhere for the full list. The main ones:
 `Ctrl`/`⌘` + `K` or `/` to search, `g` then `h` / `1`–`9` / `s` / `d` to go to
 home, a library, settings or the dashboard, `p` to play the title you're
-viewing, and in the player `space`, `←`/`→`, `f`, `m`, `c` and `i`.
+viewing, and in the player `space`, `←`/`→`, `f`, `m`, `c` and `i`. The list is
+also in the account menu on devices with a mouse.
+
+Single-key shortcuts can be turned off per device in Settings → Playback
+(useful with speech input). `Ctrl`/`⌘` shortcuts and the player's keys keep
+working; the list then opens with `Ctrl`/`⌘` + `/`.
 
 ## Versions and releases
 

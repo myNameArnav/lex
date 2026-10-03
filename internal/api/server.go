@@ -130,7 +130,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("GET /api/admin/config", a(s.getConfig))
 	mux.Handle("PUT /api/admin/config", a(s.putConfig))
 	mux.Handle("GET /api/admin/info", a(s.adminInfo))
-	mux.Handle("GET /api/admin/libraries", a(s.libraries))
+	mux.Handle("GET /api/admin/libraries", a(s.adminLibraries))
 	mux.Handle("POST /api/admin/libraries", a(s.createLibrary))
 	mux.Handle("PUT /api/admin/libraries/{id}", a(s.updateLibrary))
 	mux.Handle("DELETE /api/admin/libraries/{id}", a(s.deleteLibrary))
@@ -138,6 +138,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("GET /api/admin/tasks", a(s.tasks))
 	mux.Handle("POST /api/admin/metadata/refresh", a(s.refreshAllMetadata))
 	mux.Handle("GET /api/admin/metadata/search", a(s.metaSearch))
+	mux.Handle("GET /api/admin/metadata/poster", a(s.metadataPoster))
 	mux.Handle("POST /api/items/{id}/refresh", a(s.refreshItem))
 	mux.Handle("POST /api/items/{id}/match", a(s.matchItem))
 	mux.Handle("POST /api/items/{id}/unmatch", a(s.unmatchItem))
@@ -456,6 +457,12 @@ func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
 	}
 	p := r.URL.Path
 	a, ok := s.static[p]
+	if !ok && path.Ext(p) != "" {
+		// A missing file (e.g. iOS probing /apple-touch-icon.png) is a 404,
+		// not the app shell: the UI routes with the hash, never the path.
+		http.NotFound(w, r)
+		return
+	}
 	if !ok || p == "/" {
 		// SPA: unknown paths get the app shell.
 		a = s.static["/index.html"]

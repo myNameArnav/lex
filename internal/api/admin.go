@@ -2,10 +2,13 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -99,6 +102,64 @@ func cleanPaths(in []string) ([]string, error) {
 	return out, nil
 }
 
+// pathWithin reports whether p is base or a folder inside it.
+func pathWithin(p, base string) bool {
+	return p == base || base == "/" || strings.HasPrefix(p, base+"/")
+}
+
+// checkLibraryPaths rejects a folder listed twice, a folder and one of its
+// sub-folders in the same library, and a folder already used by another
+// library (nesting across libraries is allowed). self is the library being
+// edited (0 when creating). Paths must already be cleaned.
+func checkLibraryPaths(paths []string, libs []store.Library, self int64) error {
+	if len(paths) == 0 {
+		return errBad("add at least one folder")
+	}
+	for i, p := range paths {
+		for _, q := range paths[i+1:] {
+			switch {
+			case p == q:
+				return errBad(fmt.Sprintf("%q is listed twice", p))
+			case pathWithin(q, p):
+				return errBad(fmt.Sprintf("%q is inside %q; add only one of them", q, p))
+			case pathWithin(p, q):
+				return errBad(fmt.Sprintf("%q is inside %q; add only one of them", p, q))
+			}
+		}
+	}
+	for _, l := range libs {
+		if l.ID == self {
+			continue
+		}
+		for _, q := range l.Paths {
+			if slices.Contains(paths, filepath.Clean(q)) {
+				return errBad(fmt.Sprintf("%q is already in library %q", filepath.Clean(q), l.Name))
+			}
+		}
+	}
+	return nil
+}
+
+// validLibrary checks a create or update request, naming the field at fault.
+func (s *Server) validLibrary(req *libReq, self int64) ([]string, error) {
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		return nil, errBad("enter a name")
+	}
+	if req.Kind != "movies" && req.Kind != "shows" && req.Kind != "mixed" {
+		return nil, errBad("type must be movies, shows or mixed")
+	}
+	paths, err := cleanPaths(req.Paths)
+	if err != nil {
+		return nil, err
+	}
+	libs, err := s.St.Libraries()
+	if err != nil {
+		return nil, err
+	}
+	return paths, checkLibraryPaths(paths, libs, self)
+}
+
 type errBad string
 
 func (e errBad) Error() string { return string(e) }
@@ -109,7 +170,7 @@ func (s *Server) createLibrary(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad request")
 		return
 	}
-	paths, err := cleanPaths(req.Paths)
+	paths, err := s.validLibrary(&req, 0)
 	if err != nil {
 		writeErr(w, 400, err.Error())
 		return
@@ -135,14 +196,14 @@ func (s *Server) updateLibrary(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad request")
 		return
 	}
-	paths, err := cleanPaths(req.Paths)
-	if err != nil {
-		writeErr(w, 400, err.Error())
-		return
-	}
 	old, err := s.St.Library(id)
 	if err != nil {
 		notFoundOr500(w, err)
+		return
+	}
+	paths, err := s.validLibrary(&req, id)
+	if err != nil {
+		writeErr(w, 400, err.Error())
 		return
 	}
 	if err := s.St.UpdateLibrary(id, req.Name, req.Kind, paths); err != nil {
@@ -216,6 +277,9 @@ func (s *Server) metaSearch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, []any{})
 		return
 	}
+	for i := range c {
+		c[i].Poster = metaPosterURL(c[i].Poster)
+	}
 	writeJSON(w, c)
 }
 
@@ -275,7 +339,7 @@ func (s *Server) browseFS(w http.ResponseWriter, r *http.Request) {
 	p = filepath.Clean(p)
 	ents, err := os.ReadDir(p)
 	if err != nil {
-		writeErr(w, 400, err.Error())
+		writeErr(w, 400, fsErr(p, err))
 		return
 	}
 	dirs := []string{}
@@ -296,6 +360,20 @@ func (s *Server) browseFS(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(dirs)
 	parent := filepath.Dir(p)
 	writeJSON(w, map[string]any{"path": p, "parent": parent, "dirs": dirs})
+}
+
+// fsErr words a folder-browser failure for people rather than as a Go error.
+func fsErr(p string, err error) string {
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return "There's no folder at " + p
+	case errors.Is(err, os.ErrPermission):
+		return "Lex isn't allowed to read " + p
+	}
+	if st, serr := os.Stat(p); serr == nil && !st.IsDir() {
+		return p + " is a file, not a folder"
+	}
+	return "Can't open " + p + ": " + err.Error()
 }
 
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
@@ -341,6 +419,11 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad request")
 		return
 	}
+	// Another admin has to do it, so an admin can't lock themselves out.
+	if req.IsAdmin != nil && !*req.IsAdmin && id == userOf(r).ID {
+		writeErr(w, 400, "you can't change your own role")
+		return
+	}
 	if req.Password != "" {
 		if err := s.St.SetPassword(id, req.Password); err != nil {
 			writeErr(w, 400, err.Error())
@@ -381,6 +464,12 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	}
 	if t == nil {
 		t = []store.TokenInfo{}
+	}
+	// Mark the caller's own session so the UI can say "This device".
+	if tok := s.token(r); len(tok) >= 8 {
+		for i := range t {
+			t[i].Current = t[i].Prefix == tok[:8]
+		}
 	}
 	writeJSON(w, t)
 }

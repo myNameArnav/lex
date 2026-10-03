@@ -16,14 +16,58 @@ func (s *Server) libraries(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	if libs == nil {
-		libs = []store.Library{}
-	}
-	libs = libraryViews(libs, userOf(r).IsAdmin)
-	writeJSON(w, libs)
+	writeJSON(w, libraryViews(libs, userOf(r).IsAdmin))
 }
 
+// adminLibrary adds what the settings page shows about a library's folders.
+type adminLibrary struct {
+	store.Library
+	// Elsewhere counts the files in this library's folders that another
+	// library has (a file can only be in one): a library nested in another's
+	// folder stays empty.
+	Elsewhere []libraryShare `json:"elsewhere,omitempty"`
+}
+
+type libraryShare struct {
+	Library string `json:"library"`
+	Files   int    `json:"files"`
+}
+
+func (s *Server) adminLibraries(w http.ResponseWriter, r *http.Request) {
+	libs, err := s.St.Libraries()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	out := make([]adminLibrary, 0, len(libs))
+	for _, l := range libs {
+		al := adminLibrary{Library: l}
+		others, err := s.St.OtherLibraryFiles(l.ID, l.Paths)
+		if err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		counts := map[string]int{}
+		for _, name := range others {
+			counts[name]++
+		}
+		for _, o := range libs {
+			if n := counts[o.Name]; n > 0 {
+				al.Elsewhere = append(al.Elsewhere, libraryShare{Library: o.Name, Files: n})
+				delete(counts, o.Name)
+			}
+		}
+		out = append(out, al)
+	}
+	writeJSON(w, out)
+}
+
+// libraryViews hides folder paths from non-admins and never returns nil, so
+// clients always get a JSON array.
 func libraryViews(libs []store.Library, admin bool) []store.Library {
+	if libs == nil {
+		return []store.Library{}
+	}
 	if !admin {
 		libs = append([]store.Library{}, libs...)
 		for i := range libs {
@@ -87,6 +131,7 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 		Limit: qInt(r, "limit", 100), Offset: qInt(r, "offset", 0),
 	}
 	lq.LibraryID, _ = strconv.ParseInt(q.Get("library"), 10, 64)
+	lq.Seed, _ = strconv.ParseInt(q.Get("seed"), 10, 64)
 	items, total, err := s.St.ListItems(userOf(r).ID, lq)
 	if err != nil {
 		writeErr(w, 500, err.Error())
