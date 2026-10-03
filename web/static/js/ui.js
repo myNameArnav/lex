@@ -380,11 +380,16 @@ export function popupMenu(anchor, items) {
   // covered.
   (anchor.closest('dialog, .player') || document.body).appendChild(menu);
   const r = anchor.getBoundingClientRect();
-  const mh = menu.offsetHeight, vh = innerHeight;
+  const vw = document.documentElement.clientWidth;
+  menu.style.maxWidth = `${vw - 16}px`;
+  // Measured before placing, so its width isn't squeezed by the space left
+  // of the anchor (a long item would wrap, or the menu would run off-screen).
+  const mh = menu.offsetHeight, mw = menu.offsetWidth, vh = innerHeight;
   if (r.bottom + 6 + mh <= vh - 8) menu.style.top = `${r.bottom + 6}px`;
   else if (r.top - 6 - mh >= 8) menu.style.bottom = `${vh - r.top + 6}px`;
   else menu.style.top = `${Math.max(8, Math.min(r.bottom + 6, vh - mh - 8))}px`;
-  menu.style.right = `${Math.max(8, document.documentElement.clientWidth - r.right)}px`;
+  // Right edge on the anchor's, both edges kept 8px inside the screen.
+  menu.style.left = `${Math.max(8, Math.min(r.right - mw, vw - 8 - mw))}px`;
 
   const onDown = (e) => { if (!menu.contains(e.target) && !anchor.contains(e.target)) close(false); };
   const onScroll = (e) => {

@@ -65,7 +65,12 @@ function renderAuth(setup, notice = '') {
   const pass = h('input', { id: 'auth-password', name: 'password', type: 'password', autocomplete: setup ? 'new-password' : 'current-password', required: true, minlength: setup ? 12 : null, maxlength: setup ? 72 : null, 'aria-describedby': setup ? 'auth-password-help auth-error' : 'auth-error' });
   const pass2 = setup ? h('input', { id: 'auth-confirm', name: 'confirm-password', type: 'password', autocomplete: 'new-password', required: true, maxlength: 72, 'aria-describedby': 'auth-error' }) : null;
   const err = h('div', { class: 'err', id: 'auth-error', role: 'alert', 'aria-atomic': 'true' });
-  const field = (label, input, help) => h('label', { class: 'field', for: input.id }, h('span', null, label), input, help ? h('div', { class: 'help', id: 'auth-password-help' }, help) : null);
+  // aria-label: the plain label is the name. Chrome would read the label's
+  // CSS uppercase and the help (already the description) into it.
+  const field = (label, input, help) => {
+    input.setAttribute('aria-label', label);
+    return h('label', { class: 'field', for: input.id }, h('span', null, label), input, help ? h('div', { class: 'help', id: 'auth-password-help' }, help) : null);
+  };
   const invalid = (inputs) => inputs.forEach((input) => input.setAttribute('aria-invalid', 'true'));
   for (const input of [name, pass, pass2].filter(Boolean)) input.addEventListener('input', () => input.removeAttribute('aria-invalid'));
   const btn = h('button', { class: 'btn primary lg', type: 'submit' }, setup ? 'Create admin account' : 'Sign in');
@@ -102,11 +107,22 @@ function renderAuth(setup, notice = '') {
 
 async function startApp() {
   history.scrollRestoration = 'manual';
+  // Reloaded with the player open: its entry is now a plain page entry.
+  if (history.state?.lexPlayer) try { history.replaceState({ ...history.state, lexPlayer: false }, ''); } catch {}
   await loadLibraries();
   renderShell();
   // The URL being left, for the leave guard to put back (it may differ from
   // the routed hash after in-page replaceState, e.g. the season tabs).
-  window.onhashchange = (e) => { if (!guarding) lastHash = new URL(e.oldURL).hash; route(); };
+  window.onhashchange = (e) => {
+    // The leave guard stepping back to the page it kept: that view is still shown.
+    if (reverting != null) {
+      const done = location.hash === reverting;
+      reverting = null;
+      if (done) { lastHash = location.hash; renderNav(); return; }
+    }
+    if (!guarding) lastHash = new URL(e.oldURL).hash;
+    route();
+  };
   settled = false;
   route();
 }
@@ -124,7 +140,9 @@ narrow.addEventListener('change', searchPlaceholder);
 function renderShell() {
   clear(app);
   navLinks = new Map();
-  navEl = h('nav', { class: 'nav', 'aria-label': 'Libraries', onscroll: navFade });
+  // tabindex -1: Firefox makes an overflowing scroller a Tab stop of its
+  // own, hidden under the fade; its links already are.
+  navEl = h('nav', { class: 'nav', 'aria-label': 'Libraries', tabindex: '-1', onscroll: navFade, onfocusin: navReveal });
   const typed = debounce((e) => {
     const q = e.target.value.trim();
     if (q) goSearch(q);
@@ -178,12 +196,22 @@ function renderNav() {
     a.classList.toggle('active', on);
     if (on) { a.setAttribute('aria-current', 'page'); active = a; } else a.removeAttribute('aria-current');
   }
-  // Centre the active link if the row overflows and hides it (scrollIntoView could also scroll the page).
-  if (active) {
-    const x = active.offsetLeft - navEl.offsetLeft;
-    if (x < navEl.scrollLeft || x + active.offsetWidth > navEl.scrollLeft + navEl.clientWidth) navEl.scrollLeft = x - (navEl.clientWidth - active.offsetWidth) / 2;
-  }
+  if (active) centreNavLink(active, 0);
   navFade();
+}
+
+// Centre a link the overflowing row hides, or (margin) leaves under a fade
+// edge. scrollIntoView could also scroll the page.
+function centreNavLink(a, margin) {
+  const x = a.offsetLeft - navEl.offsetLeft;
+  if (x < navEl.scrollLeft + margin || x + a.offsetWidth > navEl.scrollLeft + navEl.clientWidth - margin) navEl.scrollLeft = x - (navEl.clientWidth - a.offsetWidth) / 2;
+}
+
+// A link tabbed to partly in view still counts as visible to the browser,
+// so it doesn't scroll: bring it clear of the 32px fades.
+function navReveal(e) {
+  const a = e.target.closest('a');
+  if (a && navEl.scrollWidth > navEl.clientWidth + 1) centreNavLink(a, 32);
 }
 
 // Fade whichever edge of the nav row hides more links.
@@ -266,6 +294,10 @@ function parseHash() {
 let leaveGuard = null;
 export function setLeaveGuard(fn) { leaveGuard = fn; }
 window.addEventListener('beforeunload', (e) => { if (leaveGuard?.()) { e.preventDefault(); e.returnValue = true; } });
+// Forward onto the entry of a player that has since closed (Escape pops it,
+// leaving it ahead): step back over it, so the next Play replaces it and a
+// later Back can't land on it.
+window.addEventListener('popstate', () => { if (history.state?.lexPlayer && !isPlayerOpen()) history.back(); });
 const confirmDiscard = () => confirmDialog({ title: 'Discard changes?', message: 'You have unsaved changes. Leave this page and discard them?', okLabel: 'Discard changes', danger: true });
 
 // focusAfterRoute(key): after the next route, focus the element with
@@ -274,7 +306,11 @@ const confirmDiscard = () => confirmDialog({ title: 'Discard changes?', message:
 let pendingFocusKey = null;
 export function focusAfterRoute(key) { pendingFocusKey = key; }
 
-let lastHash = '', shownHash = null, lastSection, settled = false, guarding = false;
+let lastHash = '', shownHash = null, lastSection, settled = false, guarding = false, reverting = null;
+// Every routed history entry carries its position (state.idx), so a
+// cancelled leave guard can return to the entry it left instead of
+// rewriting the one it moved to.
+let histIdx = -1;
 
 // replaceHash records in-page state in the address (e.g. the season tabs)
 // without routing. Use it instead of history.replaceState, so the entry
@@ -302,12 +338,25 @@ export async function route({ soft = false } = {}) {
     const ok = await confirmDiscard();
     guarding = false;
     if (!ok) {
-      if (location.hash !== back) history.replaceState(history.state, '', back || location.pathname);
+      const idx = history.state?.idx;
+      if (location.hash !== back) {
+        reverting = back;
+        // Back/Forward: return to the entry that was left. A link or a typed
+        // URL pushed a new entry (no idx yet): drop it.
+        if (typeof idx !== 'number') history.back();
+        else if (idx !== histIdx) history.go(histIdx - idx);
+        else { reverting = null; history.replaceState(history.state, '', back || location.pathname); }
+      }
       renderNav();
       return;
     }
   }
   leaveGuard = null;
+  if (!soft) {
+    const st = history.state;
+    if (typeof st?.idx === 'number') histIdx = st.idx;
+    else try { history.replaceState({ ...st, idx: ++histIdx }, ''); } catch {}
+  }
   const token = ++routeToken;
   leavingSearch = false;
   const { parts, query } = parseHash();
@@ -523,7 +572,7 @@ function scroller(track) {
 }
 
 function shelf(title, items, kind, moreHref) {
-  const track = h('div', { class: 'shelf-track' }, items.map((it) => kind === 'landscape' ? landCard(it) : posterCard(it)));
+  const track = h('div', { class: 'shelf-track', tabindex: '-1' }, items.map((it) => kind === 'landscape' ? landCard(it) : posterCard(it)));
   return h('section', { class: 'shelf' },
     h('div', { class: 'shelf-head' }, h('h2', { class: 'section-title' }, title), moreHref ? h('a', { class: 'more', href: moreHref, 'aria-label': `See all: ${title}` }, 'See all') : null),
     scroller(track));

@@ -34,8 +34,14 @@ export function niceStep(max, ticks = 3, integer = false) {
   return integer ? Math.max(1, Math.ceil(step)) : step;
 }
 
-// Axis labels drop a trailing ".0" ("1.0 Mbps" reads as "1 Mbps").
+// Axis labels drop a trailing ".0" ("1.0 Mbps" reads as "1 Mbps"). A chart's
+// axisFmt(max) gives the formatter for its whole axis, so every tick (0
+// too) uses the unit of the top one; fmt alone formats each value on its own.
 const axisLabel = (fmt, v) => fmt(v).replace(/(\d)\.0(?!\d)/g, '$1');
+
+// Single-unit axes: minutes up to an hour, else hours; kbps below 1 Mbps.
+export const axisHours = (max) => (max < 1 ? (v) => `${Math.round(v * 60)}m` : (v) => `${+v.toFixed(2)}h`);
+export const axisBitrate = (max) => (max < 1e6 ? (v) => `${Math.round(v / 1e3)} kbps` : (v) => `${+(v / 1e6).toFixed(2)} Mbps`);
 
 function yAxis(ctx, t, fmt, max, ticks, padL, padR, w, y) {
   ctx.font = '11px system-ui, sans-serif';
@@ -120,7 +126,7 @@ function setup(box, cls) {
 
 // lineChart draws one or more series over shared x values (unix seconds).
 // opts: { title, series: [{name, values, color?}], times, height, fmt,
-// max?, floor? (smallest axis top), ticks?, area? }
+// max?, floor? (smallest axis top), ticks?, area?, axisFmt? }
 export function lineChart(box, opts) {
   const n = opts.times.length;
   const ticks = opts.ticks || 3;
@@ -142,7 +148,8 @@ export function lineChart(box, opts) {
     const t = theme();
     const { ctx, w, h: H } = setupCanvas(canvas, height);
     const padR = 8, padT = 8, padB = 20;
-    const padL = labelWidth(ctx, opts.fmt, max, ticks);
+    const yFmt = opts.axisFmt ? opts.axisFmt(max) : opts.fmt;
+    const padL = labelWidth(ctx, yFmt, max, ticks);
     const x = (i) => padL + (n <= 1 ? 0 : (i / (n - 1)) * (w - padL - padR));
     const y = (v) => padT + (1 - Math.min(v, max) / max) * (H - padT - padB);
     const g = {
@@ -154,7 +161,7 @@ export function lineChart(box, opts) {
           h('b', null, opts.fmt(s.values[i] || 0)), h('span', { class: 'muted' }, s.name)))],
     };
     const hover = pick(g);
-    yAxis(ctx, t, opts.fmt, max, ticks, padL, padR, w, y);
+    yAxis(ctx, t, yFmt, max, ticks, padL, padR, w, y);
     // x labels: start / middle / end, with seconds while the history is short.
     if (n > 1) {
       const secs = span < 180;
@@ -193,8 +200,8 @@ export function lineChart(box, opts) {
 }
 
 // columnChart: labels + values, one series. opts: { title, labels, values,
-// fmt, height, tipLabel, fullLabels?, floor? (smallest axis top) }. Its
-// accessible name sums it up.
+// fmt, height, tipLabel, fullLabels?, floor? (smallest axis top), axisFmt? }.
+// Its accessible name sums it up.
 export function columnChart(box, opts) {
   const n = opts.values.length;
   const full = opts.fullLabels || opts.labels;
@@ -210,7 +217,8 @@ export function columnChart(box, opts) {
     const t = theme();
     const { ctx, w, h: H } = setupCanvas(canvas, height);
     const padR = 6, padT = 10, padB = 22;
-    const padL = labelWidth(ctx, opts.fmt, max, ticks);
+    const yFmt = opts.axisFmt ? opts.axisFmt(max) : opts.fmt;
+    const padL = labelWidth(ctx, yFmt, max, ticks);
     const band = (w - padL - padR) / Math.max(1, n);
     const bw = Math.max(2, Math.min(24, band - 2));
     const y = (v) => padT + (1 - v / max) * (H - padT - padB);
@@ -221,7 +229,7 @@ export function columnChart(box, opts) {
       tip: (i) => [h('b', null, opts.fmt(opts.values[i])), h('span', { class: 'muted' }, ` ${opts.tipLabel || ''} · ${full[i]}`)],
     };
     const hover = pick(g);
-    yAxis(ctx, t, opts.fmt, max, ticks, padL, padR, w, y);
+    yAxis(ctx, t, yFmt, max, ticks, padL, padR, w, y);
     opts.values.forEach((v, i) => {
       const cx = g.cx(i), top = y(v), base = y(0);
       const hgt = base - top;

@@ -384,6 +384,9 @@ main { padding: var(--top) var(--sar) 0 var(--sal); min-height: 100vh; }
 /* Wide screens: a dimmer backdrop keeps title art in it from echoing the h1. */
 @media (min-width: 901px) {
   .hero-bg img.loaded { opacity: .45; }
+  /* Dimming leaves dark title art on a light backdrop readable behind the
+     h1: fade the image out under the text column instead. */
+  .hero-bg img { -webkit-mask-image: linear-gradient(to right, transparent 30%, rgba(0,0,0,.12) 55%, #000 85%); mask-image: linear-gradient(to right, transparent 30%, rgba(0,0,0,.12) 55%, #000 85%); }
 }
 @media (max-width: 900px) {
   .hero { min-height: 0; }

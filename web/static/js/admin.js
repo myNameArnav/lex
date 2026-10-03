@@ -3,7 +3,7 @@ import { api, img } from './api.js';
 import { state, loadLibraries, refreshSoft, setLeaveGuard, focusAfterRoute } from './app.js';
 import { prefs, DEFAULTS, QUALITIES } from './prefs.js';
 import { capsSummary } from './caps.js';
-import { lineChart, columnChart, barList } from './charts.js';
+import { lineChart, columnChart, barList, axisHours, axisBitrate } from './charts.js';
 
 // Pollers owned by the current admin view. Each stops at its next tick once
 // its view is no longer current (navigated away or re-rendered; a navigation
@@ -443,6 +443,19 @@ async function metadataSection() {
 }
 
 // ---------- libraries ----------
+// Why a library shows less than its folders hold: files another library
+// already has (nested folders), or nothing found at all.
+function libraryNote(l) {
+  const els = l.elsewhere || [];
+  if (els.length) {
+    const n = els.reduce((a, e) => a + e.files, 0);
+    const where = els.map((e) => `“${e.library}”`).join(', ');
+    return h('div', { class: `help${l.itemCount ? '' : ' warn'}` },
+      `${n} file${n === 1 ? ' in these folders is' : 's in these folders are'} already in librar${els.length === 1 ? 'y' : 'ies'} ${where} and ${n === 1 ? 'isn’t' : 'aren’t'} shown here: a file can only be in one library.`);
+  }
+  return l.lastScan && !l.itemCount ? h('div', { class: 'help warn' }, 'No media found — check the folder and the type.') : null;
+}
+
 // The list shows each library's scan progress while the scanner works on it
 // (from /api/admin/tasks) and reloads when a scan finishes.
 async function librariesSection(ctx) {
@@ -464,7 +477,7 @@ async function librariesSection(ctx) {
     box.appendChild(h('div', { class: 'form-section' },
       // The name keeps its line; the meta wraps below it on phones.
       h('div', { class: 'row wrap' }, h('h2', { style: { flex: '1 1 auto' } }, l.name), meta, live),
-      l.lastScan && !l.itemCount ? h('div', { class: 'help warn' }, 'No media found — check the folder and the type.') : null,
+      libraryNote(l),
       h('div', { class: 'chips' }, l.paths.map((p) => h('span', { class: 'chip mono', style: { paddingRight: '12px' } }, p))),
       h('div', { class: 'row' },
         h('button', { class: 'btn sm', 'aria-label': `Scan ${l.name}`, dataset: { focusKey: `lib-scan-${l.id}` }, onclick: (e) => run(e.currentTarget, () => api('/api/admin/scan', { method: 'POST', body: { libraryId: l.id } }), `Scanning ${l.name}`) }, 'Scan'),
@@ -550,10 +563,9 @@ function libraryModal(lib) {
   renderChips();
   const parent = (p) => p?.replace(/\/[^/]+$/, '');
   const browser = folderBrowser(onPick, [parent(lib?.paths?.[0]), parent(state.libraries[0]?.paths?.[0]), '/media', '/mnt']);
-  const retypeNote = lib ? h('span', null, ` Changing the type rebuilds the library: watch progress, watched status and favourites for its ${lib.itemCount} items are reset for everyone.`) : null;
+  const retypeNote = lib ? h('span', null, ` Changing the type rebuilds the library: watch progress, watched status and favorites for its ${lib.itemCount} items are reset for everyone.`) : null;
   const typeHelp = h('div', { class: 'help' }, 'Movies: one film per folder or file. TV Shows: Show/Season/episodes. Mixed: both, detected per folder.', retypeNote);
   const typeSel = select(kind, Object.entries(KIND_LABELS), (v) => { kind = v; retypeNote?.classList.toggle('warn', v !== lib.kind); });
-  const foldersId = `lib-folders-${uid}`;
   const submit = async (e) => {
     const btn = e.currentTarget;
     if (btn.disabled) return;
@@ -569,7 +581,7 @@ function libraryModal(lib) {
     if (lib && (kind !== lib.kind || lib.paths.some((p) => !paths.includes(p)))) {
       const retype = kind !== lib.kind;
       const msg = retype
-        ? `Changing “${lib.name}” to ${KIND_LABELS[kind]} rebuilds it. Watch progress, watched status and favourites for its ${lib.itemCount} items are reset for everyone.`
+        ? `Changing “${lib.name}” to ${KIND_LABELS[kind]} rebuilds it. Watch progress, watched status and favorites for its ${lib.itemCount} items are reset for everyone.`
         : 'Titles in the removed folders, and everyone’s watch history for them, are removed from the library.';
       if (!(await confirmDialog(msg, 'Save changes', true, retype ? 'Change library type?' : 'Remove folders?'))) return;
     }
@@ -593,7 +605,7 @@ function libraryModal(lib) {
   const m = modal({ title: lib ? `Edit ${lib.name}` : 'Add library', wide: true, dismissible: false, body: [
     field('Name', name),
     field('Type', typeSel, typeHelp),
-    h('div', { class: 'field', role: 'group', 'aria-labelledby': foldersId }, h('span', { id: foldersId }, 'Folders'), chips, folderNote),
+    h('div', { class: 'field', role: 'group', 'aria-label': 'Folders' }, h('span', null, 'Folders'), chips, folderNote),
     browser.el,
     live,
     err,
@@ -681,7 +693,7 @@ async function usersSection() {
         } }, u.isAdmin ? 'Make user' : 'Make admin') : null,
         u.id !== state.me.id ? h('button', { class: 'btn sm danger', 'aria-label': `Delete ${u.name}`, dataset: { focusKey: `user-del-${u.id}` }, onclick: async (e) => {
           const btn = e.currentTarget;
-          if (!(await confirmDialog(`Delete ${u.name}? Their watch history, favourites and signed-in devices are removed. This can’t be undone.`, 'Delete user', true, 'Delete user?'))) return;
+          if (!(await confirmDialog(`Delete ${u.name}? Their watch history, favorites and signed-in devices are removed. This can’t be undone.`, 'Delete user', true, 'Delete user?'))) return;
           if (!(await run(btn, () => api(`/api/admin/users/${u.id}`, { method: 'DELETE' }), `Deleted ${u.name}`))) return;
           // The row goes away: focus the next row's Delete (or the Add user form).
           const others = users.filter((x) => x.id !== state.me.id), i = others.indexOf(u), next = others[i + 1] || others[i - 1];
@@ -1016,7 +1028,7 @@ async function liveTab(ctx) {
       if (hasTemp) lineChart(cards.temp.chart, { title: 'Temperature over the last hour', times, height: 96, max: 90, fmt: (v) => `${v.toFixed(0)}°`, series: [{ name: 'SoC', values: hist.map((p) => p.temp) }] });
       // In bits per second so the gridlines land on round rates; an idle
       // server still gets a 0–1.5 Mbps scale.
-      lineChart(cards.net.chart, { title: 'Network out over the last hour', times, height: 96, floor: 1.5e6, fmt: fmtBitrate, series: [{ name: 'Out', values: hist.map((p) => p.tx * 8) }, { name: 'Streaming', values: hist.map((p) => p.stream * 8) }] });
+      lineChart(cards.net.chart, { title: 'Network out over the last hour', times, height: 96, floor: 1.5e6, fmt: fmtBitrate, axisFmt: axisBitrate, series: [{ name: 'Out', values: hist.map((p) => p.tx * 8) }, { name: 'Streaming', values: hist.map((p) => p.stream * 8) }] });
     }
     // Storage: disks, SSD cache and current disk activity in one place. A
     // long path wraps its note underneath instead of widening the page.
@@ -1251,7 +1263,7 @@ async function playbackTab(ctx) {
     history);
   requestAnimationFrame(() => {
     const day = (i) => new Date(Date.now() - i * 86400000).toLocaleDateString(undefined, { dateStyle: 'medium' });
-    columnChart(hoursBox, { title: `${hoursTitle}, ${day(days - 1)} to ${day(0)}`, labels, fullLabels: full, values: hours, fmt: fmtH, tipLabel: 'watched', floor: 0.25 });
+    columnChart(hoursBox, { title: `${hoursTitle}, ${day(days - 1)} to ${day(0)}`, labels, fullLabels: full, values: hours, fmt: fmtH, axisFmt: axisHours, tipLabel: 'watched', floor: 0.25 });
     columnChart(hourBox, { title: 'Plays by hour of day', labels: hod.map((_, i) => `${i}h`), fullLabels: hod.map((_, i) => hourName(i)), values: hod, fmt: (v) => `${Math.round(v)}`, tipLabel: 'plays' });
   });
   return page;

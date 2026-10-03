@@ -32,3 +32,16 @@ test('chart gridlines land on round steps', async () => {
   assert.equal(niceStep(14, 3, true), 5);
   for (const max of [0.3, 3, 7.7, 42, 999, 12345]) assert.ok(3 * niceStep(max) >= max, `covers ${max}`);
 });
+
+test('a chart axis uses one unit, the one its top tick needs', async () => {
+  const { axisHours, axisBitrate, niceStep } = await loadCharts();
+  const ticks = (fmt, max) => [0, 1, 2, 3].map((i) => fmt((max * i) / 3));
+  // The hours chart's floor: minutes all the way down, not "0h".
+  assert.deepEqual(ticks(axisHours(0.3), 0.3), ['0m', '6m', '12m', '18m']);
+  assert.deepEqual(ticks(axisHours(1.5), 1.5), ['0h', '0.5h', '1h', '1.5h']);
+  // Network out: "0 Mbps" and "0.5 Mbps" under "1 Mbps", not "0 kbps" / "500 kbps".
+  const net = 3 * niceStep(1.5e6);
+  assert.deepEqual(ticks(axisBitrate(net), net), ['0 Mbps', '0.5 Mbps', '1 Mbps', '1.5 Mbps']);
+  assert.deepEqual(ticks(axisBitrate(150e6), 150e6), ['0 Mbps', '50 Mbps', '100 Mbps', '150 Mbps']);
+  assert.deepEqual(ticks(axisBitrate(600e3), 600e3), ['0 kbps', '200 kbps', '400 kbps', '600 kbps']);
+});
