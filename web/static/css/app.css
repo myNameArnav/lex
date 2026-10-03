@@ -403,7 +403,7 @@ body:has(.save-bar) > .toasts { bottom: calc(80px + var(--sab)); }
 .toggle-row { display: flex; align-items: center; gap: 14px; justify-content: space-between; }
 .toggle-row .lbl { display: grid; gap: 2px; }
 .toggle-row .lbl b { font-weight: 600; }
-.save-bar { position: sticky; bottom: 0; z-index: 5; padding: 12px 0 calc(12px + var(--sab)); margin-top: -4px; background: rgba(12,13,16,.94); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-top: 1px solid var(--line); display: flex; gap: 10px; }
+.save-bar { position: sticky; bottom: 0; z-index: 5; padding: 12px 0 calc(12px + var(--sab)); margin-top: -4px; background: rgba(12,13,16,.94); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border-top: 1px solid var(--line); display: flex; align-items: center; gap: 10px; }
 /* Landscape phones: a slimmer save bar leaves room for the form. */
 @media (max-width: 900px) and (max-height: 500px) { .save-bar { padding: 6px 0 calc(6px + var(--sab)); } }
 
@@ -488,10 +488,17 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .fs-list button { text-align: left; background: none; border: none; padding: 7px 10px; border-radius: 6px; cursor: pointer; display: flex; gap: 8px; align-items: center; }
 .fs-list button:hover { background: rgba(255,255,255,.06); }
 .fs-list svg { width: 16px; height: 16px; color: var(--accent); }
+.fs-list .fs-err { padding: 8px 10px; color: var(--bad); }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .chip { display: inline-flex; align-items: center; gap: 6px; background: var(--bg3); border: 1px solid var(--line); border-radius: 20px; padding: 3px 6px 3px 12px; font-size: 12.5px; }
-.chip button { border: none; background: none; cursor: pointer; color: var(--text3); display: grid; place-items: center; }
+.chip button { border: none; background: none; cursor: pointer; color: var(--text3); display: grid; place-items: center; min-width: 28px; min-height: 28px; margin: -4px -2px -4px 0; border-radius: 50%; }
+.chip button:hover { background: rgba(255,255,255,.08); color: var(--text); }
 .chip svg { width: 14px; height: 14px; }
+.help.warn { color: var(--warn); }
+.form .field textarea { width: 100%; resize: vertical; line-height: 1.45; }
+@media (pointer: coarse) {
+  .chip button { min-width: 36px; min-height: 36px; margin: -8px -4px -8px 0; }
+}
 .task { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text2); }
 
 /* ---------- player ---------- */

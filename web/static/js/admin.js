@@ -1,6 +1,6 @@
 import { h, clear, icons, toast, modal, confirmDialog, spinner, toggle, fmtBytes, fmtBitrate, fmtTime, fmtDate, timeAgo, fmtUptime, fmtDuration, LANG_OPTIONS, $, run, staleBanner, motionOK, KIND_LABELS, METHOD_LABEL, reasonLabel, emptyState } from './ui.js';
 import { api, img } from './api.js';
-import { state, loadLibraries, route } from './app.js';
+import { state, loadLibraries, route, refreshSoft, setLeaveGuard } from './app.js';
 import { prefs, DEFAULTS, QUALITIES } from './prefs.js';
 import { capsSummary } from './caps.js';
 import { lineChart, columnChart, sparkline, barList, SERIES } from './charts.js';
@@ -143,24 +143,68 @@ function accountSection() {
 }
 
 // ---------- server config (shared by several sections) ----------
+// configForm edits /api/admin/config through a draft: Save (or Enter in a
+// field) sends it, Save stays disabled until something differs from the
+// saved config, and leaving the page with unsaved edits asks first.
 async function configForm(build) {
   let cfg = await api('/api/admin/config');
   const info = await api('/api/admin/info');
   const draft = { ...cfg };
+  let clean = JSON.stringify(cfg);
+  const dirty = () => JSON.stringify(draft) !== clean;
   const bind = (k, conv = (x) => x) => (v) => { draft[k] = conv(v); };
   const num = (k, attrs = {}) => h('input', { type: 'number', value: draft[k], ...attrs, oninput: (e) => { draft[k] = Number(e.target.value); } });
   const text = (k, attrs = {}) => h('input', { type: 'text', value: draft[k] ?? '', ...attrs, oninput: (e) => { draft[k] = e.target.value; } });
+  // A comma-separated list shown in a box that wraps; a new line counts as a comma.
+  const list = (k, attrs = {}) => h('textarea', { rows: 2, value: draft[k] ?? '', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', ...attrs,
+    oninput: (e) => { draft[k] = e.target.value.split(/[,\n]/).map((x) => x.trim()).filter(Boolean).join(', '); } });
   const tg = (k, label, help) => toggleRow(label, help, !!draft[k], bind(k));
-  const save = h('button', { class: 'btn primary', onclick: (e) => run(e.currentTarget, async () => {
-    cfg = await api('/api/admin/config', { method: 'PUT', body: draft });
-    Object.assign(draft, cfg);
-    state.caps = { ...state.caps, subtitleSearch: !!cfg.openSubtitlesKey?.trim(), cacheEnabled: !!cfg.cacheEnabled };
-  }, 'Settings saved', { busyLabel: 'Saving…' }) }, 'Save changes');
-  return h('div', { class: 'form cols' }, build({ draft, num, text, tg, bind, info }), h('div', { class: 'save-bar' }, save));
+  const note = h('span', { class: 'muted small', hidden: true }, 'Unsaved changes');
+  const save = h('button', { class: 'btn primary', type: 'submit', disabled: true }, 'Save changes');
+  const mark = () => { const d = dirty(); if (!save.hasAttribute('aria-busy')) save.disabled = !d; note.hidden = !d; };
+  const onSubmit = async (e) => {
+    e.preventDefault();
+    if (!dirty()) return;
+    const ok = await run(save, async () => {
+      cfg = await api('/api/admin/config', { method: 'PUT', body: draft });
+      Object.assign(draft, cfg);
+      clean = JSON.stringify(draft);
+      state.caps = { ...state.caps, subtitleSearch: !!cfg.openSubtitlesKey?.trim(), cacheEnabled: !!cfg.cacheEnabled };
+      if (cfg.serverName && cfg.serverName !== state.serverName) {
+        state.serverName = cfg.serverName;
+        const logo = $('.topbar .logo');
+        if (logo) { logo.querySelector('span').textContent = cfg.serverName; logo.setAttribute('aria-label', `${cfg.serverName} home`); }
+        document.title = `Settings · ${cfg.serverName}`;
+      }
+    }, 'Settings saved', { busyLabel: 'Saving…' });
+    if (ok) mark();
+  };
+  // novalidate: out-of-range numbers are left to the server for now.
+  const form = h('form', { class: 'form cols', novalidate: true, onsubmit: onSubmit, oninput: mark, onchange: mark },
+    build({ draft, num, text, list, tg, bind, info }), h('div', { class: 'save-bar' }, save, note));
+  setLeaveGuard(() => form.isConnected && dirty());
+  return form;
+}
+
+// The webhook URL carries a secret token: offer a copy button, falling back
+// to selecting the text where the clipboard API is unavailable (plain http).
+function webhookHelp(url) {
+  const code = h('code', { class: 'mono' }, url);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('Webhook URL copied', 'ok');
+    } catch {
+      getSelection().selectAllChildren(code);
+      toast('Press Ctrl+C (⌘C) to copy the selected URL');
+    }
+  };
+  return h('div', { class: 'help' }, 'Sonarr/Radarr: add a Webhook connection pointing at ', code, ' to rescan instantly after imports. ',
+    h('button', { class: 'btn sm', type: 'button', onclick: copy }, 'Copy URL'));
 }
 
 function serverSection() {
-  return configForm(({ draft, num, text, tg, info }) => [
+  return configForm(({ draft, num, text, list, tg, info }) => [
     h('div', { class: 'form-section' }, h('h2', null, 'General'),
       field('Server name', text('serverName'))),
     h('div', { class: 'form-section' }, h('h2', null, 'Library scanning'),
@@ -168,14 +212,14 @@ function serverSection() {
         field('Rescan every (minutes)', num('scanIntervalMin', { min: 0 }), '0 disables periodic scans. Scans only stat files, so they are cheap.'),
         field('Probe workers', num('probeWorkers', { min: 1, max: 8 }), 'Parallel ffprobe processes for new files. 1 is best on a Pi.')),
       tg('scanOnStartup', 'Scan on startup'),
-      h('div', { class: 'help' }, 'Sonarr/Radarr: add a Webhook connection pointing at ', h('code', { class: 'mono' }, `${location.origin}${info.webhookUrl}`), ' to rescan instantly after imports.')),
+      webhookHelp(`${location.origin}${info.webhookUrl}`)),
     h('div', { class: 'form-section' }, h('h2', null, 'Network & remote access'),
       h('div', { class: 'form-grid' },
         field('Remote bitrate limit (kbps)', num('remoteMaxBitrate', { min: 0, step: 500 }), '0 = unlimited. Applies to clients outside the local networks below; files above it get transcoded.'),
         field('Stream write buffer (KB)', num('streamBufferKb', { min: 32, max: 4096 }))),
-      field('Local networks (CIDR, comma separated)', text('localNetworks')),
+      field('Local networks (CIDR, comma separated)', list('localNetworks')),
       tg('trustProxy', 'Trust reverse-proxy headers', 'Enable only behind a proxy that replaces client-supplied forwarding headers.'),
-      field('Trusted proxy peers (CIDR, comma separated)', text('trustedProxies'), 'Only these peers may supply client IP and HTTPS headers. Defaults to loopback; use exact proxy addresses where possible.')),
+      field('Trusted proxy peers (CIDR, comma separated)', list('trustedProxies'), 'Only these peers may supply client IP and HTTPS headers. Defaults to loopback; use exact proxy addresses where possible.')),
   ]);
 }
 
@@ -242,14 +286,14 @@ function metadataSection() {
         field('Analyse the first (seconds)', num('introScanSecs', { min: 120, max: 1800, step: 30 }), 'Intros after cold opens can start a few minutes in.'),
         field('Shortest intro (seconds)', num('introMinSecs', { min: 5, max: 60 })),
         field('Longest intro (seconds)', num('introMaxSecs', { min: 20, max: 300 }))),
-      h('div', null, h('button', { class: 'btn', onclick: (e) => run(e.currentTarget, () => api('/api/admin/intro/scan', { method: 'POST' }), 'Intro detection started') }, 'Detect intros now'))),
+      h('div', null, h('button', { class: 'btn', type: 'button', onclick: (e) => run(e.currentTarget, () => api('/api/admin/intro/scan', { method: 'POST' }), 'Intro detection started') }, 'Detect intros now'))),
     h('div', { class: 'form-section' }, h('h2', null, 'Local'),
       tg('useLocalMetadata', 'Use local artwork & hints', 'poster.jpg / fanart.jpg / *-thumb.jpg, .plexmatch and .nfo ids.'),
       tg('generateThumbs', 'Generate missing episode thumbnails', 'Grabs one frame with ffmpeg when no still is available (cached).')),
     h('div', { class: 'form-section' }, h('h2', null, 'Refresh'),
       h('div', { class: 'row wrap' },
-        h('button', { class: 'btn', onclick: (e) => run(e.currentTarget, () => api('/api/admin/metadata/refresh', { method: 'POST', body: { missingOnly: true } }), 'Retrying unmatched items') }, 'Retry unmatched items'),
-        h('button', { class: 'btn', onclick: async (e) => {
+        h('button', { class: 'btn', type: 'button', onclick: (e) => run(e.currentTarget, () => api('/api/admin/metadata/refresh', { method: 'POST', body: { missingOnly: true } }), 'Retrying unmatched items') }, 'Retry unmatched items'),
+        h('button', { class: 'btn', type: 'button', onclick: async (e) => {
           const btn = e.currentTarget;
           if (await confirmDialog('Re-fetch metadata for every item? Manual matches are kept.')) await run(btn, () => api('/api/admin/metadata/refresh', { method: 'POST', body: {} }), 'Refreshing all metadata in background');
         } }, 'Refresh all metadata'))),
@@ -257,89 +301,222 @@ function metadataSection() {
 }
 
 // ---------- libraries ----------
-async function librariesSection() {
+// The list shows each library's scan progress while the scanner works on it
+// (from /api/admin/tasks) and reloads when a scan finishes.
+async function librariesSection(ctx) {
+  const tasks = await api('/api/admin/tasks').catch(() => null);
   const libs = await api('/api/admin/libraries');
   const box = h('div', { class: 'form' });
   box.appendChild(h('div', { class: 'row' }, h('div', { class: 'spacer' }),
-    h('button', { class: 'btn', onclick: (e) => run(e.currentTarget, () => api('/api/admin/scan', { method: 'POST', body: {} }), 'Scanning all libraries') }, h('span', { html: icons.refresh }), 'Scan all'),
-    h('button', { class: 'btn primary', onclick: () => libraryModal() }, h('span', { html: icons.plus }), 'Add library')));
-  if (!libs.length) box.appendChild(h('div', { class: 'empty' }, h('h2', null, 'No libraries'), h('p', null, 'Add a folder containing movies or TV shows.')));
+    h('button', { class: 'btn', disabled: !libs.length, dataset: { focusKey: 'lib-scan-all' }, onclick: (e) => run(e.currentTarget, () => api('/api/admin/scan', { method: 'POST', body: {} }), 'Scanning all libraries') }, h('span', { html: icons.refresh }), 'Scan all'),
+    h('button', { class: 'btn primary', dataset: { focusKey: 'lib-add' }, onclick: () => libraryModal() }, h('span', { html: icons.plus }), 'Add library')));
+  if (!libs.length) {
+    box.appendChild(emptyState({ level: 'h2', title: 'Add your first library', text: 'Point Lex at the folder with your movies or TV shows, e.g. /media/movies.',
+      actions: [h('button', { class: 'btn primary', onclick: () => libraryModal() }, 'Add library')] }));
+  }
+  const status = new Map();
   for (const l of libs) {
+    const meta = h('span', { class: 'dim' }, `${KIND_LABELS[l.kind] || l.kind} · ${l.itemCount} item${l.itemCount === 1 ? '' : 's'} · scanned ${timeAgo(l.lastScan)}`);
+    const live = h('span', { class: 'row small muted', hidden: true });
+    status.set(l.name, { meta, live });
     box.appendChild(h('div', { class: 'form-section' },
-      h('div', { class: 'row' }, h('h2', { class: 'grow' }, l.name), h('span', { class: 'dim' }, `${KIND_LABELS[l.kind] || l.kind} · ${l.itemCount} items · scanned ${timeAgo(l.lastScan)}`)),
+      h('div', { class: 'row wrap' }, h('h2', { class: 'grow' }, l.name), meta, live),
+      l.lastScan && !l.itemCount ? h('div', { class: 'help warn' }, 'No media found — check the folder and the type.') : null,
       h('div', { class: 'chips' }, l.paths.map((p) => h('span', { class: 'chip mono', style: { paddingRight: '12px' } }, p))),
       h('div', { class: 'row' },
-        h('button', { class: 'btn sm', onclick: (e) => run(e.currentTarget, () => api('/api/admin/scan', { method: 'POST', body: { libraryId: l.id } }), `Scanning ${l.name}`) }, 'Scan'),
-        h('button', { class: 'btn sm', onclick: () => libraryModal(l) }, 'Edit'),
+        h('button', { class: 'btn sm', dataset: { focusKey: `lib-scan-${l.id}` }, onclick: (e) => run(e.currentTarget, () => api('/api/admin/scan', { method: 'POST', body: { libraryId: l.id } }), `Scanning ${l.name}`) }, 'Scan'),
+        h('button', { class: 'btn sm', dataset: { focusKey: `lib-edit-${l.id}` }, onclick: () => libraryModal(l) }, 'Edit'),
         h('button', { class: 'btn sm danger', onclick: async (e) => {
           const btn = e.currentTarget;
-          if (!(await confirmDialog(`Remove library "${l.name}"? Files on disk are not touched; watch history for its items is removed.`, 'Remove', true))) return;
-          if (!(await run(btn, () => api(`/api/admin/libraries/${l.id}`, { method: 'DELETE' })))) return;
-          await loadLibraries(); route();
+          if (!(await confirmDialog(`Remove library “${l.name}”? Files on disk are not touched; watch history for its items is removed.`, 'Remove', true, 'Remove library?'))) return;
+          if (!(await run(btn, () => api(`/api/admin/libraries/${l.id}`, { method: 'DELETE' }), `Removed ${l.name}`))) return;
+          await loadLibraries();
+          refreshSoft();
         } }, 'Remove'))));
   }
   box.appendChild(h('div', { class: 'help' }, 'Types: Movies (one movie per folder or file), TV Shows (Show/Season N/episodes), Mixed (auto-detects episodes by S01E01 or Season folders — good for anime folders with both series and films).'));
-  return box;
+  const show = (s) => {
+    for (const [name, { meta, live }] of status) {
+      const on = !!s?.running && s.library === name;
+      meta.hidden = on;
+      live.hidden = !on;
+      if (on) live.replaceChildren(h('div', { class: 'spinner sm' }), s.phase === 'probing' ? `Probing · ${s.probeDone}/${s.probeTotal}` : `${upper(s.phase || 'scanning')}…`);
+    }
+  };
+  show(tasks?.scan);
+  // A scan that finished since this render (or one seen running that has
+  // stopped) changes counts and "scanned" times: re-render in place.
+  let seen = tasks?.scan || null;
+  const banner = staleBanner(box);
+  every(ctx, 2000, async () => {
+    const { scan: s } = await api('/api/admin/tasks');
+    if (!ctx.isCurrent()) return;
+    if (seen && !s.running && (seen.running || s.finishedAt !== seen.finishedAt)) { refreshSoft(); return; }
+    seen = s;
+    show(s);
+  }, banner.hooks());
+  return h('div', null, banner.el, box);
 }
+
+const within = (p, base) => p === base || base === '/' || p.startsWith(`${base}/`);
+const upper = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+let libModalId = 0;
 
 function libraryModal(lib) {
-  const name = h('input', { type: 'text', value: lib?.name || '' });
+  const uid = ++libModalId;
+  const err = h('div', { class: 'err', role: 'alert', id: `lib-err-${uid}` });
+  const name = h('input', { type: 'text', value: lib?.name || '', 'aria-describedby': err.id, oninput: () => name.removeAttribute('aria-invalid') });
   let kind = lib?.kind || 'movies';
   const paths = [...(lib?.paths || [])];
+  const live = h('div', { class: 'sr-only', 'aria-live': 'polite' });
+  const folderNote = h('div', { class: 'help warn', role: 'status' });
   const chips = h('div', { class: 'chips' });
-  const renderChips = () => clear(chips).append(...paths.map((p, i) => h('span', { class: 'chip mono' }, p, h('button', { html: icons.close, onclick: () => { paths.splice(i, 1); renderChips(); } }))));
+  const renderChips = () => chips.replaceChildren(...(paths.length
+    ? paths.map((p, i) => h('span', { class: 'chip mono' }, p, h('button', { type: 'button', 'aria-label': `Remove folder ${p}`, title: 'Remove folder', html: icons.close, onclick: () => removeAt(i) })))
+    : [h('span', { class: 'dim small' }, 'No folders added yet')]));
+  const removeAt = (i) => {
+    const [p] = paths.splice(i, 1);
+    renderChips();
+    folderNote.textContent = '';
+    live.textContent = `Removed ${p}`;
+    const btns = chips.querySelectorAll('button');
+    (btns[i] || btns[i - 1] || browser.addBtn).focus();
+  };
+  const onPick = async (p) => {
+    folderNote.textContent = '';
+    err.textContent = '';
+    if (paths.includes(p)) { folderNote.textContent = `${p} is already added.`; return; }
+    const clash = paths.find((q) => within(p, q) || within(q, p));
+    if (clash) {
+      folderNote.textContent = within(p, clash) ? `${p} is inside ${clash}, which is already added.` : `${p} contains ${clash}, which is already added. Remove it first to use the larger folder.`;
+      return;
+    }
+    if (p === '/' && !(await confirmDialog('Use the whole filesystem as a library folder?', 'Use /', false, 'Add / as a folder?'))) return;
+    paths.push(p);
+    renderChips();
+    live.textContent = `Added ${p}`;
+    // A new library is usually named after its folder.
+    if (!lib && !name.value.trim() && p !== '/') { name.value = upper(p.split('/').pop()); name.removeAttribute('aria-invalid'); }
+  };
   renderChips();
-  const browser = folderBrowser((p) => { if (!paths.includes(p)) { paths.push(p); renderChips(); } });
-  const m = modal({ title: lib ? `Edit ${lib.name}` : 'Add library', wide: true, dismissible: false, body: [
-    field('Name', name),
-    field('Type', select(kind, [['movies', 'Movies'], ['shows', 'TV Shows'], ['mixed', 'Mixed (auto-detect)']], (v) => { kind = v; }), lib ? 'Changing the type rebuilds the library (watch progress for its items resets).' : null),
-    field('Folders', chips),
-    browser,
-  ], actions: [
-    h('button', { class: 'btn', onclick: () => m.close() }, 'Cancel'),
-    h('button', { class: 'btn primary', onclick: async (e) => {
-      const body = { name: name.value || 'Library', kind, paths };
-      const ok = await run(e.currentTarget, async () => {
+  const parent = (p) => p?.replace(/\/[^/]+$/, '');
+  const browser = folderBrowser(onPick, [parent(lib?.paths?.[0]), parent(state.libraries[0]?.paths?.[0]), '/media', '/mnt']);
+  const retypeNote = lib ? h('span', null, ` Changing the type rebuilds the library: watch progress, watched status and favourites for its ${lib.itemCount} items are reset for everyone.`) : null;
+  const typeHelp = h('div', { class: 'help' }, 'Movies: one film per folder or file. TV Shows: Show/Season/episodes. Mixed: both, detected per folder.', retypeNote);
+  const typeSel = select(kind, Object.entries(KIND_LABELS), (v) => { kind = v; retypeNote?.classList.toggle('warn', v !== lib.kind); });
+  const foldersId = `lib-folders-${uid}`;
+  const submit = async (e) => {
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
+    err.textContent = '';
+    name.removeAttribute('aria-invalid');
+    const nm = name.value.trim();
+    if (!nm) { err.textContent = 'Enter a name'; name.setAttribute('aria-invalid', 'true'); name.focus(); return; }
+    if (!paths.length) {
+      err.textContent = browser.current() ? 'Press “Add this folder” to use the folder you’re viewing' : 'Choose a folder';
+      (browser.current() ? browser.addBtn : browser.input).focus();
+      return;
+    }
+    if (lib && (kind !== lib.kind || lib.paths.some((p) => !paths.includes(p)))) {
+      const retype = kind !== lib.kind;
+      const msg = retype
+        ? `Changing “${lib.name}” to ${KIND_LABELS[kind]} rebuilds it. Watch progress, watched status and favourites for its ${lib.itemCount} items are reset for everyone.`
+        : 'Titles in the removed folders, and everyone’s watch history for them, are removed from the library.';
+      if (!(await confirmDialog(msg, 'Save changes', true, retype ? 'Change library type?' : 'Remove folders?'))) return;
+    }
+    let failed = null;
+    const ok = await run(btn, async () => {
+      try {
+        const body = { name: nm, kind, paths };
         if (lib) await api(`/api/admin/libraries/${lib.id}`, { method: 'PUT', body });
         else await api('/api/admin/libraries', { method: 'POST', body });
-        m.close();
-      }, lib ? 'Library updated; rescanning' : 'Library added; scanning now', { busyLabel: lib ? 'Saving…' : 'Adding…' });
-      if (ok) { await loadLibraries(); route(); }
-    } }, lib ? 'Save' : 'Add library')] });
+      } catch (ex) {
+        // Shown in the dialog rather than as a toast; AbortError keeps run() quiet.
+        failed = ex;
+        throw Object.assign(new Error(ex.message), { name: 'AbortError' });
+      }
+      m.close();
+    }, lib ? 'Library updated; rescanning' : 'Library added; scanning now', { busyLabel: lib ? 'Saving…' : 'Adding…' });
+    if (!ok) { if (failed) err.textContent = upper(failed.message); return; }
+    await loadLibraries();
+    refreshSoft();
+  };
+  const m = modal({ title: lib ? `Edit ${lib.name}` : 'Add library', wide: true, dismissible: false, body: [
+    field('Name', name),
+    h('label', { class: 'field' }, h('span', null, 'Type'), typeSel, typeHelp),
+    h('div', { class: 'field', role: 'group', 'aria-labelledby': foldersId }, h('span', { id: foldersId }, 'Folders'), chips, folderNote),
+    browser.el,
+    live,
+    err,
+  ], actions: [
+    h('button', { class: 'btn', type: 'button', onclick: () => m.close() }, 'Cancel'),
+    h('button', { class: 'btn primary', type: 'button', onclick: submit }, lib ? 'Save' : 'Add library')] });
 }
 
-function folderBrowser(onPick) {
-  const pathIn = h('input', { type: 'text', value: '/', style: { flex: 1 } });
+// folderBrowser lists server folders for the library editor. It opens at the
+// first of starts that exists (falling back to /). current() is the folder
+// last listed successfully; "Add this folder" adds that one, not whatever is
+// typed in the box.
+function folderBrowser(onPick, starts) {
+  const input = h('input', { type: 'text', 'aria-label': 'Folder path', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', style: { flex: '1 1 200px', minWidth: 0 } });
   const list = h('div', { class: 'fs-list' });
-  const go = async (p) => {
+  let current = null;
+  const addBtn = h('button', { class: 'btn sm primary', type: 'button', disabled: true, onclick: () => current && onPick(current) }, h('span', { html: icons.plus }), 'Add this folder');
+  const row = (icon, label, onclick) => h('button', { type: 'button', onclick }, h('span', { html: icons[icon] }), label);
+  const go = async (p, { quiet = false } = {}) => {
+    const fromList = list.contains(document.activeElement);
     try {
       const r = await api(`/api/admin/fs?path=${encodeURIComponent(p)}`);
-      pathIn.value = r.path;
-      clear(list);
-      if (r.path !== '/') list.appendChild(h('button', { onclick: () => go(r.parent) }, h('span', { html: icons.up }), '..'));
-      for (const d of r.dirs) list.appendChild(h('button', { onclick: () => go((r.path === '/' ? '' : r.path) + '/' + d) }, h('span', { html: icons.folder }), d));
-      if (!r.dirs.length) list.appendChild(h('div', { class: 'dim small', style: { padding: '8px' } }, 'No sub-folders'));
-    } catch (e) { toast(e.message, 'error'); }
+      current = r.path;
+      input.value = r.path;
+      addBtn.disabled = false;
+      list.replaceChildren(...[
+        r.path !== '/' ? row('up', '..', () => go(r.parent)) : null,
+        ...r.dirs.map((d) => row('folder', d, () => go(`${r.path === '/' ? '' : r.path}/${d}`))),
+        r.dirs.length ? null : h('div', { class: 'dim small', style: { padding: '8px' } }, 'No sub-folders'),
+      ].filter(Boolean));
+      if (fromList) list.querySelector('button')?.focus();
+      return true;
+    } catch (e) {
+      if (quiet) return false;
+      // Keep listing the last good folder, with the error above it.
+      input.value = current ?? '';
+      list.querySelector('.fs-err')?.remove();
+      const msg = h('div', { class: 'fs-err small', role: 'alert' }, e.message);
+      if (current) list.prepend(msg);
+      else list.replaceChildren(msg, row('up', 'Open /', () => go('/')));
+      if (fromList) list.querySelector('button')?.focus();
+      return false;
+    }
   };
-  go(state.libraries[0]?.paths?.[0]?.replace(/\/[^/]+$/, '') || '/mnt');
-  return h('div', { style: { display: 'grid', gap: '8px' } },
-    h('form', { class: 'row', onsubmit: (e) => { e.preventDefault(); go(pathIn.value); } }, pathIn, h('button', { class: 'btn sm', type: 'submit' }, 'Go'), h('button', { class: 'btn sm primary', type: 'button', onclick: () => onPick(pathIn.value) }, h('span', { html: icons.plus }), 'Add this folder')),
+  (async () => {
+    for (const p of [...new Set(starts.filter(Boolean))]) if (await go(p, { quiet: true })) return;
+    await go('/');
+  })();
+  const el = h('div', { style: { display: 'grid', gap: '8px' } },
+    h('form', { class: 'row wrap', onsubmit: (e) => { e.preventDefault(); go(input.value.trim() || '/'); } }, input, h('button', { class: 'btn sm', type: 'submit' }, 'Go'), addBtn),
     list);
+  return { el, addBtn, input, current: () => current };
 }
 
 // ---------- users & devices ----------
 async function usersSection() {
   const users = await api('/api/admin/users');
   const tbl = h('table', { class: 'tbl' }, h('tr', null, h('th', null, 'Name'), h('th', null, 'Role'), h('th', null, 'Created'), h('th')),
-    users.map((u) => h('tr', null, h('td', null, h('b', null, u.name)), h('td', null, u.isAdmin ? 'Admin' : 'User'), h('td', null, fmtDate(u.createdAt)),
+    users.map((u) => h('tr', null, h('td', null, h('b', null, u.name, u.id === state.me.id ? [' ', h('span', { class: 'dim' }, '(you)')] : null)), h('td', null, u.isAdmin ? 'Admin' : 'User'), h('td', null, fmtDate(u.createdAt)),
       h('td', { style: { textAlign: 'right' } }, h('div', { class: 'row', style: { justifyContent: 'flex-end' } },
         h('button', { class: 'btn sm', onclick: (e) => {
           const pw = prompt(`New password for ${u.name}:`);
           if (pw) run(e.currentTarget, () => api(`/api/admin/users/${u.id}`, { method: 'PUT', body: { password: pw } }), 'Password reset');
         } }, 'Reset password'),
-        h('button', { class: 'btn sm', onclick: async (e) => {
-          if (await run(e.currentTarget, () => api(`/api/admin/users/${u.id}`, { method: 'PUT', body: { isAdmin: !u.isAdmin } }))) route();
-        } }, u.isAdmin ? 'Make user' : 'Make admin'),
+        // Your own role can only be changed by another admin.
+        u.id !== state.me.id ? h('button', { class: 'btn sm', dataset: { focusKey: `user-admin-${u.id}` }, onclick: async (e) => {
+          const btn = e.currentTarget;
+          const ok = u.isAdmin
+            ? await confirmDialog(`Make ${u.name} a regular user? They will no longer be able to change settings, libraries or users.`, 'Make user', false, 'Make user?')
+            : await confirmDialog(`Make ${u.name} an administrator? They can change settings, libraries and users.`, 'Make admin', false, 'Make admin?');
+          if (ok && await run(btn, () => api(`/api/admin/users/${u.id}`, { method: 'PUT', body: { isAdmin: !u.isAdmin } }), u.isAdmin ? `${u.name} is now a user` : `${u.name} is now an admin`)) refreshSoft();
+        } }, u.isAdmin ? 'Make user' : 'Make admin') : null,
         u.id !== state.me.id ? h('button', { class: 'btn sm danger', onclick: async (e) => {
           const btn = e.currentTarget;
           if (await confirmDialog(`Delete user ${u.name}?`, 'Delete', true) && await run(btn, () => api(`/api/admin/users/${u.id}`, { method: 'DELETE' }))) route();
