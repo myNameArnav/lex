@@ -62,7 +62,7 @@ const SECTIONS = [
 export async function settingsView(ctx, section) {
   // Following a link keeps focus on it (not on the page heading).
   const link = ([id, label, ic]) => h('a', { href: `#/settings/${id}`, class: id === section ? 'active' : '', 'aria-current': id === section ? 'page' : null,
-    dataset: { focusKey: `settings-nav-${id}` }, onclick: () => focusAfterRoute(`settings-nav-${id}`) }, h('span', { html: icons[ic] }), label);
+    dataset: { focusKey: `settings-nav-${id}` }, onclick: () => { if (id !== section) focusAfterRoute(`settings-nav-${id}`); } }, h('span', { html: icons[ic] }), label);
   const nav = h('nav', { class: 'side-nav', 'aria-label': 'Settings sections' },
     h('div', { class: 'grp' }, 'You'),
     SECTIONS.filter((s) => !s[3]).map(link),
@@ -276,13 +276,15 @@ async function configForm(build, { check } = {}) {
     let reset = [];
     const ok = await run(save, async () => {
       const sent = { ...draft };
-      cfg = await api('/api/admin/config', { method: 'PUT', body: draft });
-      Object.assign(draft, cfg);
-      clean = JSON.stringify(draft);
+      cfg = await api('/api/admin/config', { method: 'PUT', body: sent });
+      clean = JSON.stringify(Object.assign({ ...draft }, cfg));
+      // Fields edited while the save was in flight keep the new edit (and
+      // stay unsaved); the rest take what the server stored.
+      for (const k of Object.keys(cfg)) if (draft[k] === sent[k]) draft[k] = cfg[k];
       // The server puts values it can't use back to defaults: show what it kept.
       for (const [k, input] of controls) {
         if (sent[k] !== cfg[k]) reset.push(labelOf(input) || k);
-        input.value = cfg[k];
+        if (draft[k] === cfg[k]) input.value = cfg[k];
       }
       state.caps = { ...state.caps, subtitleSearch: !!cfg.openSubtitlesKey?.trim(), cacheEnabled: !!cfg.cacheEnabled };
       if (cfg.serverName && cfg.serverName !== state.serverName) {
@@ -452,16 +454,18 @@ async function librariesSection(ctx) {
     const live = h('span', { class: 'row small muted', hidden: true });
     status.set(l.name, { meta, live });
     box.appendChild(h('div', { class: 'form-section' },
-      h('div', { class: 'row wrap' }, h('h2', { class: 'grow' }, l.name), meta, live),
+      // The name keeps its line; the meta wraps below it on phones.
+      h('div', { class: 'row wrap' }, h('h2', { style: { flex: '1 1 auto' } }, l.name), meta, live),
       l.lastScan && !l.itemCount ? h('div', { class: 'help warn' }, 'No media found — check the folder and the type.') : null,
       h('div', { class: 'chips' }, l.paths.map((p) => h('span', { class: 'chip mono', style: { paddingRight: '12px' } }, p))),
       h('div', { class: 'row' },
-        h('button', { class: 'btn sm', dataset: { focusKey: `lib-scan-${l.id}` }, onclick: (e) => run(e.currentTarget, () => api('/api/admin/scan', { method: 'POST', body: { libraryId: l.id } }), `Scanning ${l.name}`) }, 'Scan'),
-        h('button', { class: 'btn sm', dataset: { focusKey: `lib-edit-${l.id}` }, onclick: () => libraryModal(l) }, 'Edit'),
-        h('button', { class: 'btn sm danger', onclick: async (e) => {
+        h('button', { class: 'btn sm', 'aria-label': `Scan ${l.name}`, dataset: { focusKey: `lib-scan-${l.id}` }, onclick: (e) => run(e.currentTarget, () => api('/api/admin/scan', { method: 'POST', body: { libraryId: l.id } }), `Scanning ${l.name}`) }, 'Scan'),
+        h('button', { class: 'btn sm', 'aria-label': `Edit ${l.name}`, dataset: { focusKey: `lib-edit-${l.id}` }, onclick: () => libraryModal(l) }, 'Edit'),
+        h('button', { class: 'btn sm danger', 'aria-label': `Remove ${l.name}`, onclick: async (e) => {
           const btn = e.currentTarget;
           if (!(await confirmDialog(`Remove library “${l.name}”? Files on disk are not touched; watch history for its items is removed.`, 'Remove', true, 'Remove library?'))) return;
           if (!(await run(btn, () => api(`/api/admin/libraries/${l.id}`, { method: 'DELETE' }), `Removed ${l.name}`))) return;
+          focusAfterRoute('lib-add'); // the card goes away
           await loadLibraries();
           refreshSoft();
         } }, 'Remove'))));
@@ -500,6 +504,7 @@ function libraryModal(lib) {
   const name = h('input', { type: 'text', value: lib?.name || '', 'aria-describedby': err.id, oninput: () => name.removeAttribute('aria-invalid') });
   let kind = lib?.kind || 'movies';
   const paths = [...(lib?.paths || [])];
+  let autoName = null;
   const live = h('div', { class: 'sr-only', 'aria-live': 'polite' });
   const folderNote = h('div', { class: 'help warn', role: 'status' });
   const chips = h('div', { class: 'chips' });
@@ -527,8 +532,12 @@ function libraryModal(lib) {
     paths.push(p);
     renderChips();
     live.textContent = `Added ${p}`;
-    // A new library is usually named after its folder.
-    if (!lib && !name.value.trim() && p !== '/') { name.value = upper(p.split('/').pop()); name.removeAttribute('aria-invalid'); }
+    // A new library is usually named after its folder (renamed again if that
+    // folder is swapped for another, unless the name was typed).
+    if (!lib && paths.length === 1 && p !== '/' && (!name.value.trim() || name.value === autoName)) {
+      name.value = autoName = upper(p.split('/').pop());
+      name.removeAttribute('aria-invalid');
+    }
   };
   renderChips();
   const parent = (p) => p?.replace(/\/[^/]+$/, '');
