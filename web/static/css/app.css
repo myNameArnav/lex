@@ -251,6 +251,10 @@ main { padding: var(--top) var(--sar) 0 var(--sal); min-height: 100vh; }
 .card.land .art:focus-visible { outline-offset: 0; }
 .card .art:focus-visible .play-hover { opacity: 1; }
 .card .meta { padding: 8px 2px 0; }
+/* Continue Watching / Next Up: the title block shares the row with a ⋯ button. */
+.card.land .meta { display: flex; align-items: flex-start; gap: 4px; }
+.card.land .meta > div { flex: 1; min-width: 0; }
+.card-more { flex: none; margin: 2px -6px 0 0; color: var(--text2); }
 .card .t { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .s { color: var(--text3); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .progress { position: absolute; z-index: 2; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(0,0,0,.6); }
@@ -264,7 +268,7 @@ main { padding: var(--top) var(--sar) 0 var(--sal); min-height: 100vh; }
 .grid.land { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
 
 .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 16px 0 24px; }
-.toolbar select { height: 34px; }
+.toolbar select, .toolbar .btn.sm { height: 34px; }
 .count { color: var(--text3); font-weight: 600; }
 
 /* Hover effects only where there is hover: on touch they stick after a tap. */
@@ -280,6 +284,23 @@ main { padding: var(--top) var(--sar) 0 var(--sal); min-height: 100vh; }
   .card.land .play-hover { opacity: 1; background: none; place-items: end start; padding: 8px; }
   .card.land .play-hover span { width: 36px; height: 36px; box-shadow: 0 1px 6px rgba(0,0,0,.5); }
   .card.land .play-hover svg { width: 18px; height: 18px; margin-left: 2px; }
+}
+@media (pointer: coarse) {
+  .toolbar select, .toolbar .btn.sm { height: 40px; }
+}
+@media (max-width: 900px) {
+  .grid { gap: 18px 12px; }
+}
+/* Phones: three smaller posters a row in library and search grids (shelves
+   keep their size), with room for two-line titles. */
+@media (max-width: 520px) {
+  /* Two rows: sort and its direction, then the filters and Random. */
+  .toolbar { gap: 8px; }
+  .toolbar .spacer { display: none; }
+  .toolbar select { flex: 1 1 96px; min-width: 0; padding: 0 24px 0 10px; background-position: right 8px center; }
+  .toolbar .sort-select { flex: 1 0 calc(100% - 130px); }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 16px 10px; }
+  .grid .card:not(.land) .t { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
 }
 
 /* ---------- detail ---------- */
@@ -317,8 +338,10 @@ main { padding: var(--top) var(--sar) 0 var(--sal); min-height: 100vh; }
 .tabs button, .tabs a { background: none; border: none; padding: 10px 14px; cursor: pointer; font-weight: 700; color: var(--text2); border-bottom: 2px solid transparent; white-space: nowrap; }
 .tabs button.active, .tabs a.active { color: var(--text); border-color: var(--accent); }
 .tabs button:hover, .tabs a:hover { color: var(--text); }
+/* Inside the button: the tab row scrolls, which would clip an outer ring. */
+.tabs button:focus-visible, .tabs a:focus-visible { outline-offset: -3px; border-radius: 6px; }
 
-.episodes { display: grid; gap: 6px; }
+.episodes { display: grid; gap: 6px; max-width: 1200px; }
 .episode { display: grid; grid-template-columns: 240px minmax(0, 1fr) auto; gap: 18px; padding: 10px; border-radius: 12px; align-items: center; }
 .episode:hover, .episode:focus-within { background: rgba(255,255,255,.04); }
 .episode .art { position: relative; aspect-ratio: 16/9; border: 0; padding: 0; border-radius: 8px; overflow: hidden; background: var(--bg3); cursor: pointer; }
@@ -363,10 +386,21 @@ main { padding: var(--top) var(--sar) 0 var(--sal); min-height: 100vh; }
   .hero-bg img.loaded { opacity: .45; }
 }
 @media (max-width: 900px) {
+  .hero { min-height: 0; }
+  .hero-inner { flex-direction: column; padding: 24px 16px; gap: 20px; }
+  .hero-poster { width: 160px; }
+  .hero-poster.land { width: 100%; max-width: 560px; }
+  .hero-info h1 { font-size: 28px; }
   /* Full width, so a long line can't size the column past the screen. */
   .hero-info { align-self: stretch; min-width: 0; }
   .episode { grid-template-columns: 140px minmax(0, 1fr) auto; gap: 12px; }
   .episode .side { align-self: start; }
+}
+/* Landscape phones: art beside the title, so the title and Play are on the first screen. */
+@media (max-width: 900px) and (max-height: 500px) and (orientation: landscape) {
+  .hero-inner { flex-direction: row; gap: 18px; }
+  .hero-poster { width: 120px; }
+  .hero-poster.land { width: 240px; }
 }
 @media (max-width: 520px) {
   .episode { grid-template-columns: 112px minmax(0, 1fr) auto; gap: 10px; }
@@ -681,16 +715,10 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   .page { padding: 20px 16px 50px; }
   .shelf-head { margin: 0 16px 10px; }
   .shelf-track { padding: 4px 16px 12px; gap: 12px; scroll-padding: 0 16px; }
-  .hero-inner { flex-direction: column; padding: 24px 16px; gap: 20px; }
-  .hero-poster { width: 160px; }
-  .hero-poster.land { width: 100%; }
-  .hero-info h1 { font-size: 28px; }
-  .hero { min-height: 0; }
   .people { padding: 4px 16px 14px; }
   .side-layout { grid-template-columns: 1fr; }
   .side-nav { position: static; display: flex; overflow-x: auto; }
   .side-nav .grp { display: none; }
-  .grid { gap: 18px 12px; }
   .session { grid-template-columns: 60px 1fr; }
   .session .poster { width: 60px; }
   .session .kv { grid-template-columns: max-content 1fr; }

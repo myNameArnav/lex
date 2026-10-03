@@ -470,10 +470,32 @@ export function landCard(it, { playOnClick = true } = {}) {
   const art = playOnClick
     ? h('button', { type: 'button', class: 'art', 'aria-label': `${ud.position > 0 ? 'Resume' : 'Play'} ${title}, ${sub}`, dataset: { focusKey: `land-${it.id}` }, onclick: (e) => { e.stopPropagation(); play(it.id); } }, kids)
     : h('div', { class: 'art' }, kids);
-  return h('div', { class: 'card land', title: `${title} — ${sub}`, onclick: (e) => {
-    if (e.target.closest('.meta a')) return;
+  const text = h('div', null, h('a', { class: 't', href: `#/item/${it.id}`, 'aria-label': `${title}, ${sub}`, style: { display: 'block' } }, title), h('div', { class: 's' }, sub));
+  const card = h('div', { class: 'card land', title: `${title} — ${sub}`, onclick: (e) => {
+    if (e.target.closest('.meta a, .card-more')) return;
     if (playOnClick) play(it.id); else location.hash = `#/item/${it.id}`;
-  } }, art, h('div', { class: 'meta' }, h('a', { class: 't', href: `#/item/${it.id}`, 'aria-label': `${title}, ${sub}`, style: { display: 'block' } }, title), h('div', { class: 's' }, sub)));
+  } }, art, h('div', { class: 'meta' }, text, playOnClick ? landMenuButton(it, title, () => card) : null));
+  return card;
+}
+
+// The ⋯ on a Continue Watching / Next Up card. Unwatching an in-progress
+// title clears its resume point, which takes it off Continue Watching.
+function landMenuButton(it, title, card) {
+  const ud = it.userData || {};
+  const act = async (played, msg) => {
+    // The card goes away: keep focus in the row on its neighbour.
+    const c = card(), near = c.nextElementSibling || c.previousElementSibling;
+    if (!(await run(null, () => api(`/api/items/${it.id}/played`, { method: 'POST', body: { played } }), msg))) return;
+    const key = near?.querySelector('[data-focus-key]')?.dataset.focusKey;
+    if (key && c.contains(document.activeElement)) focusAfterRoute(key);
+    refreshSoft();
+  };
+  const items = [{ label: 'Mark watched', icon: 'check', onClick: () => act(true, 'Marked watched') }];
+  if (ud.position > 0 && !ud.played) items.push({ label: 'Remove from Continue Watching', icon: 'close', onClick: () => act(false, 'Removed from Continue Watching') });
+  return h('button', { class: 'btn icon ghost sm card-more', type: 'button', title: 'More', 'aria-label': `More for ${title}`, dataset: { focusKey: `land-more-${it.id}` }, html: icons.more, onclick: (e) => {
+    e.stopPropagation();
+    popupMenu(e.currentTarget, items);
+  } });
 }
 
 // scroller wraps a horizontal track with scroll arrows for mouse users. The
@@ -536,6 +558,16 @@ async function libraryView(ctx, id) {
   if (!lib) return emptyState({ title: 'Library not found', text: 'It may have been removed.', actions: [h('a', { class: 'btn primary', href: '#/' }, 'Go home')] });
   const q = ctx.query;
   const opts = { sort: q.get('sort') || 'title', desc: q.get('desc') === '1', filter: q.get('filter') || '', genre: q.get('genre') || '', seed: +q.get('seed') || 0 };
+  // Movies have no episodes and shows sort by their newest episode, so each
+  // offers the one "newest" order that means something for it.
+  const sorts = [['title', 'Title'], ['year', 'Year'],
+    ...(lib.kind !== 'shows' ? [['added', 'Date added']] : []), ...(lib.kind !== 'movies' ? [['latest', 'Latest episode']] : []),
+    ['rating', 'Rating'], ['played', 'Recently watched'], ['random', 'Random']];
+  let fixSort = false;
+  if (lib.kind === 'movies' && opts.sort === 'latest') { opts.sort = 'added'; fixSort = true; }
+  if (lib.kind === 'shows' && opts.sort === 'added') { opts.sort = 'latest'; fixSort = true; }
+  // What the direction button reads for each sort (ascending, descending).
+  const dirLabel = { title: ['A→Z', 'Z→A'], year: ['Oldest', 'Newest'], added: ['Oldest', 'Newest'], latest: ['Oldest', 'Newest'], rating: ['Lowest', 'Highest'], played: ['Least recent', 'Most recent'] }[opts.sort];
   // Random order is seeded (and the seed kept in the address), so paging and
   // Back show the same shuffle.
   const newSeed = () => 1 + Math.floor(Math.random() * 1e9);
@@ -550,30 +582,36 @@ async function libraryView(ctx, id) {
   };
   if (opts.sort === 'random' && !opts.seed) {
     opts.seed = newSeed();
-    replaceHash(hashFor(opts));
+    fixSort = true;
   }
+  if (fixSort) replaceHash(hashFor(opts));
   // key: the control to focus once the re-rendered view is in.
   const setQ = (patch, key) => {
     focusAfterRoute(key);
     location.hash = hashFor({ ...opts, ...patch });
   };
   const genres = await api(`/api/genres?library=${id}`).catch(() => []);
-  const sel = (label, key, value, options, on) => h('select', { 'aria-label': label, dataset: { focusKey: key }, onchange: (e) => on(e.target.value) }, options.map(([v, l]) => h('option', { value: v, selected: v === value }, l)));
+  const sel = (label, key, value, options, on) => h('select', { class: key, 'aria-label': label, dataset: { focusKey: key }, onchange: (e) => on(e.target.value) }, options.map(([v, l]) => h('option', { value: v, selected: v === value }, l)));
   const count = h('span', { class: 'count' });
   const grid = h('div', { class: 'grid' });
   const sentinel = h('div', { style: { height: '40px' } });
-  const random = h('button', { class: 'btn sm', title: 'Play a random title', disabled: true, onclick: (e) => run(e.currentTarget, async () => {
-    const p = new URLSearchParams({ library: id, sort: 'random', limit: 1 });
-    if (opts.filter) p.set('filter', opts.filter);
-    if (opts.genre) p.set('genre', opts.genre);
-    const r = await api(`/api/items?${p}`);
-    if (r.items[0]) location.hash = `#/item/${r.items[0].id}`;
-  }) }, h('span', { html: icons.shuffle }), 'Random');
+  const random = h('button', { class: 'btn sm', title: 'Open a random title', disabled: true, onclick: async (e) => {
+    await run(e.currentTarget, async () => {
+      const p = new URLSearchParams({ library: id, sort: 'random', limit: 1 });
+      if (opts.filter) p.set('filter', opts.filter);
+      if (opts.genre) p.set('genre', opts.genre);
+      const r = await api(`/api/items?${p}`);
+      if (r.items[0]) location.hash = `#/item/${r.items[0].id}`;
+      else toast('No titles match these filters');
+    });
+    // run() re-enables the button.
+    random.disabled = total === 0;
+  } }, h('span', { html: icons.shuffle }), 'Random');
   const page = h('div', { class: 'page' },
     h('div', { class: 'row' }, h('h1', { class: 'page-title' }, lib.name), count),
     h('div', { class: 'toolbar' },
-      sel('Sort titles', 'sort-select', opts.sort, [['title', 'Title'], ['year', 'Year'], ['added', 'Date added'], ['latest', 'Latest episode/added'], ['rating', 'Rating'], ['played', 'Recently watched'], ['random', 'Random']], (v) => setQ({ sort: v, desc: ['added', 'latest', 'rating', 'played', 'year'].includes(v), seed: v === 'random' ? newSeed() : 0 }, 'sort-select')),
-      opts.sort !== 'random' ? h('button', { class: 'btn sm', title: 'Reverse order', dataset: { focusKey: 'sort-dir' }, onclick: () => setQ({ desc: !opts.desc }, 'sort-dir') }, opts.desc ? '↓ Desc' : '↑ Asc') : null,
+      sel('Sort titles', 'sort-select', opts.sort, sorts, (v) => setQ({ sort: v, desc: ['added', 'latest', 'rating', 'played', 'year'].includes(v), seed: v === 'random' ? newSeed() : 0 }, 'sort-select')),
+      dirLabel ? h('button', { class: 'btn sm', title: 'Reverse order', 'aria-label': `Sort direction: ${dirLabel[+opts.desc]}`, dataset: { focusKey: 'sort-dir' }, onclick: () => setQ({ desc: !opts.desc }, 'sort-dir') }, dirLabel[+opts.desc]) : null,
       sel('Filter titles', 'filter-select', opts.filter, [['', 'All'], ['unplayed', 'Unwatched'], ['played', 'Watched'], ['inprogress', 'In progress'], ['favorite', 'Favorites']], (v) => setQ({ filter: v }, 'filter-select')),
       genres.length ? sel('Filter by genre', 'genre-select', opts.genre, [['', 'All genres'], ...genres.map((g) => [g, g])], (v) => setQ({ genre: v }, 'genre-select')) : null,
       h('div', { class: 'spacer' }),
@@ -658,9 +696,10 @@ function hero(it, posterNode, info, backdropItem = it) {
   return h('section', { class: 'hero' }, bg, h('div', { class: 'hero-inner' }, posterNode, h('div', { class: 'hero-info' }, info)));
 }
 
+// The h1 names the page, so the artwork and its placeholder stay silent.
 function heroPoster(it, kind, land) {
-  const box = h('div', { class: `hero-poster ${land ? 'land' : ''}`, style: { position: 'relative' } }, h('div', { class: 'ph', style: { position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', padding: '16px', textAlign: 'center', color: 'var(--text2)', fontWeight: 700, fontSize: '18px' } }, it.title));
-  const im = lazyImg(img(it, kind, land ? 640 : 480), it.title);
+  const box = h('div', { class: `hero-poster ${land ? 'land' : ''}`, style: { position: 'relative' } }, h('div', { class: 'ph', 'aria-hidden': 'true', style: { position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', padding: '16px', textAlign: 'center', color: 'var(--text2)', fontWeight: 700, fontSize: '18px' } }, it.title));
+  const im = lazyImg(img(it, kind, land ? 640 : 480), '');
   im.style.position = 'relative';
   box.appendChild(im);
   return box;
@@ -739,6 +778,12 @@ function favButton(it) {
 function moreItems(it, d) {
   const items = [];
   if (d.files?.length) items.push({ label: 'Media info', icon: 'info', onClick: () => mediaInfoModal(d.files) });
+  const ud = it.userData || {};
+  if (it.kind !== 'show' && ud.position > 0 && !ud.played) {
+    items.push({ label: 'Remove from Continue Watching', icon: 'close', onClick: async () => {
+      if (await run(null, () => api(`/api/items/${it.id}/played`, { method: 'POST', body: { played: false } }), 'Removed from Continue Watching')) refreshSoft();
+    } });
+  }
   if (!state.me.isAdmin) return items;
   if (it.kind === 'movie' || it.kind === 'show') items.push({ label: 'Fix match…', icon: 'edit', onClick: () => fixMatch(it) });
   items.push({ label: 'Refresh metadata', icon: 'refresh', onClick: async () => {
@@ -758,6 +803,9 @@ function moreItems(it, d) {
   items.push('-');
   if (cached) {
     items.push({ label: 'Remove from SSD cache', icon: 'trash', onClick: async () => { if (await run(null, () => api(`/api/admin/cache/items/${it.id}`, { method: 'DELETE' }), 'Removed from cache')) refreshSoft(); } });
+  } else if (state.caps?.cacheEnabled === false) {
+    // Caching would only fail: point at the setting instead.
+    items.push({ label: 'Set up SSD cache…', icon: 'drive', onClick: () => { location.hash = '#/settings/cache'; } });
   } else {
     items.push({ label: it.kind === 'show' ? 'Cache all episodes on SSD' : 'Cache on SSD', icon: 'devices', onClick: async () => {
       await run(null, () => api(`/api/admin/cache/items/${it.id}`, { method: 'POST' }), (r) => `Queued ${r.queued} file${r.queued === 1 ? '' : 's'} for the SSD cache`);
@@ -787,6 +835,15 @@ function castRow(it, excludeDirectors = false) {
     }))));
 }
 
+// Metadata still being fetched: look once more a little later (once per
+// title, so a stuck fetch doesn't poll forever).
+let metaRetried = 0;
+function retryWhileFetching(ctx, it) {
+  if (it.metaStatus !== 0 || metaRetried === it.id) return;
+  metaRetried = it.id;
+  setTimeout(() => { if (ctx.isCurrent()) refreshSoft(); }, 8000);
+}
+
 function mediaView(ctx, d) {
   const it = d.item;
   const isEp = it.kind === 'episode';
@@ -812,6 +869,7 @@ function mediaView(ctx, d) {
     moreButton(it, d)));
   if (it.tagline) info.push(h('div', { class: 'tagline' }, it.tagline));
   info.push(h('p', { class: 'overview' }, it.overview || (it.metaStatus === 0 ? 'Fetching details…' : 'No description available.')));
+  retryWhileFetching(ctx, it);
   if (file) info.push(fileSummary(file));
   if (isEp) {
     // Long titles truncate inside the button rather than widen the page.
@@ -835,12 +893,17 @@ function fileSummary(f) {
   const auds = s.filter((x) => x.type === 'audio');
   const bits = [];
   if (v) bits.push(`${v.codec.toUpperCase()} ${v.width}×${v.height}${v.bitDepth > 8 ? ` ${v.bitDepth}-bit` : ''}`);
-  if (auds.length) bits.push(`${auds.length} audio (${[...new Set(auds.map((a) => langName(a.language)))].slice(0, 3).join(', ')})`);
+  if (auds.length) {
+    const langs = [...new Set(auds.filter((a) => a.language && a.language !== 'und').map((a) => langName(a.language)))].slice(0, 3);
+    bits.push(`${auds.length} audio${langs.length ? ` (${langs.join(', ')})` : ''}`);
+  }
   if (f.subtitles?.length) bits.push(`${f.subtitles.length} subtitle${f.subtitles.length > 1 ? 's' : ''}`);
   bits.push(fmtBytes(f.size));
   if (f.bitrate) bits.push(fmtBitrate(f.bitrate));
   return h('p', { class: 'muted small', style: { marginTop: '10px' } }, bits.join(' · '));
 }
+
+const CONTAINERS = { 'matroska,webm': 'MKV', 'mov,mp4,m4a,3gp,3g2,mj2': 'MP4' };
 
 function mediaInfoModal(files) {
   const body = files.map((f) => {
@@ -849,14 +912,21 @@ function mediaInfoModal(files) {
       h('dt', null, 'Name'), h('dd', null, f.name),
       f.path ? [h('dt', null, 'Path'), h('dd', { class: 'mono' }, f.path)] : null,
       h('dt', null, 'Size'), h('dd', null, fmtBytes(f.size)),
-      h('dt', null, 'Container'), h('dd', null, info.format || f.container || '?'),
+      h('dt', null, 'Container'), h('dd', null, CONTAINERS[info.format] || info.format || f.container || '?'),
       h('dt', null, 'Duration'), h('dd', null, fmtTime(info.duration || f.duration)),
       h('dt', null, 'Bitrate'), h('dd', null, fmtBitrate(info.bitrate || f.bitrate)),
       f.probeError ? [h('dt', null, 'Probe error'), h('dd', { class: 'bad' }, f.probeError)] : null))];
     for (const s of info.streams || []) {
-      const rows = [['Codec', `${s.codec}${s.profile ? ` (${s.profile})` : ''}${s.codecString ? ` · ${s.codecString}` : ''}`]];
+      // The browser codec string stays (it helps debug playback) unless it
+      // only repeats the codec name ("ac3 · ac-3").
+      const cs = s.codecString && s.codecString.replace(/[^a-z0-9]/gi, '').toLowerCase() !== (s.codec || '').toLowerCase() ? s.codecString : '';
+      const rows = [['Codec', `${s.codec}${s.profile ? ` (${s.profile})` : ''}${cs ? ` · ${cs}` : ''}`]];
       if (s.type === 'video') rows.push(['Resolution', `${s.width}×${s.height}`], ['Frame rate', s.frameRate ? s.frameRate.toFixed(3) : '?'], ['Bit depth', s.bitDepth], ['Pixel format', s.pixFmt], ['HDR', s.hdr || 'SDR'], s.dvProfile ? ['Dolby Vision', `profile ${s.dvProfile}, compat ${s.dvCompat}`] : null);
-      if (s.type === 'audio') rows.push(['Channels', `${channelName(s.channels)} ${s.channelLayout || ''}`], ['Sample rate', s.sampleRate ? `${s.sampleRate} Hz` : '?']);
+      if (s.type === 'audio') {
+        // The layout only when it adds something: "5.1(side)", not "Mono mono".
+        const ch = channelName(s.channels), layout = s.channelLayout && s.channelLayout.replace(/\(.*\)/, '').toLowerCase() !== ch.toLowerCase() ? s.channelLayout : '';
+        rows.push(['Channels', [ch, layout].filter(Boolean).join(' · ') || '?'], ['Sample rate', s.sampleRate ? `${s.sampleRate} Hz` : '?']);
+      }
       if (s.language) rows.push(['Language', langName(s.language)]);
       if (s.title) rows.push(['Title', s.title]);
       if (s.bitrate) rows.push(['Bitrate', fmtBitrate(s.bitrate)]);
@@ -918,12 +988,16 @@ async function fixMatch(it) {
 function heroActions(d) {
   const it = d.item, next = d.nextEpisode;
   const btns = [];
+  // A fully watched show starts over from its first episode.
+  const done = !it.unplayedCount && it.childCount > 0;
   if (next) {
-    const lbl = `${next.userData?.position > 0 ? 'Resume' : 'Play'} ${fmtEpisode(next)}`;
-    btns.push(h('button', { class: 'btn primary lg', dataset: { focusKey: `show-play-${it.id}` }, onclick: () => play(next.id) }, h('span', { html: icons.play }), lbl));
+    const lbl = done ? `Watch again from ${fmtEpisode(next)}` : `${next.userData?.position > 0 ? 'Resume' : 'Play'} ${fmtEpisode(next)}`;
+    btns.push(h('button', { class: 'btn primary lg', dataset: { focusKey: `show-play-${it.id}` }, onclick: () => play(next.id, done ? 0 : null) }, h('span', { html: icons.play }), lbl));
   }
   btns.push(watchedButton(it), favButton(it), moreButton(it, d));
-  return h('div', { class: 'hero-cta' }, h('div', { class: 'actions' }, btns), next ? h('p', { class: 'muted small' }, `Up next: ${next.title}`) : null);
+  // A placeholder title ("Episode 1") would only repeat the button.
+  const upNext = !done && next?.title && !/^Episode \d+$/.test(next.title);
+  return h('div', { class: 'hero-cta' }, h('div', { class: 'actions' }, btns), upNext ? h('p', { class: 'muted small' }, `Up next: ${next.title}`) : null);
 }
 
 function seasonTabLabel(tab, s) {
@@ -938,11 +1012,13 @@ async function showView(ctx, d) {
   const poster = heroPoster(it, 'poster', false);
   const next = d.nextEpisode;
   let cta = heroActions(d);
+  const n = seasons.filter((s) => s.season > 0).length;
   const info = [h('h1', null, it.title),
-    facts(it, [h('span', null, `${seasons.filter((s) => s.season > 0).length} season${seasons.length === 1 ? '' : 's'}`), it.studios?.length ? h('span', null, it.studios[0]) : null])];
+    facts(it, [n ? h('span', null, `${n} season${n === 1 ? '' : 's'}`) : null, it.studios?.length ? h('span', null, it.studios[0]) : null])];
   if (it.genres?.length) info.push(h('div', { class: 'genres' }, it.genres.map((g) => h('span', null, g))));
   info.push(cta);
   info.push(h('p', { class: 'overview' }, it.overview || (it.metaStatus === 0 ? 'Fetching details…' : 'No description available.')));
+  retryWhileFetching(ctx, it);
 
   const listId = `episodes-${it.id}`;
   const tabs = h('div', { class: 'tabs', role: 'group', 'aria-label': 'Seasons' });
@@ -984,7 +1060,7 @@ async function showView(ctx, d) {
     try {
       const eps = await api(`/api/items/${s.id}/children`);
       if (active !== s || !ctx.isCurrent()) return;
-      clear(list).append(...eps.map((e) => episodeRow(e, episodeChanged)), ...(s.overview ? [h('p', { class: 'muted', style: { maxWidth: '760px' } }, s.overview)] : []));
+      clear(list).append(...(s.overview ? [h('p', { class: 'muted', style: { maxWidth: '760px', margin: '0 0 8px' } }, s.overview)] : []), ...eps.map((e) => episodeRow(e, episodeChanged)));
       replaceHash(`#/item/${it.id}?season=${s.id}`);
     } catch (e) {
       if (active === s && ctx.isCurrent()) clear(list).append(h('p', { class: 'bad', role: 'alert' }, e.message), h('button', { class: 'btn', onclick: () => showSeason(s) }, 'Retry'));
@@ -998,9 +1074,14 @@ async function showView(ctx, d) {
     tabs.appendChild(tab);
   }
   const page = h('div', null, hero(it, poster, info),
-    h('div', { class: 'page', style: { paddingTop: 0 } }, tabs, list),
+    h('div', { class: 'page', style: { paddingTop: 0 } }, h('h2', { class: 'sr-only' }, 'Episodes'), tabs, list),
     castRow(it));
   if (active) await showSeason(active);
+  // Many seasons: bring the selected tab into view once the page is laid out.
+  requestAnimationFrame(() => {
+    const tab = active && tabFor(active);
+    if (tab && tabs.scrollWidth > tabs.clientWidth) tabs.scrollLeft = tab.offsetLeft - tabs.offsetLeft - (tabs.clientWidth - tab.offsetWidth) / 2;
+  });
   return page;
 }
 
@@ -1036,26 +1117,38 @@ function episodeRow(e, onChange) {
     if (ud.played) art.appendChild(badge); else badge.remove();
   };
   show();
+  // The link is named by its heading; date, progress and synopsis are its description.
+  const id = `ep-${e.id}`;
   return h('div', { class: 'episode' },
-  art,
-  h('a', { class: 'episode-info', href: `#/item/${e.id}`, 'aria-label': `Episode ${e.episode}: ${e.title}` },
-    h('h3', null, h('span', { class: 'num' }, `${e.episode}${e.episodeEnd ? '–' + e.episodeEnd : ''}.`), e.title),
-    h('div', { class: 'dim small' }, [e.premiere ? new Date(e.premiere).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '', e.duration ? fmtDuration(e.duration) : '', ud.position > 0 && !ud.played ? `${fmtDuration(e.duration - ud.position)} left` : ''].filter(Boolean).join(' · ')),
-    e.overview ? h('p', null, e.overview) : null),
-  h('div', { class: 'side' }, wbtn));
+    art,
+    h('a', { class: 'episode-info', href: `#/item/${e.id}`, 'aria-labelledby': `${id}-t`, 'aria-describedby': e.overview ? `${id}-m ${id}-o` : `${id}-m` },
+      h('h3', { id: `${id}-t` }, h('span', { class: 'num' }, `${e.episode}${e.episodeEnd ? '–' + e.episodeEnd : ''}.`), e.title),
+      h('div', { class: 'dim small', id: `${id}-m` }, [e.premiere ? new Date(e.premiere).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '', e.duration ? fmtDuration(e.duration) : '', ud.position > 0 && !ud.played ? `${fmtDuration(e.duration - ud.position)} left` : ''].filter(Boolean).join(' · ')),
+      e.overview ? h('p', { id: `${id}-o` }, e.overview) : null),
+    h('div', { class: 'side' }, wbtn));
 }
 
 // ---------- search ----------
 async function searchView(ctx, q) {
   // Leave the box alone while it holds this query (e.g. with a trailing space being typed).
   if (searchInput && searchInput.value.trim() !== q) searchInput.value = q;
+  if (!q.trim()) {
+    return h('div', { class: 'page' }, h('h1', { class: 'page-title' }, 'Search'),
+      emptyState({ level: 'h2', title: 'Search your movies and shows', text: 'Type a title in the search box above.' }));
+  }
   const r = await api(`/api/search?q=${encodeURIComponent(q)}`);
-  const page = h('div', { class: 'page' }, h('h1', { class: 'page-title' }, `Results for “${q}”`));
   const total = r.movies.length + r.shows.length + r.episodes.length;
+  // Filled a moment after the page is in, so screen readers announce it.
+  const status = h('p', { class: 'sr-only', role: 'status' });
+  setTimeout(() => { status.textContent = `${total} result${total === 1 ? '' : 's'}`; }, 150);
+  const page = h('div', { class: 'page' }, h('h1', { class: 'page-title' }, `Results for “${q}”`), status);
   if (!total) page.appendChild(h('div', { class: 'empty' }, h('h2', null, 'No matches'), h('p', null, 'Try a different title.')));
-  if (r.shows.length) page.append(h('h2', { class: 'section-title', style: { margin: '24px 0 14px' } }, 'Shows'), h('div', { class: 'grid' }, r.shows.map(posterCard)));
-  if (r.movies.length) page.append(h('h2', { class: 'section-title', style: { margin: '24px 0 14px' } }, 'Movies'), h('div', { class: 'grid' }, r.movies.map(posterCard)));
-  if (r.episodes.length) page.append(h('h2', { class: 'section-title', style: { margin: '24px 0 14px' } }, 'Episodes'), h('div', { class: 'grid land' }, r.episodes.map((e) => landCard(e, { playOnClick: false }))));
+  // The server sends at most 40 of each kind.
+  const group = (title, items, grid) => page.append(h('h2', { class: 'section-title', style: { margin: '24px 0 14px' } }, title), grid,
+    ...(items.length >= 40 ? [h('p', { class: 'dim small' }, 'Showing the first 40. Type more of the title to narrow the results.')] : []));
+  if (r.shows.length) group('Shows', r.shows, h('div', { class: 'grid' }, r.shows.map(posterCard)));
+  if (r.movies.length) group('Movies', r.movies, h('div', { class: 'grid' }, r.movies.map(posterCard)));
+  if (r.episodes.length) group('Episodes', r.episodes, h('div', { class: 'grid land' }, r.episodes.map((e) => landCard(e, { playOnClick: false }))));
   return page;
 }
 
