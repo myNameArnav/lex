@@ -69,8 +69,11 @@ export async function settingsView(ctx, section) {
     state.me.isAdmin ? [h('div', { class: 'grp' }, 'Server'), SECTIONS.filter((s) => s[3]).map(link)] : null);
   const content = h('div');
   const def = SECTIONS.find((s) => s[0] === section);
-  if (!def || (def[3] && !state.me.isAdmin)) content.appendChild(h('div', { class: 'empty' }, 'Not available'));
-  else content.appendChild(await ({
+  if (!def) content.appendChild(emptyState({ level: 'h2', title: 'Not found', text: 'There’s no settings page here.', actions: [h('a', { class: 'btn', href: '#/settings/preferences' }, 'Playback settings')] }));
+  else if (def[3] && !state.me.isAdmin) {
+    content.appendChild(emptyState({ level: 'h2', title: 'Admins only', text: 'Ask an administrator to change server settings.',
+      actions: [h('a', { class: 'btn', href: '#/settings/preferences' }, 'Playback settings')] }));
+  } else content.appendChild(await ({
     preferences: prefsSection, account: accountSection, server: serverSection, transcoding: transcodingSection,
     metadata: metadataSection, cache: cacheSection, libraries: librariesSection, users: usersSection, devices: devicesSection, logs: logsSection, about: aboutSection,
   })[section](ctx));
@@ -101,10 +104,11 @@ function field(label, input, help) {
 }
 
 let toggleId = 0;
-function toggleRow(label, help, checked, onchange) {
+function toggleRow(label, help, checked, onchange, { disabled = false } = {}) {
   const control = toggle(checked, onchange, label);
   const helpId = `toggle-help-${++toggleId}`;
   if (help) control.firstChild.setAttribute('aria-describedby', helpId);
+  control.firstChild.disabled = disabled;
   return h('label', { class: 'toggle-row' }, h('span', { class: 'lbl' }, h('b', null, label), help ? h('span', { class: 'help', id: helpId }, help) : null), control);
 }
 
@@ -113,6 +117,7 @@ function select(value, options, onchange) {
 }
 
 // ---------- per-device playback prefs ----------
+let capsOpen = false; // stays open across re-renders
 function prefsSection() {
   const p = prefs.all();
   const set = (k, conv = (x) => x) => (v) => { prefs.set(k, conv(v)); toast('Saved on this device', 'ok'); };
@@ -123,12 +128,12 @@ function prefsSection() {
       h('p', { class: 'help', style: { margin: 0 } }, 'These settings are stored in this browser, so each device can have its own (e.g. lower quality on your phone).'),
       h('div', { class: 'form-grid' },
         field('Streaming quality', select(p.quality, QUALITIES, set('quality', Number)), 'Max bitrate. "Original" direct-plays when the browser supports the file.'),
-        field('Playback method', select(p.mode, [['auto', 'Automatic (recommended)'], ['direct', 'Prefer Direct Play'], ['remux', 'Always Direct Stream (remux)'], ['transcode', 'Always Transcode']], set('mode'))))),
+        field('Playback method', select(p.mode, [['auto', 'Automatic (recommended)'], ['direct', 'Prefer Direct Play'], ['remux', 'Always Direct Stream (remux)'], ['transcode', 'Always Transcode']], set('mode')), 'Automatic picks the lightest method that works here. Try “Always Transcode” if a video stutters or won’t play.'))),
     h('div', { class: 'form-section' }, h('h2', null, 'Buffering'),
       h('div', { class: 'form-grid' },
         field('Buffer ahead', select(p.bufferAhead, [[0, 'Automatic (recommended)'], [30, 'At most 30 seconds'], [60, 'At most 1 minute'], [90, 'At most 90 seconds'], [180, 'At most 3 minutes'], [300, 'At most 5 minutes']], set('bufferAhead', Number)), 'For direct stream and transcode (direct play is always buffered by the browser). Automatic fills as much as the browser allows, usually about 150 MB. A limit keeps a transcode from running far ahead of what you watch.'),
         field('Keep behind playhead', select(p.backBuffer, [[10, '10 seconds'], [30, '30 seconds'], [60, '1 minute'], [120, '2 minutes']], set('backBuffer', Number)), 'Lets you rewind instantly; lower saves memory on phones/TVs.'),
-        field('Progress update interval', select(p.heartbeat, [[5, '5 seconds'], [10, '10 seconds'], [30, '30 seconds']], set('heartbeat', Number))))),
+        field('Progress update interval', select(p.heartbeat, [[5, '5 seconds'], [10, '10 seconds'], [30, '30 seconds']], set('heartbeat', Number)), 'How often your position is saved, so you can resume on another device.'))),
     h('div', { class: 'form-section' }, h('h2', null, 'Audio & subtitles'),
       h('div', { class: 'form-grid' },
         field('Preferred audio language', select(p.audioLang, langs, set('audioLang'))),
@@ -146,9 +151,20 @@ function prefsSection() {
         field('Autoplay countdown', select(p.countdown, [[5, '5 seconds'], [10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds']], set('countdown', Number))),
         field('Skip back', select(p.skipBack, [[5, '5 seconds'], [10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds']], set('skipBack', Number))),
         field('Skip forward', select(p.skipFwd, [[10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds'], [60, '60 seconds']], set('skipFwd', Number))))),
-    h('div', { class: 'form-section' }, h('h2', null, "This browser's playback capabilities"),
-      h('dl', { class: 'kv' }, Object.entries(caps).map(([k, v]) => [h('dt', null, k), h('dd', null, v)]))),
-    h('div', null, h('button', { class: 'btn', onclick: () => { prefs.reset(); toast('Reset to defaults', 'ok'); route(); } }, 'Reset to defaults')));
+    h('div', { class: 'form-section' }, h('details', { class: 'caps', open: capsOpen, ontoggle: (e) => { capsOpen = e.target.open; } }, h('summary', null, h('h2', null, 'Technical: this browser’s codecs')),
+      h('dl', { class: 'kv' }, Object.entries(caps).map(([k, v]) => [h('dt', null, k), h('dd', null, v)])))),
+    h('div', null, h('button', { class: 'btn', dataset: { focusKey: 'prefs-reset' }, onclick: resetPrefs }, 'Reset to defaults')));
+}
+
+// Volume and the stats panel's compact state aren't shown on this page, so a
+// reset leaves them as they are.
+async function resetPrefs() {
+  if (!(await confirmDialog('Reset playback settings on this device to their defaults?', 'Reset', true, 'Reset playback settings?'))) return;
+  const keep = ['volume', 'muted', 'statsCompact'].map((k) => [k, prefs.get(k)]);
+  prefs.reset();
+  keep.forEach(([k, v]) => prefs.set(k, v));
+  toast('Reset to defaults', 'ok');
+  refreshSoft();
 }
 
 // formErrors gives a form an inline error line (role=alert) and helpers to
@@ -216,7 +232,8 @@ function accountSection() {
 // configForm edits /api/admin/config through a draft: Save (or Enter in a
 // field) sends it, Save stays disabled until something differs from the
 // saved config, and leaving the page with unsaved edits asks first.
-async function configForm(build) {
+// check(draft) may return [message, control] to stop a save with an inline error.
+async function configForm(build, { check } = {}) {
   let cfg = await api('/api/admin/config');
   const info = await api('/api/admin/info');
   const draft = { ...cfg };
@@ -237,10 +254,11 @@ async function configForm(build) {
   // A comma-separated list shown in a box that wraps; a new line counts as a comma.
   const list = (k, attrs = {}) => h('textarea', { rows: 2, value: draft[k] ?? '', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', ...attrs,
     oninput: (e) => { draft[k] = e.target.value.split(/[,\n]/).map((x) => x.trim()).filter(Boolean).join(', '); } });
-  const tg = (k, label, help) => toggleRow(label, help, !!draft[k], bind(k));
+  const tg = (k, label, help, opts) => toggleRow(label, help, !!draft[k], bind(k), opts);
   const note = h('span', { class: 'muted small', hidden: true }, 'Unsaved changes');
+  const err = h('span', { class: 'err', role: 'alert' });
   const save = h('button', { class: 'btn primary', type: 'submit', disabled: true }, 'Save changes');
-  const mark = () => { const d = dirty(); if (!save.hasAttribute('aria-busy')) save.disabled = !d; note.hidden = !d; };
+  const mark = () => { const d = dirty(); if (!save.hasAttribute('aria-busy')) save.disabled = !d; note.hidden = !d; err.textContent = ''; };
   // Step mismatches are allowed on purpose (the server doesn't enforce
   // steps, and stored values may be off-step), but every setting is a whole number.
   const invalid = () => [...controls.values()].find((i) => {
@@ -253,6 +271,8 @@ async function configForm(build) {
     const bad = invalid();
     if (bad) { bad.focus(); bad.reportValidity(); return; }
     if (!dirty()) return;
+    const [msg, ctl] = check?.(draft) || [];
+    if (msg) { note.hidden = true; err.textContent = msg; ctl?.focus(); return; }
     let reset = [];
     const ok = await run(save, async () => {
       const sent = { ...draft };
@@ -277,8 +297,11 @@ async function configForm(build) {
     if (reset.length) toast(`Saved, but some values were out of range and were reset: ${reset.join(', ')}`, 'error');
   };
   // novalidate: Save checks the number fields itself (see invalid()).
-  const form = h('form', { class: 'form cols', novalidate: true, onsubmit: onSubmit, oninput: mark, onchange: mark },
-    build({ draft, num, text, list, tg, bind, info }), h('div', { class: 'save-bar' }, save, note));
+  // A single section doesn't use the two-column layout (it'd leave one empty).
+  const parts = build({ draft, num, text, list, tg, bind, info });
+  const many = Array.isArray(parts) && parts.length > 1;
+  const form = h('form', { class: many ? 'form cols' : 'form', novalidate: true, onsubmit: onSubmit, oninput: mark, onchange: mark },
+    parts, h('div', { class: 'save-bar' }, save, note, err));
   setLeaveGuard(() => form.isConnected && dirty());
   return form;
 }
@@ -321,26 +344,31 @@ function serverSection() {
 }
 
 function transcodingSection() {
+  let first = null;
+  // With every method off nothing can play.
+  const check = (d) => (!d.enableDirectPlay && !d.enableRemux && !d.enableTranscode ? ['Keep at least one playback method on', first] : null);
   return configForm(({ draft, num, text, tg, bind, info }) => {
     const encs = info.ffmpeg.encoders || [];
     const encOpts = [['libx264', `libx264 (software)${encs.includes('libx264') ? '' : ' — not available'}`], ['h264_v4l2m2m', `h264_v4l2m2m (Raspberry Pi hardware)${encs.includes('h264_v4l2m2m') ? (info.ffmpeg.v4l2Device ? '' : ' — no /dev/video11') : ' — not in this ffmpeg'}`]];
+    const direct = tg('enableDirectPlay', 'Direct Play', 'Send the original file untouched (range requests). Zero CPU.');
+    first = direct.querySelector('input');
     return [
       h('div', { class: 'form-section' }, h('h2', null, 'Playback methods'),
-        tg('enableDirectPlay', 'Direct Play', 'Send the original file untouched (range requests). Zero CPU.'),
+        direct,
         tg('enableRemux', 'Direct Stream (remux)', 'Repackage into fragmented MP4 without re-encoding video. Very low CPU; audio is converted to AAC only if needed.'),
         tg('enableTranscode', 'Transcode', 'Re-encode video to H.264. CPU heavy on low-end boards.'),
         h('div', { class: 'form-grid' },
           field('Max simultaneous video transcodes', num('maxTranscodes', { min: 0, max: 16 }), '0 = unlimited. 1 is sensible on a Raspberry Pi.'),
           field('Max transcode resolution', h('select', { onchange: (e) => { draft.maxTranscodeHeight = +e.target.value; } }, [[480, '480p'], [720, '720p'], [1080, '1080p'], [2160, '4K']].map(([v, l]) => h('option', { value: v, selected: draft.maxTranscodeHeight === v }, l)))))),
       h('div', { class: 'form-section' }, h('h2', null, 'Video encoder'),
-        field('Encoder', h('select', { onchange: (e) => { draft.videoEncoder = e.target.value; } }, encOpts.map(([v, l]) => h('option', { value: v, selected: draft.videoEncoder === v }, l)))),
+        field('Encoder', h('select', { onchange: (e) => { draft.videoEncoder = e.target.value; } }, encOpts.map(([v, l]) => h('option', { value: v, selected: draft.videoEncoder === v, disabled: !encs.includes(v) }, l)))),
         h('div', { class: 'form-grid' },
           field('x264 preset', h('select', { onchange: (e) => { draft.x264Preset = e.target.value; } }, ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium'].map((v) => h('option', { value: v, selected: draft.x264Preset === v }, v))), 'Faster presets use less CPU at slightly lower quality.'),
           field('x264 CRF', num('x264Crf', { min: 15, max: 35 }), 'Quality target (capped by the bitrate limit). Lower = better.'),
           field('Threads', num('transcodeThreads', { min: 0, max: 64 }), '0 = automatic.'),
           field('Process priority (nice)', num('ffmpegNice', { min: 0, max: 19 }), 'Higher = yields CPU to other services.')),
-        tg('hwDecode', 'Hardware HEVC decoding (Raspberry Pi)', info.ffmpeg.hevcHwDecode ? 'Uses the Pi\'s HEVC decoder (/dev/video19) when transcoding HEVC; falls back to software automatically.' : 'Unavailable: needs dtoverlay=vc4-kms-v3d in /boot/firmware/config.txt (then reboot) and an ffmpeg with the drm hwaccel.'),
-        tg('tonemap', 'HDR → SDR tone mapping', info.ffmpeg.hasZscale ? 'Converts HDR colours when transcoding. Expensive.' : 'Unavailable: this ffmpeg has no zscale filter.')),
+        tg('hwDecode', 'Hardware HEVC decoding (Raspberry Pi)', info.ffmpeg.hevcHwDecode ? 'Uses the Pi\'s HEVC decoder (/dev/video19) when transcoding HEVC; falls back to software automatically.' : 'Unavailable: needs dtoverlay=vc4-kms-v3d in /boot/firmware/config.txt (then reboot) and an ffmpeg with the drm hwaccel.', { disabled: !info.ffmpeg.hevcHwDecode }),
+        tg('tonemap', 'HDR → SDR tone mapping', info.ffmpeg.hasZscale ? 'Converts HDR colours when transcoding. Expensive.' : 'Unavailable: this ffmpeg has no zscale filter.', { disabled: !info.ffmpeg.hasZscale })),
       h('div', { class: 'form-section' }, h('h2', null, 'Audio'),
         h('div', { class: 'form-grid' },
           field('Transcoded audio channels', h('select', { onchange: (e) => { draft.audioChannels = +e.target.value; } }, [[2, 'Stereo'], [6, '5.1 surround']].map(([v, l]) => h('option', { value: v, selected: draft.audioChannels === v }, l)))),
@@ -350,14 +378,17 @@ function transcodingSection() {
           field('Minimum fragment duration (ms)', num('fragmentMs', { min: 200, max: 10000, step: 100 }), 'Fragments start at video keyframes. Direct stream uses the source file’s keyframes.'),
           field('Keyframe interval (s)', num('keyframeSec', { min: 1, max: 10 }), 'For transcodes. Shorter = more precise seeking.'))),
     ];
-  });
+  }, { check });
 }
 
-function metadataSection() {
-  return configForm(({ draft, text, tg, num }) => [
+// The fields need Save; the Actions below the form run at once, with the
+// saved settings.
+async function metadataSection() {
+  const tasks = await api('/api/admin/tasks').catch(() => null);
+  const form = await configForm(({ draft, text, tg, num }) => [
     h('div', { class: 'form-section' }, h('h2', null, 'Providers'),
       h('p', { class: 'help', style: { margin: 0 } }, 'TMDB gives the richest data (posters, backdrops, cast, episode stills). Get a free API key at themoviedb.org → Settings → API. Without it, TVmaze is used for shows and your local Radarr (auto-detected) for movies — no keys needed.'),
-      field('TMDB API key or read access token', text('tmdbKey', { type: 'password', placeholder: 'v3 key or v4 token', autocomplete: 'off' })),
+      field('TMDB API key or read access token', text('tmdbKey', { type: 'password', placeholder: 'v3 key or v4 token', autocomplete: 'off' }), 'Saving a new key retries unmatched items automatically.'),
       field('Language', text('metadataLanguage', { placeholder: 'en-US' })),
       tg('enableTmdb', 'Use TMDB'),
       tg('enableTvmaze', 'Use TVmaze for shows (no key)'),
@@ -382,19 +413,23 @@ function metadataSection() {
       h('div', { class: 'form-grid' },
         field('Analyse the first (seconds)', num('introScanSecs', { min: 120, max: 1800, step: 30 }), 'Intros after cold opens can start a few minutes in.'),
         field('Shortest intro (seconds)', num('introMinSecs', { min: 5, max: 60 })),
-        field('Longest intro (seconds)', num('introMaxSecs', { min: 20, max: 300 }))),
-      h('div', null, h('button', { class: 'btn', type: 'button', onclick: (e) => run(e.currentTarget, () => api('/api/admin/intro/scan', { method: 'POST' }), 'Intro detection started') }, 'Detect intros now'))),
+        field('Longest intro (seconds)', num('introMaxSecs', { min: 20, max: 300 })))),
     h('div', { class: 'form-section' }, h('h2', null, 'Local'),
       tg('useLocalMetadata', 'Use local artwork & hints', 'poster.jpg / fanart.jpg / *-thumb.jpg, .plexmatch and .nfo ids.'),
       tg('generateThumbs', 'Generate missing episode thumbnails', 'Grabs one frame with ffmpeg when no still is available (cached).')),
-    h('div', { class: 'form-section' }, h('h2', null, 'Refresh'),
-      h('div', { class: 'row wrap' },
-        h('button', { class: 'btn', type: 'button', onclick: (e) => run(e.currentTarget, () => api('/api/admin/metadata/refresh', { method: 'POST', body: { missingOnly: true } }), 'Retrying unmatched items') }, 'Retry unmatched items'),
-        h('button', { class: 'btn', type: 'button', onclick: async (e) => {
-          const btn = e.currentTarget;
-          if (await confirmDialog('Re-fetch metadata for every item? Manual matches are kept.')) await run(btn, () => api('/api/admin/metadata/refresh', { method: 'POST', body: {} }), 'Refreshing all metadata in background');
-        } }, 'Refresh all metadata'))),
   ]);
+  const introOK = tasks?.intro?.available !== false;
+  const actions = h('div', { class: 'form-section' }, h('h2', null, 'Actions'),
+    h('p', { class: 'help', style: { margin: 0 } }, 'These run now, using the saved settings. Save your changes above first.'),
+    h('div', { class: 'row wrap' },
+      h('button', { class: 'btn', type: 'button', onclick: (e) => run(e.currentTarget, () => api('/api/admin/metadata/refresh', { method: 'POST', body: { missingOnly: true } }), 'Retrying unmatched items') }, 'Retry unmatched items'),
+      h('button', { class: 'btn', type: 'button', onclick: async (e) => {
+        const btn = e.currentTarget;
+        if (await confirmDialog('Re-fetch metadata for every item? Manual matches are kept.', 'Refresh', false, 'Refresh all metadata?')) await run(btn, () => api('/api/admin/metadata/refresh', { method: 'POST', body: {} }), 'Refreshing all metadata in the background');
+      } }, 'Refresh all metadata'),
+      h('button', { class: 'btn', type: 'button', disabled: !introOK, 'aria-describedby': introOK ? null : 'intro-unavail', onclick: (e) => run(e.currentTarget, () => api('/api/admin/intro/scan', { method: 'POST' }), 'Intro detection started') }, 'Detect intros now')),
+    introOK ? null : h('div', { class: 'help', id: 'intro-unavail' }, 'Intro detection is unavailable: this ffmpeg has no chromaprint support.'));
+  return h('div', { class: 'form' }, form, actions);
 }
 
 // ---------- libraries ----------
@@ -618,11 +653,16 @@ async function usersSection() {
           const ok = u.isAdmin
             ? await confirmDialog(`Make ${u.name} a regular user? They will no longer be able to change settings, libraries or users.`, 'Make user', false, 'Make user?')
             : await confirmDialog(`Make ${u.name} an administrator? They can change settings, libraries and users.`, 'Make admin', false, 'Make admin?');
-          if (ok && await run(btn, () => api(`/api/admin/users/${u.id}`, { method: 'PUT', body: { isAdmin: !u.isAdmin } }), u.isAdmin ? `${u.name} is now a user` : `${u.name} is now an admin`)) refreshSoft();
+          if (ok && await run(btn, () => api(`/api/admin/users/${u.id}`, { method: 'PUT', body: { isAdmin: !u.isAdmin } }), u.isAdmin ? `Made ${u.name} a regular user` : `Made ${u.name} an admin`)) refreshSoft();
         } }, u.isAdmin ? 'Make user' : 'Make admin') : null,
-        u.id !== state.me.id ? h('button', { class: 'btn sm danger', onclick: async (e) => {
+        u.id !== state.me.id ? h('button', { class: 'btn sm danger', 'aria-label': `Delete ${u.name}`, dataset: { focusKey: `user-del-${u.id}` }, onclick: async (e) => {
           const btn = e.currentTarget;
-          if (await confirmDialog(`Delete user ${u.name}?`, 'Delete', true) && await run(btn, () => api(`/api/admin/users/${u.id}`, { method: 'DELETE' }))) route();
+          if (!(await confirmDialog(`Delete ${u.name}? Their watch history, favourites and signed-in devices are removed. This can’t be undone.`, 'Delete user', true, 'Delete user?'))) return;
+          if (!(await run(btn, () => api(`/api/admin/users/${u.id}`, { method: 'DELETE' }), `Deleted ${u.name}`))) return;
+          // The row goes away: focus the next row's Delete (or the Add user form).
+          const others = users.filter((x) => x.id !== state.me.id), i = others.indexOf(u), next = others[i + 1] || others[i - 1];
+          focusAfterRoute(next ? `user-del-${next.id}` : 'user-new-name');
+          refreshSoft();
         } }, 'Delete') : null)))));
   return h('div', { class: 'form' },
     h('div', { class: 'form-section' }, h('h2', null, 'Users'), h('div', { class: 'table-wrap' }, tbl)),
@@ -858,8 +898,8 @@ async function aboutSection() {
       h('dt', null, 'V4L2 device'), h('dd', null, f.v4l2Device ? 'present' : 'not present (hardware encoding unavailable)'),
       h('dt', null, 'Tone mapping'), h('dd', null, f.hasZscale && f.hasTonemap ? 'available' : 'unavailable'))),
     h('div', { class: 'form-section' }, h('h2', null, 'Caches'),
-      h('div', { class: 'toggle-row' }, h('div', { class: 'lbl' }, h('b', null, 'Artwork'), h('span', { class: 'help' }, `${fmtBytes(i.imageCache)} — re-downloaded on demand`)), h('button', { class: 'btn sm', onclick: async (e) => { if (await run(e.currentTarget, () => api('/api/admin/cache/clear', { method: 'POST', body: { kind: 'images' } }), 'Artwork cache cleared')) route(); } }, 'Clear')),
-      h('div', { class: 'toggle-row' }, h('div', { class: 'lbl' }, h('b', null, 'Subtitles'), h('span', { class: 'help' }, `${fmtBytes(i.subsCache)} — extracted WebVTT`)), h('button', { class: 'btn sm', onclick: async (e) => { if (await run(e.currentTarget, () => api('/api/admin/cache/clear', { method: 'POST', body: { kind: 'subs' } }), 'Subtitle cache cleared')) route(); } }, 'Clear'))));
+      h('div', { class: 'toggle-row' }, h('div', { class: 'lbl' }, h('b', null, 'Artwork'), h('span', { class: 'help' }, `${fmtBytes(i.imageCache)} — re-downloaded on demand`)), h('button', { class: 'btn sm', 'aria-label': 'Clear artwork cache', dataset: { focusKey: 'clear-images' }, onclick: async (e) => { if (await run(e.currentTarget, () => api('/api/admin/cache/clear', { method: 'POST', body: { kind: 'images' } }), 'Artwork cache cleared')) refreshSoft(); } }, 'Clear')),
+      h('div', { class: 'toggle-row' }, h('div', { class: 'lbl' }, h('b', null, 'Subtitles'), h('span', { class: 'help' }, `${fmtBytes(i.subsCache)} — extracted WebVTT`)), h('button', { class: 'btn sm', 'aria-label': 'Clear subtitle cache', dataset: { focusKey: 'clear-subs' }, onclick: async (e) => { if (await run(e.currentTarget, () => api('/api/admin/cache/clear', { method: 'POST', body: { kind: 'subs' } }), 'Subtitle cache cleared')) refreshSoft(); } }, 'Clear'))));
 }
 
 // ======================================================================

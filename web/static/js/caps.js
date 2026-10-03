@@ -55,14 +55,22 @@ export function detectCaps() {
   return caps;
 }
 
+// Readable names for the codec and container keys above.
+const LABELS = {
+  h264: 'H.264', h264_10: 'H.264 10-bit', hevc: 'HEVC', hevc10: 'HEVC 10-bit', av1: 'AV1', av1_10: 'AV1 10-bit',
+  vp8: 'VP8', vp9: 'VP9', vp9_10: 'VP9 10-bit', dv5: 'Dolby Vision 5',
+  aac: 'AAC', mp3: 'MP3', ac3: 'Dolby Digital (AC-3)', eac3: 'Dolby Digital Plus (E-AC-3)', opus: 'Opus', flac: 'FLAC', alac: 'ALAC', vorbis: 'Vorbis',
+  mp4: 'MP4', webm: 'WebM', mkv: 'MKV',
+};
+
 export function capsSummary(c = detectCaps()) {
-  const on = (m) => Object.entries(m).filter(([, v]) => v).map(([k]) => k).join(', ') || 'none';
+  const on = (m) => Object.entries(m).filter(([, v]) => v).map(([k]) => LABELS[k] || k).join(', ') || 'none';
   return {
     'Media Source': c.mse ? (window.ManagedMediaSource ? 'ManagedMediaSource' : 'MediaSource') : 'not available',
-    'Direct containers': on(c.direct),
-    'Direct video': on(c.nativeVideo),
-    'Direct audio': on(c.nativeAudio),
-    'Stream video (MSE)': on(c.video),
-    'Stream audio (MSE)': on(c.audio),
+    'Direct Play containers': on(c.direct),
+    'Direct Play video': on(c.nativeVideo),
+    'Direct Play audio': on(c.nativeAudio),
+    'Streamed video (MSE)': on(c.video),
+    'Streamed audio (MSE)': on(c.audio),
   };
 }
