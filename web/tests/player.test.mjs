@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 // Run the actual Player methods with a native video whose play() stays
 // pending and never emits an error, as in the Firefox MKV startup hang.
-async function fixture({ method = 'direct', hls = false, blocked = false, rejectRemux = false, apiGate = null, openGate = null, apiFailures = [], progressError = null, prefValues = {} } = {}) {
+async function fixture({ method = 'direct', hls = false, blocked = false, rejectRemux = false, apiGate = null, openGate = null, apiFailures = [], progressError = null, prefValues = {}, fetchImpl = null } = {}) {
   let now = 0;
   let timerID = 0;
   const timers = new Map();
@@ -41,7 +41,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
   const video = new Video();
   const history = { state: null, backs: 0, back() { this.backs++; } };
   const context = vm.createContext({
-    performance: { now: () => now }, history,
+    performance: { now: () => now }, history, fetch: fetchImpl,
     document: new EventTarget(), window: new EventTarget(),
     setInterval: () => 1, clearInterval() {},
     setTimeout: (fn, ms) => { const id = ++timerID; timers.set(id, { fn, at: now + ms }); return id; },
@@ -66,7 +66,8 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
       }, img() {},
     },
     './caps.js': { detectCaps: () => ({ mse: true }) },
-    './prefs.js': { prefs: { get: k => k in prefValues ? prefValues[k] : k === 'heartbeat' ? 10 : 0, set() {} }, QUALITIES: [] },
+    './app.js': { state: { me: { id: 1, isAdmin: false }, caps: {} } },
+    './prefs.js': { prefs: { get: k => k in prefValues ? prefValues[k] : k === 'heartbeat' ? 10 : 0, set: (k, v) => { prefValues[k] = v; } }, QUALITIES: [] },
     './mse.js': { MseEngine: class {
       async open() {
         if (openGate) await (typeof openGate === 'function' ? openGate() : openGate);
@@ -85,6 +86,8 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
   deps['./ui.js'].langName = value => value;
   deps['./ui.js'].toast = () => {};
   deps['./ui.js'].releaseToasts = () => {};
+  deps['./ui.js'].confirmDialog = async () => true;
+  deps['./ui.js'].run = async (btn, fn) => { await fn(); return true; };
   deps['./ui.js'].METHOD_LABEL = { direct: 'Direct Play', remux: 'Direct Stream', transcode: 'Transcode' };
   deps['./ui.js'].reasonLabel = value => value;
   deps['./ui.js'].fmtEpisode = it => `S${it.season} E${it.episode}`;
@@ -102,7 +105,8 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
     item: { id: 1 }, file: { id: 2 }, trick: { fileId: 2 },
     mode: 'auto', quality: 0, audio: 1, subtitle: -1, sessionId: 'session',
     closed: false, started: false, fallbacks: 0, bufHist: [], stalls: { count: 0, secs: 0, since: 0 },
-    root: Object.assign(new EventTarget(), { remove() {} }), seek: new EventTarget(),
+    root: Object.assign(new EventTarget(), { remove() {}, querySelectorAll: () => [], classList: classes() }),
+    seek: Object.assign(new EventTarget(), { classList: classes() }),
     playBtn: { setAttribute() {} }, methodEl: {}, fsBtn: { setAttribute() {} },
     poke() {}, beat() {}, setStatus() {}, setSubtitleTrack: value => subtitleCalls.push(value), hideError() {}, showUI() {},
     clientStats: () => ({ bufferAhead: 0 }), checkUpNext() {}, renderEnds() {},
@@ -120,7 +124,12 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
       player.tickUI(); await flush();
     } while (now < until);
   };
-  return { player, video, requests, errors, spinners, subtitleCalls, advance, flush, history };
+  return { player, video, requests, errors, spinners, subtitleCalls, advance, flush, history, prefValues };
+}
+
+function classes() {
+  const set = new Set();
+  return { add: c => set.add(c), remove: c => set.delete(c), contains: c => set.has(c), toggle: (c, on = !set.has(c)) => (on ? set.add(c) : set.delete(c), on) };
 }
 
 function gate() {
@@ -407,4 +416,57 @@ test('cancelling Up next lets the episode end without playing the next one', asy
   f.player.onEnded();
   assert.equal(nexts, 1);
   assert.equal(ends, 1);
+});
+
+test('turning subtitles off in the player never turns off forced subtitles globally', async () => {
+  const subs = [{ index: 3, language: 'eng', textSub: true }, { index: 5, language: 'eng', forced: true, textSub: true }, { index: 4, language: 'spa', textSub: true }];
+  for (const [mode, want] of [['auto', 'auto'], ['always', 'auto'], ['off', 'off']]) {
+    const f = await fixture({ prefValues: { subMode: mode, subLang: 'eng' } });
+    Object.assign(f.player, { file: { id: 2, subtitles: subs }, subtitle: 3 });
+    await f.player.chooseSubtitle(-1);
+    assert.equal(f.prefValues.subMode, want, `from ${mode}`);
+    assert.equal(f.prefValues.subLang, 'eng');
+  }
+  // A forced track doesn't become the preferred language; a full one does.
+  const f = await fixture({ prefValues: { subMode: 'auto', subLang: 'spa' } });
+  Object.assign(f.player, { file: { id: 2, subtitles: subs }, subtitle: -1 });
+  await f.player.chooseSubtitle(5);
+  assert.equal(f.prefValues.subLang, 'spa');
+  await f.player.chooseSubtitle(3);
+  assert.equal(f.prefValues.subLang, 'eng');
+});
+
+test('a subtitle that fails to load is not left selected or remembered', async () => {
+  const f = await fixture({
+    prefValues: { subMode: 'auto', subLang: 'eng' },
+    fetchImpl: async () => ({ ok: false, status: 500, json: async () => ({ error: 'ffmpeg exited 1' }) }),
+  });
+  delete f.player.setSubtitleTrack; // the real one
+  let menus = 0;
+  Object.assign(f.player, { file: { id: 2, subtitles: [{ index: 4, language: 'spa', textSub: true }] }, subtitle: -1, menuName: 'tracks', renderMenu() { menus++; } });
+  f.video.textTracks = [];
+  await f.player.chooseSubtitle(4);
+  assert.equal(f.player.subtitle, -1);
+  assert.equal(f.prefValues.subLang, 'eng');
+  assert.equal(menus, 1, 'an open tracks menu is redrawn');
+});
+
+test('the controls stay up while scrubbing or while the mouse rests on them', async () => {
+  const f = await fixture();
+  delete f.player.poke; delete f.player.showUI;
+  let hidden = false;
+  f.player.root.querySelector = () => null;
+  f.player.showUI = on => { hidden = !on; };
+  f.video.paused = false;
+  for (const setup of [() => f.player.seek.classList.add('drag'), () => { f.player.overControls = true; }]) {
+    f.player.seek.classList.remove('drag'); f.player.overControls = false;
+    setup();
+    f.player.poke();
+    await f.advance(5000);
+    assert.equal(hidden, false);
+  }
+  f.player.seek.classList.remove('drag'); f.player.overControls = false;
+  f.player.poke();
+  await f.advance(3000);
+  assert.equal(hidden, true);
 });

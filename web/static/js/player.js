@@ -1,8 +1,9 @@
 // Full-screen player: picks a playback plan from the server, plays it via
 // direct <video src> or the MSE engine, and renders controls + stats.
 
-import { h, icons, resLabel, fmtTime, fmtBitrate, fmtBytes, streamLabel, toast, releaseToasts, clear, langName, channelName, modal, containTab, METHOD_LABEL, reasonLabel, fmtEpisode } from './ui.js';
+import { h, icons, resLabel, fmtTime, fmtBitrate, fmtBytes, streamLabel, toast, releaseToasts, clear, langName, channelName, modal, containTab, confirmDialog, run, METHOD_LABEL, reasonLabel, fmtEpisode } from './ui.js';
 import { api, img } from './api.js';
+import { state } from './app.js';
 import { detectCaps } from './caps.js';
 import { prefs, QUALITIES } from './prefs.js';
 import { MseEngine } from './mse.js';
@@ -117,6 +118,9 @@ function styleASS(text) {
   return out.join('\n') + text.slice(end);
 }
 
+// Downloaded subtitles are shared: only whoever fetched them, or an admin, may remove them.
+const canRemoveSub = (d) => !!state.me && (state.me.isAdmin || (!!d.downloadedBy && d.downloadedBy === state.me.id));
+
 // Fetches a subtitle track; partial means the server is still extracting it.
 async function fetchSub(url) {
   const res = await fetch(url, { credentials: 'same-origin' });
@@ -194,6 +198,7 @@ class Player {
     this.fsBtn = b('fullscreen', 'Fullscreen (f)', () => this.toggleFullscreen());
     this.ccBtn = b('cc', 'Subtitles & audio (c)', (e) => this.toggleMenu('tracks'));
     this.gearBtn = b('gear', 'Settings', () => this.toggleMenu('settings'));
+    for (const btn of [this.ccBtn, this.gearBtn]) { btn.setAttribute('aria-haspopup', 'dialog'); btn.setAttribute('aria-expanded', 'false'); }
     this.pipBtn = document.pictureInPictureEnabled ? b('pip', 'Picture in picture', () => this.togglePip(), 'hide-mobile') : null;
 
     this.center.appendChild(this.statusEl);
@@ -274,6 +279,9 @@ class Player {
     // Firefox fires 'waiting' at the very end too.
     v.addEventListener('ended', () => { ready(); this.onEnded(); });
     v.addEventListener('error', () => this.onVideoError());
+    // iPhone fullscreen is the native player, which can't see our subtitle overlay.
+    v.addEventListener('webkitbeginfullscreen', () => this.onNativeFs(true));
+    v.addEventListener('webkitendfullscreen', () => this.onNativeFs(false));
 
     // Controls visibility. Only a real mouse move shows them: Android sends
     // a compatibility mousemove before every tap's click, which would show
@@ -281,6 +289,11 @@ class Player {
     this.root.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse') this.poke(); });
     this.root.addEventListener('pointerdown', (e) => { this.lastPointer = e.pointerType; }, true);
     this.root.addEventListener('focusin', () => this.poke());
+    // A mouse resting on the controls (e.g. reading the seek preview) keeps them up.
+    for (const el of this.root.querySelectorAll(':scope > .p-top, :scope > .p-bot')) {
+      el.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') this.overControls = true; });
+      el.addEventListener('pointerleave', () => { if (this.overControls) { this.overControls = false; this.poke(); } });
+    }
     this.root.addEventListener('click', (e) => {
       if (e.target === v || e.target === this.center) {
         // The second tap of a double-tap seek (if the browser still sends its
@@ -337,10 +350,11 @@ class Player {
       this.seek.classList.add('drag');
       this.dragT = showTip(e);
       this.renderTime();
+      this.poke();
     });
     this.seek.addEventListener('pointermove', (e) => {
       const t = showTip(e);
-      if (dragging) { this.dragT = t; this.renderTime(); }
+      if (dragging) { this.dragT = t; this.renderTime(); this.poke(); }
     });
     this.seek.addEventListener('pointerup', (e) => {
       if (!dragging) return;
@@ -348,7 +362,7 @@ class Player {
       this.seek.classList.remove('drag');
       const t = seekAt(e).t;
       this.dragT = null;
-      this.seekTo(t);
+      this.seekTo(t); // pokes: the hide countdown restarts after release
     });
     this.seek.addEventListener('pointerleave', () => { if (!dragging && this.tip) { this.tip.remove(); this.tip = null; } });
     this.seek.addEventListener('click', (e) => e.stopPropagation());
@@ -712,7 +726,9 @@ class Player {
   // Subtitles are fetched first and attached as a blob: a <track> whose src is
   // still loading holds the video at HAVE_CURRENT_DATA (per the HTML spec),
   // and extracting subs from a large file can take a while on a Pi.
-  async setSubtitleTrack(idx) {
+  // Resolves false when the track failed to load (or was superseded). plain
+  // skips the ASS renderer (native fullscreen can only show a <track>).
+  async setSubtitleTrack(idx, { plain = false } = {}) {
     const v = this.video;
     const token = (this.subToken = (this.subToken || 0) + 1);
     for (const t of [...v.querySelectorAll('track')]) t.remove();
@@ -722,11 +738,11 @@ class Player {
     this.destroyASS();
     if (this.subBlob) { URL.revokeObjectURL(this.subBlob); this.subBlob = null; }
     const s = this.subById(idx);
-    if (!s || !s.textSub) return;
+    if (!s || !s.textSub) return true;
     // Styled (ASS/SSA) subtitles are rendered with libass so positioning,
     // fonts and karaoke survive; anything else goes through our overlay.
-    if (/^(ass|ssa)$/.test(s.codec) && !s.downloaded && prefs.get('assRender') !== false && await this.setASS(s, token)) return;
-    if (token !== this.subToken) return;
+    if (!plain && /^(ass|ssa)$/.test(s.codec) && !s.downloaded && prefs.get('assRender') !== false && await this.setASS(s, token)) return token === this.subToken;
+    if (token !== this.subToken) return false;
     const slow = setTimeout(() => { if (token === this.subToken) toast('Extracting subtitles from the file… they will appear shortly'); }, 1500);
     const install = (text) => {
       const old = this.subBlob;
@@ -735,7 +751,7 @@ class Player {
       for (const t of [...v.querySelectorAll('track')]) t.remove();
       v.appendChild(track);
       const tt = track.track;
-      tt.mode = 'hidden';
+      tt.mode = this.root.classList.contains('native-fs') ? 'showing' : 'hidden';
       const render = () => this.renderCues(tt);
       tt.addEventListener('cuechange', render);
       track.addEventListener('load', () => { this.cueKey = null; render(); });
@@ -745,11 +761,19 @@ class Player {
     try {
       const url = `/api/files/${this.file.id}/subs/${idx}.vtt?v=${this.file.mtime || 0}`;
       const { text, partial } = await fetchSub(url);
-      if (token !== this.subToken || this.closed) return;
+      if (token !== this.subToken || this.closed) return false;
       install(text);
       if (partial) this.pollSub(token, url, install);
+      return true;
     } catch (e) {
-      if (token === this.subToken) toast(`Could not load subtitles: ${e.message}`, 'error');
+      if (token !== this.subToken) return false;
+      toast(`Could not load subtitles: ${e.message}`, 'error');
+      // Don't leave the failed track checked in the menu (or asked for by the next plan).
+      if (this.subtitle === idx) {
+        this.subtitle = -1;
+        if (this.menuName === 'tracks') this.renderMenu();
+      }
+      return false;
     } finally {
       clearTimeout(slow);
     }
@@ -847,8 +871,18 @@ class Player {
     const wasPlaying = !this.video.paused;
     const langSel = h('select', { class: 'input' }, LANG_CHOICES.map(([k, l]) => h('option', { value: k, selected: k === (prefs.get('subLang') || 'eng') }, l)));
     const list = h('div', { class: 'sub-results' });
-    const status = h('div', { class: 'muted small' });
+    const status = h('div', { class: 'muted small', role: 'status' });
     const downloaded = h('div', { class: 'sub-results' });
+    const remove = async (e, d) => {
+      const btn = e.currentTarget;
+      if (!await confirmDialog('Remove these downloaded subtitles for everyone?', 'Remove', true, 'Remove subtitles?')) return;
+      const ok = await run(btn, () => api(`/api/files/${this.file.id}/subs/${d.index}`, { method: 'DELETE' }), 'Subtitles removed');
+      if (!ok) return;
+      this.file.subtitles = this.file.subtitles.filter((x) => x.index !== d.index);
+      this.syncFileSubs();
+      if (this.subtitle === d.index) this.chooseSubtitle(-1);
+      renderDownloaded();
+    };
     const renderDownloaded = () => {
       clear(downloaded);
       const mine = (this.file.subtitles || []).filter((x) => x.downloaded);
@@ -857,16 +891,18 @@ class Player {
       for (const d of mine) {
         downloaded.append(h('div', { class: 'sub-res' },
           h('div', { class: 'sub-res-main' }, h('b', null, d.title || 'Downloaded'), h('span', { class: 'muted small' }, langName(d.language))),
-          h('button', { class: 'btn sm danger', onclick: async () => {
-            try {
-              await api(`/api/files/${this.file.id}/subs/${d.index}`, { method: 'DELETE' });
-              this.file.subtitles = this.file.subtitles.filter((x) => x.index !== d.index);
-              this.syncFileSubs();
-              if (this.subtitle === d.index) this.chooseSubtitle(-1);
-              renderDownloaded();
-            } catch (e) { toast(e.message, 'error'); }
-          } }, 'Remove')));
+          canRemoveSub(d) ? h('button', { class: 'btn sm danger', onclick: (e) => remove(e, d) }, 'Remove') : null));
       }
+    };
+    const failed = (e) => {
+      status.textContent = '';
+      if (e.code === 'no_key') {
+        list.append(h('div', { class: 'sub-err', role: 'alert' }, state.me?.isAdmin
+          ? ['Subtitle search isn’t set up yet. Add an OpenSubtitles API key in ', h('a', { href: '#/settings/metadata', onclick: (ev) => { ev.preventDefault(); this.goTo('#/settings/metadata'); } }, 'Settings › Metadata'), '.']
+          : 'Subtitle search isn’t set up on this server.'));
+        return;
+      }
+      list.append(h('div', { class: 'sub-err row', role: 'alert' }, h('span', { class: 'spacer' }, e.message), h('button', { class: 'btn sm', onclick: search }, 'Retry')));
     };
     const search = async () => {
       clear(list);
@@ -903,19 +939,33 @@ class Player {
             btn));
         }
       } catch (e) {
-        status.textContent = '';
-        list.append(h('div', { class: 'sub-err' }, e.message));
+        failed(e);
       }
     };
-    langSel.onchange = () => { prefs.set('subLang', langSel.value); search(); };
+    // A filter for this search, not the preferred subtitle language.
+    langSel.onchange = search;
     if (wasPlaying) this.video.pause();
     const m = modal({
       title: 'Search subtitles', wide: true, parent: this.root,
-      body: [h('div', { class: 'row', style: { gap: '10px', alignItems: 'center' } }, h('span', { class: 'muted' }, 'Language'), langSel, h('div', { class: 'spacer' }), status), downloaded, list],
-      onClose: () => { if (wasPlaying) this.video.play().catch(() => {}); },
+      body: [h('div', { class: 'row wrap', style: { gap: '10px', alignItems: 'center' } },
+        h('label', { class: 'row', style: { gap: '10px' } }, h('span', { class: 'muted' }, 'Language'), langSel), h('div', { class: 'spacer' }), status), downloaded, list],
+      onClose: () => {
+        if (this.closed) return;
+        // The menu item that opened this is gone: back to the CC button.
+        this.ccBtn.focus();
+        if (wasPlaying) this.video.play().catch(() => {});
+      },
     });
     renderDownloaded();
     search();
+  }
+
+  // Leave the player for an app page: the player's history entry is popped
+  // first, or that Back would undo the navigation.
+  goTo(hash) {
+    if (history.state?.lexPlayer) window.addEventListener('popstate', () => { location.hash = hash; }, { once: true });
+    else setTimeout(() => { location.hash = hash; });
+    this.close();
   }
 
   // Keep the item's file list in sync so switching versions keeps new subs.
@@ -924,20 +974,37 @@ class Player {
     if (f) f.subtitles = this.file.subtitles;
   }
 
+  // The choice is remembered for this device, but turning subtitles off here
+  // never turns off forced/foreign-audio subtitles everywhere (that's a
+  // Settings choice), and a forced track doesn't change the preferred language.
   async chooseSubtitle(idx) {
     const prev = this.subById(this.subtitle);
     const next = this.subById(idx);
     this.subtitle = idx;
     const needBurn = next && !next.textSub;
     const hadBurn = prev && !prev.textSub;
-    if (next) { prefs.set('subLang', next.language || prefs.get('subLang')); if (prefs.get('subMode') === 'off') prefs.set('subMode', 'always'); }
-    else prefs.set('subMode', 'off');
+    const mode = prefs.get('subMode');
+    if (!next && mode === 'always') prefs.set('subMode', 'auto');
+    let ok = true;
     if (needBurn || hadBurn) {
       if (needBurn) toast('Image-based subtitles need to be burned in: transcoding');
       await this.replan();
     } else {
-      this.setSubtitleTrack(idx);
+      ok = await this.setSubtitleTrack(idx);
     }
+    if (!next || !ok || this.subtitle !== idx) return;
+    if (next.forced) { if (mode === 'off') prefs.set('subMode', 'auto'); return; }
+    if (next.language) prefs.set('subLang', next.language);
+    if (mode === 'off') prefs.set('subMode', 'always');
+  }
+
+  // iPhone native fullscreen shows only <track> cues: show ours there (the
+  // plain-text version of styled subtitles) and go back to the overlay after.
+  onNativeFs(on) {
+    this.root.classList.toggle('native-fs', on);
+    if (on && this.jassub) { this.nativeAss = true; this.setSubtitleTrack(this.subtitle, { plain: true }); return; }
+    if (!on && this.nativeAss) { this.nativeAss = false; this.setSubtitleTrack(this.subtitle); return; }
+    if (this.subTrack) this.subTrack.mode = on ? 'showing' : 'hidden';
   }
 
   async chooseAudio(idx) {
@@ -1026,7 +1093,9 @@ class Player {
   poke() {
     this.showUI(true);
     clearTimeout(this.hideTimer);
-    this.hideTimer = setTimeout(() => { if (!this.video.paused && !this.menu && !this.root.querySelector(':focus-visible')) this.showUI(false); }, 3000);
+    this.hideTimer = setTimeout(() => {
+      if (!this.video.paused && !this.menu && !this.overControls && !this.seek.classList.contains('drag') && !this.root.querySelector(':focus-visible')) this.showUI(false);
+    }, 3000);
   }
 
   showUI(on) { this.root.classList.toggle('hide-ui', !on); }
@@ -1055,6 +1124,11 @@ class Player {
     // The error overlay's buttons take every key; Escape still closes.
     if (this.errEl) {
       if (e.key === 'Escape' && !document.fullscreenElement) { e.preventDefault(); this.close(); }
+      return;
+    }
+    if (this.menu && e.target.closest?.('.p-menu') && /^(Arrow(Up|Down)|Home|End)$/.test(e.key) && !(e.metaKey || e.ctrlKey || e.altKey)) {
+      e.preventDefault();
+      this.menuKey(e);
       return;
     }
     if (e.target.tagName === 'INPUT' && e.target.type === 'range') {
@@ -1395,44 +1469,86 @@ class Player {
   // ---------- menus ----------
   // Two-level menus: a main list of "Label  value ›" rows and toggles; a row
   // opens a sub-page of choices with a back button.
-  closeMenu() { if (this.menu) { this.menu.remove(); this.menu = null; this.menuName = null; this.menuPage = null; } }
+  // restore: focus goes back to the button that opened the menu, if it was
+  // inside the menu.
+  closeMenu(restore = true) {
+    if (!this.menu) return;
+    const hadFocus = this.menu.contains(document.activeElement);
+    this.menu.remove();
+    this.menu = null; this.menuName = null; this.menuPage = null;
+    const opener = this.menuOpener;
+    this.menuOpener = null;
+    opener?.setAttribute('aria-expanded', 'false');
+    if (restore && hadFocus) opener?.focus();
+  }
 
   toggleMenu(name) {
     if (this.menuName === name) { this.closeMenu(); return; }
-    this.closeMenu();
+    this.closeMenu(false);
     this.menuName = name;
     this.menuPage = null;
-    this.menu = h('div', { class: 'p-menu', onclick: (e) => e.stopPropagation() });
-    this.renderMenu();
+    this.menuOpener = name === 'tracks' ? this.ccBtn : this.gearBtn;
+    this.menuOpener.setAttribute('aria-expanded', 'true');
+    this.menu = h('div', { class: 'p-menu', role: 'dialog', 'aria-label': name === 'tracks' ? 'Subtitles and audio' : 'Settings', onclick: (e) => e.stopPropagation() });
     this.root.appendChild(this.menu);
+    this.renderMenu();
+    this.menu.querySelector('.pm-row, .pm-opt')?.focus();
     this.showUI(true);
   }
 
-  openPage(page) { this.menuPage = page; this.renderMenu(); }
+  openPage(page) {
+    const from = this.menuPage;
+    this.menuPage = page;
+    this.renderMenu({ from });
+  }
+
+  // Up/Down (and Home/End) move between the menu's controls.
+  menuKey(e) {
+    const els = [...this.menu.querySelectorAll('button:not(:disabled), input:not(:disabled)')];
+    if (!els.length) return;
+    const i = els.indexOf(document.activeElement);
+    const n = els.length;
+    const next = { ArrowDown: i < 0 ? 0 : (i + 1) % n, ArrowUp: i < 0 ? n - 1 : (i - 1 + n) % n, Home: 0, End: n - 1 }[e.key];
+    els[next].focus();
+  }
 
   qualityLabel(k) {
     const q = QUALITIES.find(([v]) => v === k);
     return q ? q[1].split(' · ')[0] : 'Original';
   }
 
-  renderMenu() {
-    const m = clear(this.menu);
-    const row = (label, value, page) => h('button', { class: 'pm-row', onclick: () => this.openPage(page) },
+  // Re-renders the open menu. Focus follows: to Back when a sub-page opens,
+  // to the row it came from when going back (opts.from), otherwise it stays
+  // on the same control (e.g. a timing step).
+  renderMenu(opts) {
+    const m = this.menu;
+    if (!m) return;
+    const active = m.contains(document.activeElement) ? document.activeElement : null;
+    const key = active?.dataset.key;
+    clear(m);
+    this.fillMenu(m);
+    let target = null;
+    if (opts && 'from' in opts) target = this.menuPage ? m.querySelector('.pm-back') : m.querySelector(`[data-key="${opts.from}"]`) || m.querySelector('.pm-row');
+    else if (key) target = m.querySelector(`[data-key="${key}"]`);
+    if (target || active) (target || m.querySelector('.pm-row, .pm-opt'))?.focus();
+  }
+
+  fillMenu(m) {
+    const row = (label, value, page) => h('button', { class: 'pm-row', 'data-key': page, onclick: () => this.openPage(page) },
       h('span', { class: 'pm-label' }, label), h('span', { class: 'pm-val' }, value), h('span', { class: 'pm-chev', html: icons.chevR }));
     const sw = (label, on, set, hint) => h('label', { class: 'pm-row pm-toggle' },
       h('span', { class: 'pm-label' }, label, hint ? h('small', null, hint) : null),
-      h('span', { class: 'switch' }, h('input', { type: 'checkbox', checked: on, onchange: (e) => set(e.target.checked) }), h('i')));
+      h('span', { class: 'switch' }, h('input', { type: 'checkbox', 'data-key': `sw-${label}`, checked: on, onchange: (e) => set(e.target.checked) }), h('i')));
+    // Choices are a radio group; actions (e.g. 'Search online…') follow it.
     const page = (title, items) => {
       m.append(h('div', { class: 'pm-head' },
-        h('button', { class: 'pm-back', html: icons.chevL, 'aria-label': 'Back', onclick: () => this.openPage(null) }), h('b', null, title)));
-      const list = h('div', { class: 'pm-list' });
-      for (const it of items) {
-        list.appendChild(h('button', { class: `pm-opt ${it.active ? 'on' : ''}`, onclick: it.on },
-          h('span', { class: 'ck', html: it.active ? icons.check : '' }),
-          h('span', { class: 'pm-opt-l' }, it.label, it.sub ? h('small', null, it.sub) : null),
-          it.right ? h('span', { class: 'pm-val' }, it.right) : null));
-      }
-      m.append(list);
+        h('button', { class: 'pm-back', 'data-key': 'back', html: icons.chevL, 'aria-label': 'Back', onclick: () => this.openPage(null) }), h('b', null, title)));
+      const opt = (it, role) => h('button', { class: `pm-opt ${it.active ? 'on' : ''}`, role, 'aria-checked': role ? String(!!it.active) : null, onclick: it.on },
+        h('span', { class: 'ck', html: it.active ? icons.check : '' }),
+        h('span', { class: 'pm-opt-l' }, it.label, it.sub ? h('small', null, it.sub) : null),
+        it.right ? h('span', { class: 'pm-val' }, it.right) : null);
+      m.append(h('div', { class: 'pm-list', role: 'radiogroup', 'aria-label': title }, items.filter((it) => !it.action).map((it) => opt(it, 'radio'))));
+      for (const it of items.filter((x) => x.action)) m.append(opt(it, null));
     };
     const auds = (this.file.info?.streams || []).filter((s) => s.type === 'audio');
     const subs = this.file.subtitles || [];
@@ -1443,8 +1559,10 @@ class Player {
           return page('Subtitles', [
             { label: 'Off', active: this.subtitle < 0, on: () => { this.chooseSubtitle(-1); this.closeMenu(); } },
             ...subs.map((s) => ({ label: streamLabel(s), active: this.subtitle === s.index, on: () => { this.chooseSubtitle(s.index); this.closeMenu(); } })),
-            { label: 'Search online…', sub: 'OpenSubtitles.com', on: () => { this.closeMenu(); this.searchSubtitles(); } },
-          ]);
+            // Hidden when search isn't set up, unless there are downloads this user may remove.
+            state.caps?.subtitleSearch !== false || subs.some((s) => s.downloaded && canRemoveSub(s))
+              ? { label: 'Search online…', sub: 'OpenSubtitles.com', action: true, on: () => { this.closeMenu(); this.searchSubtitles(); } } : null,
+          ].filter(Boolean));
         case 'audio':
           return page('Audio', auds.map((a) => ({ label: streamLabel(a), active: this.audio === a.index, on: () => { if (a.index !== this.audio) this.chooseAudio(a.index); this.closeMenu(); } })));
         case 'size':
@@ -1454,15 +1572,17 @@ class Player {
       }
       const cur = this.subById(this.subtitle);
       m.append(h('div', { class: 'pm-title' }, 'Subtitles & audio'));
-      m.append(row('Subtitles', cur ? streamLabel(cur).split(' · ')[0] : 'Off', 'subs'));
+      const curLabel = cur && (cur.language ? langName(cur.language) : streamLabel(cur).split(' · ')[0]) + (cur.forced ? ' (Forced)' : '') + (cur.hearingImpaired ? ' (SDH)' : '');
+      m.append(row('Subtitles', cur ? curLabel : 'Off', 'subs'));
       if (auds.length) m.append(row('Audio', streamLabel(auds.find((a) => a.index === this.audio) || auds[0]).split(' · ').slice(0, 2).join(' · '), 'audio'));
       if (cur && cur.textSub) {
         const off = this.subOffset || 0;
-        const step = (d) => h('button', { class: 'pm-step', onclick: () => this.setSubOffset(Math.round((off + d) * 10) / 10) }, d > 0 ? `+${d}` : `${d}`);
-        m.append(h('div', { class: 'pm-row pm-stepper' },
+        const fmt = `${off > 0 ? '+' : ''}${off.toFixed(1)}s`;
+        const step = (d) => h('button', { class: 'pm-step', 'data-key': `step-${d}`, 'aria-label': `Subtitles ${d > 0 ? 'later' : 'earlier'} by ${Math.abs(d)} seconds`, onclick: () => this.setSubOffset(Math.round((off + d) * 10) / 10) }, d > 0 ? `+${d}` : `${d}`);
+        m.append(h('div', { class: 'pm-row pm-stepper', role: 'group', 'aria-label': 'Subtitle timing' },
           h('span', { class: 'pm-label' }, 'Timing', h('small', null, 'keys G / H')),
           h('div', { class: 'pm-steps' }, step(-0.5), step(-0.1),
-            h('button', { class: 'pm-step pm-zero', title: 'Reset', onclick: () => this.setSubOffset(0) }, `${off > 0 ? '+' : ''}${off.toFixed(1)}s`),
+            h('button', { class: 'pm-step pm-zero', 'data-key': 'step-zero', title: 'Reset', 'aria-label': `Reset subtitle timing (now ${fmt})`, onclick: () => this.setSubOffset(0) }, fmt),
             step(0.1), step(0.5))));
       }
       m.append(h('div', { class: 'pm-sep' }));
@@ -1536,24 +1656,30 @@ class Player {
     this.upNextShown = true;
     this.upNextAt = at;
     let n = prefs.get('countdown');
-    const count = h('span', null, String(n));
-    const card = h('div', { class: 'upnext', onclick: (e) => e.stopPropagation() },
+    const autoplay = prefs.get('autoplayNext');
+    // One text node: the button's flex gap would split 'Play in 9 s'.
+    const label = h('span', null, autoplay ? `Play in ${n}s` : 'Play now');
+    // Announced once, not on every tick of the countdown.
+    const live = h('span', { class: 'sr-only', 'aria-live': 'polite' });
+    const card = h('div', { class: 'upnext', role: 'region', 'aria-label': 'Up next', onclick: (e) => e.stopPropagation() },
       h('img', { src: img(next, 'thumb', 480), alt: '' }),
       h('div', { class: 'b' },
         h('div', { class: 'small muted' }, 'Up next'),
         h('b', null, `${fmtEpisode(next)} — ${next.title}`),
         h('div', { class: 'row' },
-          h('button', { class: 'btn primary sm', onclick: () => this.playNext() }, icons.play ? h('span', { html: icons.play, style: { width: '16px', display: 'inline-flex' } }) : null, prefs.get('autoplayNext') ? ['Play in ', count, 's'] : 'Play now'),
-          h('button', { class: 'btn sm', onclick: () => { this.cancelUpNext(true); this.playBtn.focus(); } }, 'Cancel'))));
+          h('button', { class: 'btn primary sm', onclick: () => this.playNext() }, h('span', { html: icons.play, style: { width: '16px', display: 'inline-flex' } }), label),
+          h('button', { class: 'btn sm', onclick: () => { this.cancelUpNext(true); this.playBtn.focus(); } }, 'Cancel'))),
+      live);
     // Never cover an open menu.
     this.closeMenu();
     this.root.appendChild(card);
     this.upNextEl = card;
-    if (prefs.get('autoplayNext')) {
+    setTimeout(() => { live.textContent = `Up next: ${fmtEpisode(next)} ${next.title}${autoplay ? `, playing in ${n} seconds` : ''}`; }, 100);
+    if (autoplay) {
       this.cdTimer = setInterval(() => {
         if (this.video.paused) return;
         n--;
-        count.textContent = String(n);
+        label.textContent = `Play in ${n}s`;
         if (n <= 0) { clearInterval(this.cdTimer); this.playNext(); }
       }, 1000);
     }
