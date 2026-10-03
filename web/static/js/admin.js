@@ -258,7 +258,16 @@ async function configForm(build, { check } = {}) {
   const note = h('span', { class: 'muted small', hidden: true }, 'Unsaved changes');
   const err = h('span', { class: 'err', role: 'alert' });
   const save = h('button', { class: 'btn primary', type: 'submit', disabled: true }, 'Save changes');
-  const mark = () => { const d = dirty(); if (!save.hasAttribute('aria-busy')) save.disabled = !d; note.hidden = !d; err.textContent = ''; };
+  // The leave guard is registered on the first edit, not while building: a
+  // form whose route was superseded mid-load would replace the shown form's guard.
+  const guard = () => form.isConnected && dirty();
+  const mark = () => {
+    const d = dirty();
+    if (!save.hasAttribute('aria-busy')) save.disabled = !d;
+    note.hidden = !d;
+    err.textContent = '';
+    if (d) setLeaveGuard(guard);
+  };
   // Step mismatches are allowed on purpose (the server doesn't enforce
   // steps, and stored values may be off-step), but every setting is a whole number.
   const invalid = () => [...controls.values()].find((i) => {
@@ -304,7 +313,6 @@ async function configForm(build, { check } = {}) {
   const many = Array.isArray(parts) && parts.length > 1;
   const form = h('form', { class: many ? 'form cols' : 'form', novalidate: true, onsubmit: onSubmit, oninput: mark, onchange: mark },
     parts, h('div', { class: 'save-bar' }, save, note, err));
-  setLeaveGuard(() => form.isConnected && dirty());
   return form;
 }
 
@@ -604,10 +612,15 @@ function folderBrowser(onPick, starts) {
   let current = null;
   const addBtn = h('button', { class: 'btn sm primary', type: 'button', disabled: true, onclick: () => current && onPick(current) }, h('span', { html: icons.plus }), 'Add this folder');
   const row = (icon, label, onclick) => h('button', { type: 'button', onclick }, h('span', { html: icons[icon] }), label);
+  // Listings can be slow (a sleeping disk): only the latest request counts.
+  // A superseded one resolves null.
+  let seq = 0;
   const go = async (p, { quiet = false } = {}) => {
     const fromList = list.contains(document.activeElement);
+    const mine = ++seq;
     try {
       const r = await api(`/api/admin/fs?path=${encodeURIComponent(p)}`);
+      if (mine !== seq) return null;
       current = r.path;
       input.value = r.path;
       addBtn.disabled = false;
@@ -619,6 +632,7 @@ function folderBrowser(onPick, starts) {
       if (fromList) list.querySelector('button')?.focus();
       return true;
     } catch (e) {
+      if (mine !== seq) return null;
       if (quiet) return false;
       // Keep listing the last good folder, with the error above it.
       input.value = current ?? '';
@@ -631,7 +645,8 @@ function folderBrowser(onPick, starts) {
     }
   };
   (async () => {
-    for (const p of [...new Set(starts.filter(Boolean))]) if (await go(p, { quiet: true })) return;
+    // Stops as soon as one lists, or the user opens a folder first.
+    for (const p of [...new Set(starts.filter(Boolean))]) if ((await go(p, { quiet: true })) !== false) return;
     await go('/');
   })();
   const el = h('div', { style: { display: 'grid', gap: '8px' } },
