@@ -9,7 +9,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
   let now = 0;
   let timerID = 0;
   const timers = new Map();
-  const requests = [], errors = [], spinners = [], subtitleCalls = [];
+  const requests = [], errors = [], spinners = [], subtitleCalls = [], toasts = [];
   class Video extends EventTarget {
     paused = true;
     currentTime = 0;
@@ -84,7 +84,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
   };
   deps['./ui.js'].icons = { play: 'play', pause: 'pause' };
   deps['./ui.js'].langName = value => value;
-  deps['./ui.js'].toast = () => {};
+  deps['./ui.js'].toast = (...args) => toasts.push(args);
   deps['./ui.js'].releaseToasts = () => {};
   deps['./ui.js'].confirmDialog = async () => true;
   deps['./ui.js'].run = async (btn, fn) => { await fn(); return true; };
@@ -107,7 +107,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
     closed: false, started: false, fallbacks: 0, bufHist: [], stalls: { count: 0, secs: 0, since: 0 },
     root: Object.assign(new EventTarget(), { remove() {}, querySelectorAll: () => [], classList: classes() }),
     seek: Object.assign(new EventTarget(), { classList: classes() }),
-    playBtn: { setAttribute() {} }, methodEl: {}, fsBtn: { setAttribute() {} },
+    playBtn: { setAttribute() {} }, methodEl: { setAttribute() {} }, fsBtn: { setAttribute() {} },
     poke() {}, beat() {}, setStatus() {}, setSubtitleTrack: value => subtitleCalls.push(value), hideError() {}, showUI() {},
     clientStats: () => ({ bufferAhead: 0 }), checkUpNext() {}, renderEnds() {},
     showSpinner: value => spinners.push(value), showError: msg => errors.push(msg),
@@ -124,7 +124,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
       player.tickUI(); await flush();
     } while (now < until);
   };
-  return { player, video, requests, errors, spinners, subtitleCalls, advance, flush, history, prefValues };
+  return { player, video, requests, errors, spinners, subtitleCalls, toasts, advance, flush, history, prefValues };
 }
 
 function classes() {
@@ -469,4 +469,47 @@ test('the controls stay up while scrubbing or while the mouse rests on them', as
   f.player.poke();
   await f.advance(3000);
   assert.equal(hidden, true);
+});
+
+const keydown = key => ({ key, target: { tagName: 'DIV', closest: () => null }, preventDefault() {} });
+
+test('player keys: s skips the intro and skips show feedback that adds up', async () => {
+  const f = await fixture({ prefValues: { skipBack: 10, skipFwd: 30 } });
+  f.player.root.querySelector = () => null;
+  let skips = 0;
+  const osds = [];
+  f.player.skipBtn = { click() { skips++; } };
+  f.player.osd = (text, side) => { osds.push([text, side]); return { isConnected: true }; };
+  f.player.key(keydown('s'));
+  assert.equal(skips, 1);
+  f.player.key(keydown('ArrowRight'));
+  f.player.key(keydown('l'));
+  f.player.key(keydown('ArrowLeft'));
+  assert.deepEqual(osds, [['+30s', 'right'], ['+60s', 'right'], ['−10s', 'left']]);
+  f.video.volume = 1;
+  f.player.key(keydown('ArrowDown'));
+  assert.equal(osds.at(-1)[0], 'Volume 95%');
+});
+
+test('subtitle timing keys explain themselves when no text subtitle is on, in one toast', async () => {
+  const f = await fixture();
+  Object.assign(f.player, { file: { id: 2, subtitles: [{ index: 3, textSub: true }, { index: 4, textSub: false }] }, subtitle: -1 });
+  f.player.nudgeSubs(0.1);
+  f.player.subtitle = 4; // burned in
+  f.player.nudgeSubs(-0.1);
+  assert.deepEqual(f.toasts.map(([msg, , o]) => [msg, o.key]), [['Turn on text subtitles to adjust timing', 'subOffset'], ['Turn on text subtitles to adjust timing', 'subOffset']]);
+  assert.equal(f.player.subOffset || 0, 0);
+});
+
+test('stats on or off redraws an open Settings menu so its switch matches', async () => {
+  const f = await fixture();
+  let menus = 0;
+  Object.assign(f.player, { renderMenu() { menus++; }, menuName: 'settings', menuPage: null });
+  f.player.statsChanged();
+  assert.equal(menus, 1);
+  f.player.menuPage = 'speed';
+  f.player.statsChanged();
+  f.player.menuName = 'tracks'; f.player.menuPage = null;
+  f.player.statsChanged();
+  assert.equal(menus, 1);
 });

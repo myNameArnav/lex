@@ -42,6 +42,9 @@ const LANG_CHOICES = ['eng', 'spa', 'fre', 'ger', 'ita', 'por', 'hin', 'jpn', 'k
 const LANG1 = { en: 'eng', es: 'spa', fr: 'fre', de: 'ger', it: 'ita', pt: 'por', 'pt-pt': 'por', 'pt-br': 'por', hi: 'hin', ja: 'jpn', ko: 'kor', zh: 'chi', 'zh-cn': 'chi', 'zh-tw': 'chi', ar: 'ara', ru: 'rus', nl: 'dut', sv: 'swe', no: 'nor', da: 'dan', fi: 'fin', pl: 'pol', tr: 'tur', ta: 'tam', te: 'tel', uk: 'ukr', he: 'heb', el: 'gre', cs: 'cze', hu: 'hun', ro: 'rum', th: 'tha', vi: 'vie', id: 'ind', ms: 'may' };
 const lang1to3 = (l) => LANG1[(l || '').toLowerCase()] || l;
 
+// Back/forward icons carry the configured number of seconds.
+const skipIcon = (dir, n) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${dir < 0 ? '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>' : '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>'}<text x="12" y="15.5" font-size="${n >= 100 ? 6 : 7.5}" text-anchor="middle" fill="currentColor" stroke="none" font-weight="700" font-family="system-ui">${n}</text></svg>`;
+
 // Stats panel formatting: durations in whole seconds up to ten minutes, then
 // m:ss; positions are always m:ss.
 const secs = (s) => (s < 600 ? `${Math.round(s)}s` : fmtTime(s));
@@ -172,7 +175,8 @@ class Player {
 
   // ---------- DOM ----------
   build() {
-    const b = (name, title, on, cls = '') => h('button', { class: `pbtn ${cls}`, title, 'aria-label': title, html: icons[name], onclick: (e) => { e.stopPropagation(); on(e); } });
+    // name: an icon name, or the icon's markup.
+    const b = (name, title, on, cls = '') => h('button', { class: `pbtn ${cls}`, title, 'aria-label': title, html: icons[name] || name, onclick: (e) => { e.stopPropagation(); on(e); } });
     this.video = h('video', { playsinline: true, preload: 'auto' });
     // Firefox (no PiP API, so no Lex PiP button) draws its own hover PiP toggle
     // on the right edge, under the right-anchored menus, and it swallows their
@@ -190,7 +194,7 @@ class Player {
     this.rail.appendChild(this.fill);
     this.timeEl = h('span', { class: 'p-time' }, '0:00 / 0:00');
     this.endsEl = h('span', { class: 'p-ends', title: 'When playback will finish at the current speed' });
-    this.methodEl = h('span', { class: 'p-method hide-mobile', title: 'Playback method (click for stats)', onclick: (e) => { e.stopPropagation(); this.toggleStats(); } });
+    this.methodEl = h('button', { class: 'p-method hide-mobile', type: 'button', title: 'Playback method (click for stats)', 'aria-pressed': 'false', onclick: (e) => { e.stopPropagation(); this.toggleStats(); } });
     this.playBtn = b('play', 'Play (k)', () => this.togglePlay(), 'big');
     this.volBtn = b('volume', 'Mute (m)', () => this.toggleMute());
     this.volRange = h('input', { type: 'range', 'aria-label': 'Volume', min: 0, max: 1, step: 0.05, value: prefs.get('volume'), oninput: (e) => { this.video.volume = +e.target.value; this.video.muted = false; }, onclick: (e) => e.stopPropagation() });
@@ -214,8 +218,8 @@ class Player {
         this.seek,
         h('div', { class: 'p-controls' },
           h('div', { class: 'p-transport' }, this.playBtn,
-            b('back10', `Back ${prefs.get('skipBack')}s (←)`, () => this.skip(-prefs.get('skipBack'))),
-            b('fwd30', `Forward ${prefs.get('skipFwd')}s (→)`, () => this.skip(prefs.get('skipFwd'))), this.timeEl, this.endsEl),
+            b(skipIcon(-1, prefs.get('skipBack')), `Back ${prefs.get('skipBack')}s (←)`, () => this.skip(-prefs.get('skipBack'))),
+            b(skipIcon(1, prefs.get('skipFwd')), `Forward ${prefs.get('skipFwd')}s (→)`, () => this.skip(prefs.get('skipFwd'))), this.timeEl, this.endsEl),
           h('div', { class: 'spacer' }),
           h('div', { class: 'p-tools' }, h('div', { class: 'vol' }, this.volBtn, this.volRange), this.methodEl,
             this.nextBtn, this.ccBtn, this.gearBtn, this.pipBtn, this.fsBtn))));
@@ -229,8 +233,11 @@ class Player {
     document.body.style.overflow = 'hidden';
     this.video.volume = prefs.get('volume');
     this.video.muted = prefs.get('muted');
+    this.volRange.setAttribute('aria-valuetext', this.volumeText());
     this.showSpinner(true);
   }
+
+  volumeText() { const v = this.video; return v.muted ? 'Muted' : `${Math.round(v.volume * 100)}%`; }
 
   bind() {
     const v = this.video;
@@ -247,7 +254,7 @@ class Player {
     this.onPop = () => this.close({ fromHistory: true });
     window.addEventListener('popstate', this.onPop);
 
-    v.addEventListener('play', () => { this.watchDirectStartup(); this.playBtn.innerHTML = icons.pause; this.labelButton(this.playBtn, 'Pause (k)'); this.poke(); this.beat(); });
+    v.addEventListener('play', () => { this.removeEndCard(); this.watchDirectStartup(); this.playBtn.innerHTML = icons.pause; this.labelButton(this.playBtn, 'Pause (k)'); this.poke(); this.beat(); });
     v.addEventListener('pause', () => { if (v.paused) this.startupWatch = null; this.playBtn.innerHTML = icons.play; this.labelButton(this.playBtn, 'Play (k)'); this.showUI(true); this.beat(); });
     v.addEventListener('waiting', () => {
       this.showSpinner(true);
@@ -267,13 +274,14 @@ class Player {
       // Seeking back before the Up next point: the card can come back later.
       if (this.upNextShown && v.currentTime < this.upNextAt) { this.cancelUpNext(false); this.upNextShown = false; }
     });
-    v.addEventListener('seeking', () => { this.showSpinner(true); if (!this.waitingSince) this.waitingSince = performance.now(); });
+    v.addEventListener('seeking', () => { this.removeEndCard(); this.showSpinner(true); if (!this.waitingSince) this.waitingSince = performance.now(); });
     v.addEventListener('timeupdate', () => { this.renderTime(); this.checkIntro(); if (this.subTrack) this.renderCues(this.subTrack); });
     v.addEventListener('progress', () => this.renderTime());
     v.addEventListener('volumechange', () => {
       this.volBtn.innerHTML = v.muted || v.volume === 0 ? icons.mute : icons.volume;
       this.labelButton(this.volBtn, v.muted || v.volume === 0 ? 'Unmute (m)' : 'Mute (m)');
       this.volRange.value = v.muted ? 0 : v.volume;
+      this.volRange.setAttribute('aria-valuetext', this.volumeText());
       prefs.set('volume', v.volume); prefs.set('muted', v.muted);
     });
     // Firefox fires 'waiting' at the very end too.
@@ -282,6 +290,8 @@ class Player {
     // iPhone fullscreen is the native player, which can't see our subtitle overlay.
     v.addEventListener('webkitbeginfullscreen', () => this.onNativeFs(true));
     v.addEventListener('webkitendfullscreen', () => this.onNativeFs(false));
+    v.addEventListener('enterpictureinpicture', () => this.onPip(true));
+    v.addEventListener('leavepictureinpicture', () => this.onPip(false));
 
     // Controls visibility. Only a real mouse move shows them: Android sends
     // a compatibility mousemove before every tap's click, which would show
@@ -311,8 +321,8 @@ class Player {
       const now = Date.now();
       if (now - lastTap < 300) {
         const x = e.changedTouches[0].clientX / window.innerWidth;
-        if (x < 0.35) this.skip(-prefs.get('skipBack'));
-        else if (x > 0.65) this.skip(prefs.get('skipFwd'));
+        if (x < 0.35) this.skip(-prefs.get('skipBack'), true);
+        else if (x > 0.65) this.skip(prefs.get('skipFwd'), true);
         e.preventDefault();
         this.skipClickUntil = performance.now() + 500;
       }
@@ -441,7 +451,7 @@ class Player {
     const forceHls = mode === 'hls';
     if (forceHls) {
       mode = 'auto';
-      if (!this.video.canPlayType('application/vnd.apple.mpegurl')) {
+      if (!this.nativeHls()) {
         toast("This browser can't play HLS natively (Safari and iOS can) — using the normal stream");
         this.mode = 'auto';
         prefs.set('mode', 'auto');
@@ -473,13 +483,18 @@ class Player {
     this.sessionId = res.plan.sessionId;
     this.audio = res.plan.audio;
     this.file = { ...this.file, ...res.file, subtitles: this.file.subtitles };
-    this.methodEl.textContent = METHOD_LABEL[this.plan.method] + (this.plan.hls ? ' · HLS' : '');
+    const label = METHOD_LABEL[this.plan.method] + (this.plan.hls ? ' · HLS' : '');
+    this.methodEl.textContent = label;
     this.methodEl.className = `p-method hide-mobile ${this.plan.method}`;
-    this.methodEl.title = (this.plan.reasons || []).join('; ') || 'Playing the original file';
+    this.methodEl.title = (this.plan.reasons || []).map(reasonLabel).join('; ') || 'Playing the original file';
+    this.methodEl.setAttribute('aria-label', `Playback method: ${label}. Stats for nerds (i)`);
     if (this.trick?.fileId !== this.file.id) this.loadTrickplay();
     await this.attach(start);
     return !this.closed && generation === this.planGeneration;
   }
+
+  // Asked once: Firefox logs a console warning for every 'no' answer.
+  nativeHls() { return (this.hlsOK ??= !!this.video.canPlayType('application/vnd.apple.mpegurl')); }
 
   teardown() {
     this.startupWatch = null;
@@ -861,7 +876,7 @@ class Player {
   }
 
   nudgeSubs(d) {
-    if (!this.subById(this.subtitle)?.textSub) return;
+    if (!this.subById(this.subtitle)?.textSub) { toast('Turn on text subtitles to adjust timing', '', { key: 'subOffset' }); return; }
     this.setSubOffset(this.subOffset + d);
     toast(`Subtitle timing ${this.subOffset > 0 ? '+' : ''}${this.subOffset.toFixed(1)}s`, '', { key: 'subOffset' });
   }
@@ -1070,7 +1085,16 @@ class Player {
     else { v.pause(); this.flash('pause'); }
   }
 
-  skip(d) { this.seekTo(this.video.currentTime + d); }
+  // show: on-screen '+30s' / '−10s' (keys and double-taps; the buttons are their own feedback).
+  skip(d, show = false) {
+    this.seekTo(this.video.currentTime + d);
+    if (!show) return;
+    // Repeated presses or taps add up in one bubble.
+    const o = this.osdSkip;
+    const sum = o && o.el.isConnected && Math.sign(o.sum) === Math.sign(d) ? o.sum + d : d;
+    const el = this.osd(sum < 0 ? `−${-sum}s` : `+${sum}s`, sum < 0 ? 'left' : 'right');
+    this.osdSkip = { el, sum };
+  }
 
   seekTo(t) {
     const d = this.duration();
@@ -1084,6 +1108,18 @@ class Player {
     this.center.appendChild(f);
     setTimeout(() => f.remove(), 600);
   }
+
+  // A short on-screen message (volume, skips) that fades like flash().
+  osd(text, side = 'center') {
+    this.osdEl?.remove();
+    clearTimeout(this.osdTimer);
+    const el = this.osdEl = h('div', { class: `p-flash p-osd ${side}` }, text);
+    this.center.appendChild(el);
+    this.osdTimer = setTimeout(() => el.remove(), 900);
+    return el;
+  }
+
+  osdVolume() { this.osd(this.video.muted ? 'Muted' : `Volume ${this.volumeText()}`); }
 
   showSpinner(on) {
     if (on && !this.spin) { this.spin = h('div', { class: 'spinner' }); this.center.appendChild(this.spin); }
@@ -1105,6 +1141,17 @@ class Player {
     if (document.fullscreenElement) document.exitFullscreen();
     else if (this.root.requestFullscreen) this.root.requestFullscreen().catch(() => {});
     else if (this.video.webkitEnterFullscreen) this.video.webkitEnterFullscreen();
+  }
+
+  onPip(on) {
+    this.root.classList.toggle('pip', on);
+    if (this.pipBtn) {
+      this.labelButton(this.pipBtn, on ? 'Exit picture in picture' : 'Picture in picture');
+      this.pipBtn.setAttribute('aria-pressed', String(on));
+    }
+    this.pipMsg?.remove();
+    this.pipMsg = on ? h('div', { class: 'p-pipmsg' }, 'Playing in picture-in-picture') : null;
+    if (on) this.center.appendChild(this.pipMsg);
   }
 
   async togglePip() {
@@ -1142,13 +1189,13 @@ class Player {
     const k = e.key.toLowerCase();
     const map = {
       ' ': () => this.togglePlay(), k: () => this.togglePlay(),
-      arrowleft: () => this.skip(-prefs.get('skipBack')), j: () => this.skip(-prefs.get('skipBack')),
-      arrowright: () => this.skip(prefs.get('skipFwd')), l: () => this.skip(prefs.get('skipFwd')),
-      arrowup: () => { v.volume = Math.min(1, v.volume + 0.05); v.muted = false; },
-      arrowdown: () => { v.volume = Math.max(0, v.volume - 0.05); },
-      f: () => this.toggleFullscreen(), m: () => this.toggleMute(),
+      arrowleft: () => this.skip(-prefs.get('skipBack'), true), j: () => this.skip(-prefs.get('skipBack'), true),
+      arrowright: () => this.skip(prefs.get('skipFwd'), true), l: () => this.skip(prefs.get('skipFwd'), true),
+      arrowup: () => { v.volume = Math.min(1, v.volume + 0.05); v.muted = false; this.osdVolume(); },
+      arrowdown: () => { v.volume = Math.max(0, v.volume - 0.05); this.osdVolume(); },
+      f: () => this.toggleFullscreen(), m: () => { this.toggleMute(); this.osdVolume(); },
       i: () => this.toggleStats(), c: () => this.toggleMenu('tracks'),
-      n: () => this.playNext(),
+      n: () => this.playNext(), s: () => this.skipBtn?.click(),
       g: () => this.nudgeSubs(-0.1), h: () => this.nudgeSubs(0.1),
       escape: () => { if (this.menu) this.closeMenu(); else if (!document.fullscreenElement) this.close(); },
       home: () => this.seekTo(0), end: () => this.seekTo(this.duration() - 5),
@@ -1288,7 +1335,7 @@ class Player {
   }
 
   toggleStats() {
-    if (this.statsEl) { this.statsEl.remove(); this.statsEl = null; prefs.set('showStats', false); return; }
+    if (this.statsEl) { this.statsEl.remove(); this.statsEl = null; prefs.set('showStats', false); this.statsChanged(); return; }
     if (!this.plan) return;
     prefs.set('showStats', true);
     const stop = (on) => (e) => { e.stopPropagation(); on(e); };
@@ -1310,7 +1357,14 @@ class Player {
       this.statsBody);
     this.root.appendChild(this.statsEl);
     this.renderStats(this.clientStats());
+    this.statsChanged();
     this.beat();
+  }
+
+  // The badge and an open Settings menu show whether the panel is up.
+  statsChanged() {
+    this.methodEl.setAttribute('aria-pressed', String(!!this.statsEl));
+    if (this.menuName === 'settings' && !this.menuPage) this.renderMenu();
   }
 
   // Everything the stats panel shows, as data: rendered into the panel and
@@ -1552,6 +1606,8 @@ class Player {
     };
     const auds = (this.file.info?.streams || []).filter((s) => s.type === 'audio');
     const subs = this.file.subtitles || [];
+    // Below 900px the menu spans the subtitles: close it so the change shows.
+    const styled = () => (matchMedia('(max-width: 900px)').matches ? this.closeMenu() : this.openPage(null));
 
     if (this.menuName === 'tracks') {
       switch (this.menuPage) {
@@ -1566,9 +1622,9 @@ class Player {
         case 'audio':
           return page('Audio', auds.map((a) => ({ label: streamLabel(a), active: this.audio === a.index, on: () => { if (a.index !== this.audio) this.chooseAudio(a.index); this.closeMenu(); } })));
         case 'size':
-          return page('Subtitle size', [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']].map(([k, l]) => ({ label: l, active: prefs.get('subSize') === k, on: () => { prefs.set('subSize', k); this.applySubStyle(); this.openPage(null); } })));
+          return page('Subtitle size', [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']].map(([k, l]) => ({ label: l, active: prefs.get('subSize') === k, on: () => { prefs.set('subSize', k); this.applySubStyle(); styled(); } })));
         case 'pos':
-          return page('Subtitle position', [['low', 'Low'], ['normal', 'Normal'], ['high', 'High']].map(([k, l]) => ({ label: l, active: prefs.get('subPos') === k, on: () => { prefs.set('subPos', k); this.applySubStyle(); this.openPage(null); } })));
+          return page('Subtitle position', [['low', 'Low'], ['normal', 'Normal'], ['high', 'High']].map(([k, l]) => ({ label: l, active: prefs.get('subPos') === k, on: () => { prefs.set('subPos', k); this.applySubStyle(); styled(); } })));
       }
       const cur = this.subById(this.subtitle);
       m.append(h('div', { class: 'pm-title' }, 'Subtitles & audio'));
@@ -1594,7 +1650,14 @@ class Player {
 
     // settings
     const src = this.file?.info?.bitrate ? Math.round(this.file.info.bitrate / 1000) : 0;
-    const modes = [['auto', 'Automatic', 'Direct play, then remux, then transcode'], ['direct', 'Direct play', 'Original file'], ['remux', 'Direct stream', 'Remux; video untouched'], ['transcode', 'Transcode', 'Re-encode on the server'], ['hls', 'HLS', 'For AirPlay and older devices']];
+    const modes = [
+      ['auto', 'Automatic', `${METHOD_LABEL.direct}, then ${METHOD_LABEL.remux}, then ${METHOD_LABEL.transcode}`],
+      ['direct', METHOD_LABEL.direct, 'Original file'],
+      ['remux', METHOD_LABEL.remux, 'New container; video untouched'],
+      ['transcode', METHOD_LABEL.transcode, 'Re-encode on the server'],
+      ['hls', 'HLS', 'For AirPlay and older devices'],
+    // HLS needs native support (Safari, iOS); elsewhere it only falls back.
+    ].filter(([k]) => k !== 'hls' || this.mode === 'hls' || this.nativeHls());
     switch (this.menuPage) {
       case 'quality':
         return page('Quality', QUALITIES.filter(([k]) => !k || !src || k <= src * 1.5 || k === this.quality).map(([k, l]) => ({
@@ -1604,13 +1667,15 @@ class Player {
       case 'method':
         return page('Playback method', modes.map(([k, l, d]) => ({ label: l, sub: d, active: this.mode === k, on: () => { this.mode = k; prefs.set('mode', k); this.fallbacks = 0; this.swEncode = false; this.closeMenu(); this.replan(); } })));
       case 'speed':
-        return page('Speed', SPEEDS.map((sp) => ({ label: sp === 1 ? 'Normal' : `${sp}x`, active: this.video.playbackRate === sp, on: () => { this.video.playbackRate = sp; this.openPage(null); } })));
+        // The default rate survives load(), so the speed outlasts track,
+        // quality and method changes, fallbacks and the next episode.
+        return page('Speed', SPEEDS.map((sp) => ({ label: sp === 1 ? 'Normal' : `${sp}x`, active: this.video.playbackRate === sp, on: () => { this.video.defaultPlaybackRate = this.video.playbackRate = sp; this.openPage(null); } })));
       case 'version':
         return page('Version', this.files.map((f) => ({ label: `${resLabel(f.width, f.height)} ${(f.vcodec || '').toUpperCase()}`, right: fmtBytes(f.size), active: this.file.id === f.id, on: () => { this.file = { ...f, subtitles: f.subtitles }; this.chaptersDrawn = false; this.closeMenu(); this.replan(); } })));
     }
     m.append(h('div', { class: 'pm-title' }, 'Settings'));
     m.append(row('Quality', this.qualityLabel(this.quality), 'quality'));
-    m.append(row('Playback', (modes.find(([k]) => k === this.mode) || modes[0])[1], 'method'));
+    m.append(row('Playback method', (modes.find(([k]) => k === this.mode) || modes[0])[1], 'method'));
     m.append(row('Speed', this.video.playbackRate === 1 ? 'Normal' : `${this.video.playbackRate}x`, 'speed'));
     if (this.files.length > 1) m.append(row('Version', `${resLabel(this.file.width, this.file.height)} ${(this.file.vcodec || '').toUpperCase()}`, 'version'));
     m.append(h('div', { class: 'pm-sep' }));
@@ -1633,15 +1698,18 @@ class Player {
       return;
     }
     if (inside && !this.skipBtn) {
-      this.skipBtn = h('button', { class: 'btn skip-intro', onclick: (e) => {
+      this.skipBtn = h('button', { class: 'btn skip-intro', 'aria-keyshortcuts': 's', title: 'Skip intro (s)', onclick: (e) => {
         e.stopPropagation();
         this.introSkipped = true;
         this.seekTo(seg.end);
       } }, 'Skip Intro', h('span', { html: icons.next }));
-      this.root.appendChild(this.skipBtn);
+      // Early in Tab order, right after Close (it's positioned, so it doesn't move).
+      this.root.insertBefore(this.skipBtn, this.root.querySelector(':scope > .p-bot'));
     } else if (!inside && this.skipBtn) {
+      const hadFocus = this.skipBtn.contains(document.activeElement);
       this.skipBtn.remove();
       this.skipBtn = null;
+      if (hadFocus) this.root.focus();
     }
   }
 
@@ -1699,12 +1767,42 @@ class Player {
     else this.onMovieEnd();
   }
 
-  onMovieEnd() { this.showUI(true); }
+  // Nothing plays next: offer the way out, or watching again. No auto-close.
+  onMovieEnd() {
+    this.cancelUpNext(false);
+    this.removeEndCard();
+    this.showUI(true);
+    if (!this.item || this.errEl) return;
+    const it = this.item;
+    const card = h('div', { class: 'upnext end-card', role: 'region', 'aria-label': 'Finished', onclick: (e) => e.stopPropagation() },
+      h('div', { class: 'b' },
+        h('div', { class: 'small muted' }, 'Finished'),
+        h('b', null, it.kind === 'episode' ? `${fmtEpisode(it)} — ${it.title}` : it.title),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn primary sm', onclick: () => this.close() }, 'Back to details'),
+          h('button', { class: 'btn sm', onclick: () => { this.removeEndCard(); this.seekTo(0); this.video.play().catch(() => {}); } }, 'Play from start'),
+          // Autoplay off or Up next cancelled: the next episode is still a click away.
+          this.detail?.next ? h('button', { class: 'btn sm', onclick: () => this.playNext() }, `Play ${fmtEpisode(this.detail.next)}`) : null)));
+    this.closeMenu(false);
+    this.root.appendChild(card);
+    this.endCard = card;
+    card.querySelector('button').focus();
+  }
+
+  removeEndCard() {
+    if (!this.endCard) return;
+    const hadFocus = this.endCard.contains(document.activeElement);
+    this.endCard.remove();
+    this.endCard = null;
+    if (hadFocus) this.root.focus();
+  }
 
   async playNext() {
     const next = this.detail?.next;
     if (!next) return;
+    this.closeMenu();
     this.cancelUpNext(false);
+    this.removeEndCard();
     this.sendStop();
     this.stopSent = false;
     this.sessionId = null;
@@ -1761,6 +1859,7 @@ class Player {
     document.removeEventListener('fullscreenchange', this.onFs);
     window.removeEventListener('pagehide', this.onHide);
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    if (document.pictureInPictureElement === this.video) document.exitPictureInPicture().catch(() => {});
     this.teardown();
     this.destroyASS();
     this.root.remove();
