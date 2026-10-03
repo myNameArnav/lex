@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -235,7 +236,7 @@ func (s *Store) PlaybackStats(days, tzMinutes int) (*PlaybackStats, error) {
 	if st.TopItems, err = s.buckets(`SELECT MAX(title), COUNT(*), SUM(watched)/3600.0 FROM history WHERE started_at>=? GROUP BY COALESCE(`+titleKey+`, 'i' || item_id) ORDER BY 2 DESC, 3 DESC LIMIT 15`, since); err != nil {
 		return nil, err
 	}
-	if st.Reasons, err = s.buckets(`SELECT reasons, COUNT(*), SUM(watched)/3600.0 FROM history WHERE started_at>=? AND reasons!='' GROUP BY reasons ORDER BY 2 DESC LIMIT 15`, since); err != nil {
+	if st.Reasons, err = s.reasonBuckets(since); err != nil {
 		return nil, err
 	}
 	if st.BufferByMethod, err = s.buckets(`SELECT method, SUM(buffer_events), CASE WHEN SUM(watched)>0 THEN SUM(buffer_seconds)*100.0/SUM(watched) ELSE 0 END FROM history WHERE started_at>=? GROUP BY method`, since); err != nil {
@@ -257,4 +258,52 @@ func (s *Store) PlaybackStats(days, tzMinutes int) (*PlaybackStats, error) {
 		st.Days = append(st.Days, d)
 	}
 	return st, rows.Err()
+}
+
+// bitrateReason matches decide.go's "bitrate 12000 kbps over 8000 kbps limit".
+var bitrateReason = regexp.MustCompile(`^bitrate \d+ kbps over \d+ kbps limit$`)
+
+// reasonBuckets counts each conversion reason on its own: history keeps a
+// play's reasons joined with "; ", and a play counts once toward each of its
+// reasons. Numbers are dropped so bitrate reasons group together.
+func (s *Store) reasonBuckets(since int64) ([]Bucket, error) {
+	rows, err := s.buckets(`SELECT reasons, COUNT(*), SUM(watched)/3600.0 FROM history WHERE started_at>=? AND reasons!='' GROUP BY reasons`, since)
+	if err != nil {
+		return nil, err
+	}
+	m := map[string]*Bucket{}
+	for _, r := range rows {
+		seen := map[string]bool{}
+		for _, k := range strings.Split(r.Key, "; ") {
+			k = strings.TrimSpace(k)
+			if bitrateReason.MatchString(k) {
+				k = "bitrate over the limit"
+			}
+			if k == "" || seen[k] {
+				continue
+			}
+			seen[k] = true
+			b := m[k]
+			if b == nil {
+				b = &Bucket{Key: k}
+				m[k] = b
+			}
+			b.Count += r.Count
+			b.Value += r.Value
+		}
+	}
+	out := make([]Bucket, 0, len(m))
+	for _, b := range m {
+		out = append(out, *b)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Key < out[j].Key
+	})
+	if len(out) > 15 {
+		out = out[:15]
+	}
+	return out, nil
 }

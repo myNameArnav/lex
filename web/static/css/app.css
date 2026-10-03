@@ -517,7 +517,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .core span { position: absolute; inset: 0; display: grid; place-items: center; font-size: 10px; font-weight: 700; z-index: 1; text-shadow: 0 1px 2px #000; }
 
 .sessions { display: grid; gap: 14px; }
-.dash-live { display: grid; gap: 28px; }
+/* One shrinkable column: a long storage path must not widen the page. */
+.dash-live { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
+.dash-live > * { min-width: 0; }
 .dash-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
 .dcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
 .dcard { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
@@ -525,6 +527,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .dcard-head .l { color: var(--text3); font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
 .dcard-head .v { font-size: 24px; font-weight: 800; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .dcard .sub { color: var(--text2); font-size: 12px; font-variant-numeric: tabular-nums; min-height: 16px; }
+.dcard-extra { display: contents; }
 .dcard .meter { margin-top: 2px; }
 .dcard .cores { margin-top: 2px; grid-template-columns: repeat(auto-fill, minmax(26px, 1fr)); gap: 4px; }
 .dcard .core { height: 22px; }
@@ -535,6 +538,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .srow { padding: 8px 0; border-top: 1px solid rgba(255,255,255,.04); }
 .srow:first-of-type { border-top: 0; }
 .srow .meter { margin-top: 6px; }
+.srow .row { flex-wrap: wrap; row-gap: 2px; }
+.srow .grow { min-width: 0; }
 .dash-host { color: var(--text3); font-size: 12px; text-align: center; margin-top: -12px; }
 .health { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
 .health > div { background: var(--bg3); border-radius: 8px; padding: 7px 10px; display: grid; gap: 1px; min-width: 0; }
@@ -543,21 +548,25 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .health b.warn { color: var(--warn); }
 .health b.bad { color: var(--bad); }
 .session details { margin-top: 10px; }
-.session summary { cursor: pointer; color: var(--text2); font-size: 12.5px; width: max-content; }
+.session summary { cursor: pointer; color: var(--text2); font-size: 12.5px; width: max-content; padding: 4px 0; }
 .session summary:hover { color: var(--text); }
 .session details .kv { grid-template-columns: max-content 1fr; }
 .dash-2 { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; margin-bottom: 14px; }
 .dash-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
-.panel-sub { margin: 16px 0 8px; font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text3); }
+.panel .panel-title { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--text2); }
+.panel .panel-sub { margin: 16px 0 8px; font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text3); }
 .mtable { width: 100%; }
 .mtable td, .mtable th { padding: 7px 6px; }
-.mtable .dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 8px; }
+.mtable .dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 8px; background: var(--text3); }
+.mtable .dot.direct { background: var(--method-direct); }
+.mtable .dot.remux { background: var(--method-remux); }
+.mtable .dot.transcode { background: var(--method-transcode); }
 .session { display: grid; grid-template-columns: 90px 1fr; gap: 16px; background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
 .session .poster { width: 90px; aspect-ratio: 2/3; border-radius: 8px; overflow: hidden; background: var(--bg3); }
 .session .poster img { width: 100%; height: 100%; object-fit: cover; }
 .session h3 { margin: 0; font-size: 15px; }
 .session .kv { font-size: 12.5px; margin-top: 8px; grid-template-columns: max-content 1fr max-content 1fr; }
-.method { display: inline-block; font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; border-radius: 5px; padding: 2px 7px; }
+.method { display: inline-block; white-space: nowrap; font-size: 11px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; border-radius: 5px; padding: 2px 7px; }
 .method.direct { background: var(--good-soft); color: var(--method-direct); }
 .method.remux { background: var(--info-soft); color: var(--method-remux); }
 .method.transcode { background: var(--bad-soft); color: var(--method-transcode); }
@@ -565,9 +574,45 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .bar-item { display: grid; grid-template-columns: minmax(90px, 180px) 1fr auto; gap: 10px; align-items: center; font-size: 13px; }
 .bar-item .track { height: 10px; background: var(--bg4); border-radius: 6px; overflow: hidden; }
 .bar-item .track i { display: block; height: 100%; border-radius: 6px; background: var(--accent); }
-.chart { width: 100%; height: 180px; display: block; }
+.bar-item.wrap > .ellipsis { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+/* Horizontal drags scrub the read-out; vertical ones still scroll the page. */
+.chart { width: 100%; height: 180px; display: block; touch-action: pan-y; }
+.ctip { position: absolute; top: 4px; z-index: 5; pointer-events: none; background: rgba(12,13,16,.96); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font-size: 12px; white-space: nowrap; }
+.chart-data { margin-top: 8px; font-size: 12.5px; }
+.chart-data summary { cursor: pointer; color: var(--text2); width: max-content; padding: 4px 0; }
+.chart-data summary:hover { color: var(--text); }
+.chart-data p { margin: 4px 0; }
+.tbl.history .h-client .mono { overflow-wrap: normal; white-space: nowrap; }
+.section-title[tabindex='-1']:focus { outline: none; }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text2); }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+/* Dashboard on phones: two-up tiles, and history rows stacked as
+   "Title … Method" over one dim line of when / who / how long. */
+@media (max-width: 700px) {
+  .tbl.history, .tbl.history tbody { display: block; }
+  .tbl.history tr:first-child { display: none; }
+  .tbl.history tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .tbl.history tr:last-child { border-bottom: 0; }
+  .tbl.history tr::after { content: ''; order: 1; flex-basis: 100%; }
+  .tbl.history td { padding: 0; border: 0; background: none; }
+  .tbl.history .h-title { flex: 1 1 0; min-width: 0; font-weight: 600; }
+  .tbl.history .h-title .small { display: inline; margin-left: 8px; font-weight: 400; }
+  .tbl.history .h-when, .tbl.history .h-user, .tbl.history .h-num { order: 2; font-size: 12px; color: var(--text2); }
+  .tbl.history .h-num::before { content: attr(data-label) ' '; color: var(--text3); }
+  .tbl.history .h-reasons, .tbl.history .h-output, .tbl.history .h-client, .tbl.history .h-num:not([data-label='Watched']) { display: none; }
+  .panel.table-wrap:has(> .tbl.history) { padding: 2px 14px; }
+}
+@media (max-width: 520px) {
+  /* Title on its own line; the method and Stop drop below it. */
+  .session-head { flex-wrap: wrap; row-gap: 6px; }
+  .session-head > .grow { flex-basis: 100%; }
+  .range-group { gap: 6px; }
+  .range-group > .muted { display: none; }
+  .range-group .btn.sm { padding: 0 10px; }
+  .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .stat { padding: 12px 14px; }
+  .stat .v { font-size: 22px; }
+}
 .logs { background: #08090b; border: 1px solid var(--line); border-radius: 10px; padding: 12px; max-height: 70vh; overflow: auto; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
 .logs .WARN { color: var(--warn); }
 .logs .ERROR { color: var(--bad); }
@@ -856,6 +901,10 @@ kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px soli
 
 .bar-item.link { width: calc(100% + 8px); background: none; border: 0; padding: 3px 4px; margin: 0 -4px; border-radius: 6px; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .bar-item.link:hover { background: rgba(255,255,255,.05); }
+.bar-item.link { grid-template-columns: minmax(90px, 180px) 1fr auto 12px; }
+.bar-item.link:hover .ellipsis, .bar-item.link:focus-visible .ellipsis { text-decoration: underline; }
+.bar-item .chev { display: flex; color: var(--text3); }
+.bar-item .chev svg { width: 12px; height: 12px; }
 .title-list { display: grid; gap: 4px; }
 .title-list > .small { margin-bottom: 6px; }
 .title-row { display: flex; align-items: center; gap: 12px; padding: 6px 8px; border-radius: 8px; color: inherit; text-decoration: none; }

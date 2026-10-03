@@ -1,9 +1,9 @@
 import { h, clear, icons, toast, modal, confirmDialog, spinner, toggle, fmtBytes, fmtBitrate, fmtTime, fmtDate, timeAgo, fmtUptime, fmtDuration, LANG_OPTIONS, $, run, staleBanner, motionOK, KIND_LABELS, METHOD_LABEL, reasonLabel, emptyState } from './ui.js';
 import { api, img } from './api.js';
-import { state, loadLibraries, route, refreshSoft, setLeaveGuard, focusAfterRoute } from './app.js';
+import { state, loadLibraries, refreshSoft, setLeaveGuard, focusAfterRoute } from './app.js';
 import { prefs, DEFAULTS, QUALITIES } from './prefs.js';
 import { capsSummary } from './caps.js';
-import { lineChart, columnChart, sparkline, barList, SERIES } from './charts.js';
+import { lineChart, columnChart, barList } from './charts.js';
 
 // Pollers owned by the current admin view. Each stops at its next tick once
 // its view is no longer current (navigated away or re-rendered; a navigation
@@ -915,15 +915,21 @@ async function aboutSection() {
 // Dashboard
 // ======================================================================
 
-const DASH = [['live', 'Live', 'broadcast'], ['playback', 'Playback', 'stats'], ['library', 'Library', 'library']];
+const DASH = [['live', 'Live'], ['playback', 'Playback'], ['library', 'Library']];
 
 export async function dashboardView(ctx, tab) {
   if (!state.me.isAdmin) return emptyState({ title: 'Admins only', text: 'Ask the server owner for access.', actions: [h('a', { class: 'btn primary', href: '#/' }, 'Go home')] });
   if (tab === 'history') tab = 'playback'; // merged into Playback
-  const content = await ({ live: liveTab, playback: playbackTab, library: libraryTab }[tab] || liveTab)(ctx);
+  if (!DASH.some(([id]) => id === tab)) tab = 'live';
+  const content = await ({ live: liveTab, playback: playbackTab, library: libraryTab })[tab](ctx);
   return h('div', { class: 'page' },
     h('h1', { class: 'page-title' }, 'Dashboard'),
-    h('div', { class: 'tabs', style: { marginTop: '14px' } }, DASH.map(([id, label]) => h('button', { class: id === tab ? 'active' : '', onclick: () => { location.hash = `#/dashboard/${id}`; } }, label))),
+    // Links, so they open in a new tab; the next view keeps focus on the tab.
+    h('nav', { class: 'tabs', 'aria-label': 'Dashboard sections', style: { marginTop: '14px' } }, DASH.map(([id, label]) => h('a', {
+      href: `#/dashboard/${id}`, class: id === tab ? 'active' : null, 'aria-current': id === tab ? 'page' : null,
+      dataset: { focusKey: `dash-tab-${id}` },
+      onclick: (e) => { if (id !== tab && !e.ctrlKey && !e.metaKey && !e.shiftKey) focusAfterRoute(`dash-tab-${id}`); },
+    }, label))),
     content);
 }
 
@@ -936,21 +942,30 @@ function meter(pct, hotAt = 85) {
 }
 
 const bps = (bytesPerSec) => fmtBitrate(bytesPerSec * 8);
+// Polled views update text in place: an unchanged node keeps any selection.
+const setText = (el, v) => { if (el.textContent !== v) el.textContent = v; };
 
 // Live: what's playing first, then server health (each card with its own
-// last-hour chart), then storage, then one line about the host.
+// last-hour chart), then storage, then one line about the host. Polls update
+// the cards in place so focus, selection and open details survive.
 async function liveTab(ctx) {
   const sessionsBox = h('div', { class: 'sessions' });
-  const nowTitle = h('h2', { class: 'section-title' }, 'Now playing');
-  const cards = { cpu: h('div', { class: 'dcard' }), mem: h('div', { class: 'dcard' }), temp: h('div', { class: 'dcard' }), net: h('div', { class: 'dcard' }) };
-  const charts = { cpu: h('div', { class: 'dchart' }), mem: h('div', { class: 'dchart' }), temp: h('div', { class: 'dchart' }), net: h('div', { class: 'dchart' }) };
+  const nowTitle = h('h2', { class: 'section-title', tabindex: '-1' }, 'Now playing');
+  const mkCard = (label) => {
+    const c = { label, v: h('span', { class: 'v' }), sub: h('div', { class: 'sub' }), extra: h('div', { class: 'dcard-extra' }), chart: h('div', { class: 'dchart' }) };
+    c.el = h('div', { class: 'dcard' }, h('div', { class: 'dcard-head' }, h('span', { class: 'l' }, label), c.v), c.sub, c.extra, c.chart);
+    return c;
+  };
+  const cards = { cpu: mkCard('CPU'), mem: mkCard('Memory'), temp: mkCard('Temperature'), net: mkCard('Network out') };
   const storage = h('div', { class: 'panel' });
   const host = h('div', { class: 'dash-host' });
   // Element.append would print null and stringify arrays; flatten like h().
   const put = (el, ...kids) => clear(el).append(...kids.flat(Infinity).filter((k) => k != null && k !== false));
-  const card = (el, label, value, sub, ...rest) => put(el,
-    h('div', { class: 'dcard-head' }, h('span', { class: 'l' }, label), h('span', { class: 'v' }, value)),
-    h('div', { class: 'sub' }, sub || ''), ...rest);
+  const card = (c, value, sub, ...rest) => {
+    setText(c.v, value);
+    if (typeof sub === 'string') setText(c.sub, sub); else put(c.sub, sub);
+    put(c.extra, rest);
+  };
   let hist = [], haveSystem = false;
 
   const renderSystem = async (withHistory) => {
@@ -964,102 +979,80 @@ async function liveTab(ctx) {
     else { hist.push(n); if (hist.length > 1200) hist.shift(); }
     const memPct = s.memTotal ? (s.memUsed / s.memTotal) * 100 : 0;
     const flags = s.throttleFlags?.length ? s.throttleFlags.join(', ') : '';
-    card(cards.cpu, 'CPU', `${n.cpu.toFixed(0)}%`,
+    card(cards.cpu, `${n.cpu.toFixed(0)}%`,
       `load ${s.load.map((x) => x.toFixed(2)).join(' · ')}${s.freqMhz ? ` · ${Math.round(s.freqMhz)} MHz` : ''}`,
-      h('div', { class: 'cores' }, (s.cores || []).map((c, i) => h('div', { class: 'core', title: `Core ${i}: ${c.toFixed(0)}%` }, h('i', { style: { height: `${c}%` } }), h('span', null, `${c.toFixed(0)}`)))),
-      charts.cpu);
-    card(cards.mem, 'Memory', `${memPct.toFixed(0)}%`,
+      h('div', { class: 'cores' }, (s.cores || []).map((c, i) => h('div', { class: 'core', title: `Core ${i}: ${c.toFixed(0)}%` }, h('i', { style: { height: `${c}%` } }), h('span', null, `${c.toFixed(0)}`)))));
+    card(cards.mem, `${memPct.toFixed(0)}%`,
       `${fmtBytes(s.memUsed)} of ${fmtBytes(s.memTotal)}${s.swapTotal ? ` · swap ${fmtBytes(s.swapUsed)}` : ''}`,
-      h('div', { class: 'small dim' }, `Lex uses ${fmtBytes(s.procRss)} (Go heap ${fmtBytes(s.goHeap)}) · ${s.procCpu.toFixed(1)}% CPU`),
-      charts.mem);
+      h('div', { class: 'small dim' }, `Lex uses ${fmtBytes(s.procRss)} (Go heap ${fmtBytes(s.goHeap)}) · ${s.procCpu.toFixed(1)}% CPU`));
     // Hosts without a sensor (VMs, containers on a laptop) get no card.
     const hasTemp = !!n.temp || hist.some((p) => p.temp);
-    cards.temp.hidden = !hasTemp;
+    cards.temp.el.hidden = !hasTemp;
     if (hasTemp) {
-      card(cards.temp, 'Temperature', n.temp ? `${n.temp.toFixed(0)}°C` : '—',
-        flags ? h('span', { class: 'warn' }, flags) : s.throttled ? 'No throttling' : '',
-        charts.temp);
+      card(cards.temp, n.temp ? `${n.temp.toFixed(0)}°C` : '—',
+        flags ? h('span', { class: 'warn' }, flags) : s.throttled ? 'No throttling' : '');
     }
-    card(cards.net, 'Network', bps(n.tx),
-      `out · in ${bps(n.rx)} · streaming ${bps(n.stream)}`,
-      charts.net);
+    card(cards.net, bps(n.tx), `in ${bps(n.rx)} · streaming ${bps(n.stream)}`);
     const times = hist.map((p) => p.t);
     if (times.length > 1) {
-      lineChart(charts.cpu, { times, height: 96, max: 100, fmt: (v) => `${v.toFixed(0)}%`, series: [{ name: 'Host', values: hist.map((p) => p.cpu) }, { name: 'Lex', values: hist.map((p) => p.pcpu / Math.max(1, s.numCpu)) }] });
-      lineChart(charts.mem, { times, height: 96, max: 100, fmt: (v) => `${v.toFixed(0)}%`, series: [{ name: 'Used', values: hist.map((p) => p.mem) }] });
-      if (hasTemp) lineChart(charts.temp, { times, height: 96, max: 90, fmt: (v) => `${v.toFixed(0)}°`, series: [{ name: 'SoC', values: hist.map((p) => p.temp) }] });
-      lineChart(charts.net, { times, height: 96, fmt: (v) => bps(v), series: [{ name: 'Out', values: hist.map((p) => p.tx) }, { name: 'Streaming', values: hist.map((p) => p.stream) }] });
+      const pct = (v) => `${v.toFixed(0)}%`;
+      lineChart(cards.cpu.chart, { title: 'CPU over the last hour', times, height: 96, max: 100, ticks: 2, fmt: pct, series: [{ name: 'Host', values: hist.map((p) => p.cpu) }, { name: 'Lex', values: hist.map((p) => p.pcpu / Math.max(1, s.numCpu)) }] });
+      lineChart(cards.mem.chart, { title: 'Memory over the last hour', times, height: 96, max: 100, ticks: 2, fmt: pct, series: [{ name: 'Used', values: hist.map((p) => p.mem) }] });
+      if (hasTemp) lineChart(cards.temp.chart, { title: 'Temperature over the last hour', times, height: 96, max: 90, fmt: (v) => `${v.toFixed(0)}°`, series: [{ name: 'SoC', values: hist.map((p) => p.temp) }] });
+      // In bits per second so the gridlines land on round rates; an idle
+      // server still gets a 0–1.5 Mbps scale.
+      lineChart(cards.net.chart, { title: 'Network out over the last hour', times, height: 96, floor: 1.5e6, fmt: fmtBitrate, series: [{ name: 'Out', values: hist.map((p) => p.tx * 8) }, { name: 'Streaming', values: hist.map((p) => p.stream * 8) }] });
     }
-    // Storage: disks, SSD cache and current disk activity in one place.
+    // Storage: disks, SSD cache and current disk activity in one place. A
+    // long path wraps its note underneath instead of widening the page.
     const row = (name, used, total, hot, note) => h('div', { class: 'srow' },
-      h('div', { class: 'row small' }, h('span', { class: 'grow ellipsis' }, name), h('span', { class: 'muted nowrap' }, note || `${fmtBytes(used)} of ${fmtBytes(total)} · ${fmtBytes(Math.max(0, total - used))} free`)),
+      h('div', { class: 'row wrap small' }, name, h('span', { class: 'muted' }, note || `${fmtBytes(used)} of ${fmtBytes(total)} · ${fmtBytes(Math.max(0, total - used))} free`)),
       meter(total ? (used / total) * 100 : 0, hot));
     const c = r.cache;
+    const pathSpan = (text, mono) => h('span', { class: `grow ellipsis${mono ? ' mono' : ''}`, title: text, style: { minWidth: 0, flex: '1 1 140px' } }, text);
     put(storage,
-      h('div', { class: 'row', style: { marginBottom: '10px' } }, h('h3', { class: 'grow', style: { margin: 0 } }, 'Storage'),
+      h('div', { class: 'row wrap', style: { marginBottom: '10px', rowGap: '2px' } }, h('h3', { class: 'grow', style: { margin: 0 } }, 'Storage'),
         h('span', { class: 'small muted' }, `read ${fmtBytes(n.dr)}/s · write ${fmtBytes(n.dw)}/s`)),
-      (s.disks || []).map((d) => row(h('span', { class: 'mono' }, d.path), d.used, d.total, 92)),
-      c?.enabled ? row('SSD cache', c.usedBytes, c.maxBytes, 97,
+      (s.disks || []).map((d) => row(pathSpan(d.path, true), d.used, d.total, 92)),
+      c?.enabled ? row(pathSpan('SSD cache'), c.usedBytes, c.maxBytes, 97,
         `${fmtBytes(c.usedBytes)} of ${fmtBytes(c.maxBytes)} · ${c.files} files${c.current ? ` · copying ${Math.round((c.current.done / c.current.size) * 100)}%` : ''}`) : null);
     host.textContent = [s.model || s.os, s.arch, `${s.numCpu} cores`, `up ${fmtUptime(s.uptime)}`,
       `${r.remuxJobs} remux · ${r.transcodeJobs} transcode jobs`].filter(Boolean).join('  ·  ');
   };
 
+  const cardsById = new Map();
+  // A stopped card goes away; focus moves to the list heading, not <body>.
+  const refreshAfterStop = async () => {
+    await renderSessions().catch(() => {});
+    if (!document.activeElement || document.activeElement === document.body) nowTitle.focus({ preventScroll: true });
+  };
+  const nothing = h('div', { class: 'panel dim' }, 'Nothing is playing right now.');
   const renderSessions = async () => {
     const list = await api('/api/admin/stats/sessions');
     if (!ctx.isCurrent()) return;
     nowTitle.textContent = list.length ? `Now playing · ${list.length}` : 'Now playing';
-    // Keep expanded "details" open across refreshes.
-    const open = new Set([...sessionsBox.querySelectorAll('details[open]')].map((d) => d.dataset.id));
-    clear(sessionsBox);
-    if (!list.length) { sessionsBox.appendChild(h('div', { class: 'panel dim' }, 'Nothing is playing right now.')); return; }
-    list.sort((a, b) => b.startedAt - a.startedAt);
-    for (const s of list) {
-      const c = s.clientStats || {};
-      const j = s.job;
-      const pct = s.duration ? (s.position / s.duration) * 100 : 0;
-      const health = [
-        ['Buffer', `${(c.bufferAhead || 0).toFixed(0)}s`, (c.bufferAhead || 0) < 3 ? 'bad' : (c.bufferAhead || 0) < 10 ? 'warn' : ''],
-        ['Delivery', bps(s.rate)],
-        ['Stalls', c.bufferEvents ? `${c.bufferEvents} · ${(c.bufferSeconds || 0).toFixed(0)}s` : 'none', c.bufferEvents ? 'warn' : ''],
-        ['Read from', s.cached ? 'SSD cache' : 'Library disk'],
-      ];
-      const details = [
-        ['Video', `${s.videoIn || '?'} → ${s.videoOut || ''}`],
-        ['Audio', `${s.audioIn || '?'} → ${s.audioOut || ''}`],
-        ['Bitrate', `${fmtBitrate((s.srcBitrate || 0) * 1000)} source${s.method === 'transcode' ? ` → ${fmtBitrate((s.outBitrate || 0) * 1000)}` : ''} · ${fmtBytes(s.bytes)} sent`],
-        ['Client', `${s.client} · ${s.ip}${s.remote ? ' (remote)' : ' (local)'} · ${c.bandwidth ? fmtBitrate(c.bandwidth) : '—'} download`],
-        ['Picture', `${c.resolution || '—'}${c.totalFrames ? ` · ${c.droppedFrames} of ${c.totalFrames} frames dropped` : ''}`],
-      ];
-      if (j) details.push(['ffmpeg', j.exited ? (j.error ? `exited: ${j.error}` : 'finished') : `${j.throttled ? 'waiting (client buffer full)' : `${(j.speed || 0).toFixed(2)}x · ${Math.round(j.fps || 0)} fps`} · CPU ${Math.round(j.cpu || 0)}% · ${s.restarts} restart${s.restarts === 1 ? '' : 's'}`]);
-      const det = h('details', { 'data-id': s.id, open: open.has(s.id) }, h('summary', null, 'Details'),
-        h('dl', { class: 'kv' }, details.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])));
-      sessionsBox.appendChild(h('div', { class: 'session' },
-        h('a', { class: 'poster', href: `#/item/${s.itemId}` }, h('img', { src: img({ id: s.itemId }, 'poster', 160), alt: '' })),
-        h('div', { style: { minWidth: 0 } },
-          h('div', { class: 'row' },
-            h('div', { class: 'grow', style: { minWidth: 0 } },
-              h('h3', { class: 'ellipsis' }, s.title),
-              h('div', { class: 'dim small ellipsis' }, [s.subtitle, s.userName, s.client, s.remote ? 'remote' : 'local'].filter(Boolean).join(' · '))),
-            h('span', { class: `method ${s.method}`, title: s.reasons?.map(reasonLabel).join('; ') || '' }, METHOD_LABEL[s.method] || s.method),
-            h('button', { class: 'btn sm danger', title: 'Stop this stream', onclick: async (e) => {
-              const btn = e.currentTarget;
-              if (await confirmDialog(`Stop ${s.userName}'s stream?`, 'Stop', true) && await run(btn, () => api(`/api/admin/sessions/${s.id}`, { method: 'DELETE' }))) renderSessions().catch(() => {});
-            } }, 'Stop')),
-          h('div', { class: 'row small', style: { marginTop: '10px' } },
-            h('span', { class: 'muted nowrap' }, `${s.paused ? 'Paused' : 'Playing'} · ${fmtTime(s.position)} / ${fmtTime(s.duration)}`), h('div', { class: 'grow' }, meter(pct, 101))),
-          s.reasons?.length ? h('div', { class: 'small muted', style: { marginTop: '6px' } }, `Why ${s.method === 'transcode' ? 'transcoding' : 'converting'}: ${s.reasons.map(reasonLabel).join(' · ')}`) : null,
-          h('div', { class: 'health' }, health.map(([k, v, cls]) => h('div', null, h('span', null, k), h('b', { class: cls || '' }, v)))),
-          det)));
-    }
+    list.sort((a, b) => b.startedAt - a.startedAt || (a.id < b.id ? -1 : 1));
+    const keys = new Set();
+    const want = list.map((s) => {
+      const key = `${s.id}:${s.itemId}`;
+      keys.add(key);
+      let card = cardsById.get(key);
+      if (!card) cardsById.set(key, (card = sessionCard(s, refreshAfterStop)));
+      card.update(s);
+      return card.el;
+    });
+    for (const k of [...cardsById.keys()]) if (!keys.has(k)) cardsById.delete(k);
+    if (!want.length) want.push(nothing);
+    // Remove and insert only what changed: moving a card would drop focus
+    // inside it.
+    for (const el of [...sessionsBox.children]) if (!want.includes(el)) el.remove();
+    want.forEach((el, i) => { if (sessionsBox.children[i] !== el) sessionsBox.insertBefore(el, sessionsBox.children[i] || null); });
   };
 
   // The first load failing leaves labelled placeholders, not empty boxes.
   const unavailable = () => {
-    card(cards.cpu, 'CPU', '—', 'Unavailable');
-    card(cards.mem, 'Memory', '—', 'Unavailable');
-    card(cards.net, 'Network', '—', 'Unavailable');
-    cards.temp.hidden = true;
+    for (const k of ['cpu', 'mem', 'net']) card(cards[k], '—', 'Unavailable');
+    cards.temp.el.hidden = true;
     put(storage, h('h3', { style: { margin: 0 } }, 'Storage'), h('div', { class: 'dim small', style: { marginTop: '10px' } }, 'Unavailable'));
   };
   const [sysOk, sessOk] = await Promise.all([renderSystem(true).then(() => true, () => false), renderSessions().then(() => true, () => false)]);
@@ -1068,7 +1061,7 @@ async function liveTab(ctx) {
   const live = h('div', { class: 'dash-live' },
     h('section', null, h('div', { class: 'dash-head' }, nowTitle), sessionsBox),
     h('section', null, h('div', { class: 'dash-head' }, h('h2', { class: 'section-title' }, 'Server'), h('span', { class: 'muted small' }, 'last hour')),
-      h('div', { class: 'dcards' }, cards.cpu, cards.mem, cards.temp, cards.net)),
+      h('div', { class: 'dcards' }, cards.cpu.el, cards.mem.el, cards.temp.el, cards.net.el)),
     h('section', null, storage),
     host);
   const banner = staleBanner(live);
@@ -1081,65 +1074,201 @@ async function liveTab(ctx) {
   return [banner.el, live];
 }
 
+// sessionCard builds one Now playing card; update(s) refreshes it in place.
+function sessionCard(s0, refresh) {
+  let s = s0;
+  const href = `#/item/${s.itemId}`;
+  const title = h('a', { href });
+  const sub = h('div', { class: 'dim small ellipsis' });
+  const method = h('span');
+  const status = h('span', { class: 'muted nowrap' });
+  const bar = meter(0, 101);
+  const reasons = h('div', { class: 'small muted', style: { marginTop: '6px' } });
+  const health = ['Buffer', 'Delivery', 'Stalls', 'Read from'].map((k) => [k, h('b')]);
+  const facts = ['Video', 'Audio', 'Bitrate', 'Client', 'Picture', 'ffmpeg'].map((k) => {
+    const dt = h('dt', null, k), dd = h('dd');
+    return { k, dt, dd };
+  });
+  const summary = h('summary', null, 'Details');
+  const stop = h('button', { class: 'btn sm danger', onclick: async (e) => {
+    const btn = e.currentTarget;
+    const { userName, title: t, id } = s;
+    if (!(await confirmDialog(`Stop ${userName}'s stream of ${t}? Their player will show that playback was stopped.`, 'Stop', true, 'Stop stream?'))) return;
+    await run(btn, () => api(`/api/admin/sessions/${id}`, { method: 'DELETE' }).catch((err) => {
+      throw err.status === 404 ? new Error('That stream had already ended') : err;
+    }), `Stopped ${userName}'s stream`);
+    refresh();
+  } }, 'Stop');
+  const el = h('div', { class: 'session' },
+    // The title link names the item; the poster is a duplicate pointer target.
+    h('a', { class: 'poster', href, tabindex: '-1', 'aria-hidden': 'true' }, h('img', { src: img({ id: s.itemId }, 'poster', 160), alt: '' })),
+    h('div', { style: { minWidth: 0 } },
+      h('div', { class: 'row session-head' },
+        h('div', { class: 'grow', style: { minWidth: 0 } }, h('h3', { class: 'ellipsis' }, title), sub),
+        method, stop),
+      h('div', { class: 'row small', style: { marginTop: '10px' } }, status, h('div', { class: 'grow' }, bar)),
+      reasons,
+      h('div', { class: 'health' }, health.map(([k, b]) => h('div', null, h('span', null, k), b))),
+      h('details', null, summary, h('dl', { class: 'kv' }, facts.map((f) => [f.dt, f.dd])))));
+  const update = (next) => {
+    s = next;
+    const c = s.clientStats || {};
+    const j = s.job;
+    setText(title, s.title);
+    setText(sub, [s.subtitle, s.userName, s.client, s.remote ? 'remote' : 'local'].filter(Boolean).join(' · '));
+    method.className = `method ${s.method}`;
+    method.title = s.reasons?.map(reasonLabel).join('; ') || '';
+    setText(method, METHOD_LABEL[s.method] || s.method);
+    stop.setAttribute('aria-label', `Stop ${s.userName}'s stream of ${s.title}`);
+    summary.setAttribute('aria-label', `Details for ${s.title}`);
+    setText(status, `${s.paused ? 'Paused' : 'Playing'} · ${fmtTime(s.position)} / ${fmtTime(s.duration)}`);
+    bar.firstChild.style.width = `${s.duration ? Math.min(100, (s.position / s.duration) * 100) : 0}%`;
+    reasons.hidden = !s.reasons?.length;
+    setText(reasons, s.reasons?.length ? `Why ${s.method === 'transcode' ? 'transcoding' : 'converting'}: ${s.reasons.map(reasonLabel).join(' · ')}` : '');
+    const buf = c.bufferAhead || 0;
+    [
+      [`${buf.toFixed(0)}s`, buf < 3 ? 'bad' : buf < 10 ? 'warn' : ''],
+      [bps(s.rate), ''],
+      [c.bufferEvents ? `${c.bufferEvents} · ${(c.bufferSeconds || 0).toFixed(0)}s` : 'none', c.bufferEvents ? 'warn' : ''],
+      [s.cached ? 'SSD cache' : 'Library disk', ''],
+    ].forEach(([v, cls], i) => { const b = health[i][1]; setText(b, v); b.className = cls; });
+    const vals = {
+      Video: `${s.videoIn || '?'} → ${s.videoOut || ''}`,
+      Audio: `${s.audioIn || '?'} → ${s.audioOut || ''}`,
+      Bitrate: `${fmtBitrate((s.srcBitrate || 0) * 1000)} source${s.method === 'transcode' ? ` → ${fmtBitrate((s.outBitrate || 0) * 1000)}` : ''} · ${fmtBytes(s.bytes)} sent`,
+      Client: `${s.client} · ${s.ip}${s.remote ? ' (remote)' : ' (local)'} · ${c.bandwidth ? fmtBitrate(c.bandwidth) : '—'} download`,
+      Picture: `${c.resolution || '—'}${c.totalFrames ? ` · ${c.droppedFrames} of ${c.totalFrames} frames dropped` : ''}`,
+      ffmpeg: j ? (j.exited ? (j.error ? `exited: ${j.error}` : 'finished') : `${j.throttled ? 'waiting (client buffer full)' : `${(j.speed || 0).toFixed(2)}x · ${Math.round(j.fps || 0)} fps`} · CPU ${Math.round(j.cpu || 0)}% · ${s.restarts} restart${s.restarts === 1 ? '' : 's'}`) : null,
+    };
+    for (const f of facts) {
+      const v = vals[f.k];
+      f.dt.hidden = f.dd.hidden = v == null;
+      setText(f.dd, v ?? '');
+    }
+  };
+  return { el, update };
+}
+
+const RANGES = [7, 30, 90, 365];
+const dayKey = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+
 async function playbackTab(ctx) {
-  const days = +(ctx.query.get('days') || 30);
-  const st = await api(`/api/admin/stats/playback?days=${days}&tz=${-new Date().getTimezoneOffset()}`);
-  // Fill missing days so the chart has a continuous axis.
-  const byDay = Object.fromEntries((st.days || []).map((d) => [d.day, d]));
-  const labels = [], full = [], hours = [], plays = [];
-  const nDays = Math.min(days, 120);
-  for (let i = nDays - 1; i >= 0; i--) {
-    const dt = new Date(Date.now() - i * 86400000);
-    const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-    labels.push(dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
-    full.push(dt.toLocaleDateString(undefined, { dateStyle: 'medium' }));
-    hours.push(byDay[key]?.hours || 0);
-    plays.push(byDay[key]?.plays || 0);
+  const days = Math.max(1, Math.min(3650, Math.round(+ctx.query.get('days')) || 30));
+  const [st, history] = await Promise.all([
+    api(`/api/admin/stats/playback?days=${days}&tz=${-new Date().getTimezoneOffset()}`),
+    historySection(ctx, days),
+  ]);
+  const range = h('div', { class: 'toolbar' },
+    h('div', { class: 'row wrap range-group', role: 'group', 'aria-label': 'Range' },
+      h('span', { class: 'muted', 'aria-hidden': 'true' }, 'Range'),
+      RANGES.map((d) => h('button', {
+        class: `btn sm${d === days ? ' primary' : ''}`, 'aria-pressed': String(d === days), dataset: { focusKey: `range-${d}` },
+        onclick: () => { if (d === days) return; focusAfterRoute(`range-${d}`); location.hash = `#/dashboard/playback?days=${d}`; },
+      }, `${d} days`))),
+    h('div', { class: 'spacer' }),
+    st.plays ? h('button', { class: 'btn sm ghost', onclick: () => {
+      const sec = document.getElementById('history');
+      sec?.scrollIntoView({ behavior: motionOK() ? 'smooth' : 'auto' });
+      sec?.querySelector('h2')?.focus({ preventScroll: true });
+    } }, 'Jump to history') : null);
+  // Paging through history keeps you at the table (Back restores its own scroll).
+  if (ctx.query.get('offset') && !ctx.restore) requestAnimationFrame(() => document.getElementById('history')?.scrollIntoView());
+  if (!st.plays) {
+    return h('div', null, range,
+      emptyState({ level: 'h2', title: `No plays in the last ${days} days`, text: 'Plays are recorded when a session ends.' }),
+      history);
   }
+
+  // Fill missing days so the chart has a continuous axis; long ranges are
+  // summed into weeks (starting Monday) so the bars stay readable.
+  const byDay = Object.fromEntries((st.days || []).map((d) => [d.day, d]));
+  const weekly = days > 120;
+  const labels = [], full = [], hours = [], plays = [];
+  let week = '';
+  for (let i = days - 1; i >= 0; i--) {
+    const dt = new Date();
+    dt.setHours(12, 0, 0, 0);
+    dt.setDate(dt.getDate() - i);
+    const d = byDay[dayKey(dt)];
+    if (weekly) {
+      const mon = new Date(dt);
+      mon.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
+      if (dayKey(mon) !== week) {
+        week = dayKey(mon);
+        labels.push(mon.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
+        full.push(`Week of ${mon.toLocaleDateString(undefined, { dateStyle: 'medium' })}`);
+        hours.push(0); plays.push(0);
+      }
+      hours[hours.length - 1] += d?.hours || 0;
+      plays[plays.length - 1] += d?.plays || 0;
+    } else {
+      labels.push(dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }));
+      full.push(dt.toLocaleDateString(undefined, { dateStyle: 'medium' }));
+      hours.push(d?.hours || 0);
+      plays.push(d?.plays || 0);
+    }
+  }
+  const hoursTitle = weekly ? 'Hours watched per week' : 'Hours watched per day';
   const hoursBox = h('div'), hourBox = h('div');
   const hod = Array.from({ length: 24 }, (_, i) => (st.hoursOfDay || []).find((b) => +b.key === i)?.count || 0);
-  const methodColor = (it) => ({ direct: SERIES[0], remux: SERIES[1], transcode: SERIES[2] })[it.key] || SERIES[0];
-  const mlabel = (k) => METHOD_LABEL[k] || k;
-  const page = h('div', null,
-    h('div', { class: 'toolbar' }, h('span', { class: 'muted' }, 'Range'), [7, 30, 90, 365].map((d) => h('button', { class: `btn sm ${d === days ? 'primary' : ''}`, onclick: () => { location.hash = `#/dashboard/playback?days=${d}`; } }, `${d} days`)),
-      h('div', { class: 'spacer' }), h('button', { class: 'btn sm ghost', onclick: () => document.getElementById('history')?.scrollIntoView({ behavior: motionOK() ? 'smooth' : 'auto' }) }, 'Jump to history')),
+  const hourName = (i) => new Date(2000, 0, 1, i).toLocaleTimeString([], { hour: 'numeric' });
+  const fmtH = (v) => (v > 0 && Math.round(v * 60) < 60 ? `${Math.round(v * 60) || '<1'}m` : `${+v.toFixed(1)}h`);
+  const page = h('div', null, range,
     h('div', { class: 'stats-grid' },
-      stat('Plays', st.plays.toLocaleString(), `${st.uniqueItems} titles${st.plays ? ` · ${Math.round((st.remotePlays / st.plays) * 100)}% remote` : ''}`),
+      stat('Plays', st.plays.toLocaleString(), `${st.uniqueItems} titles · ${Math.round((st.remotePlays / st.plays) * 100)}% remote`),
       stat('Watch time', fmtHours(st.hours), `${fmtHours(st.hours / Math.max(1, days))} a day`),
-      stat('Data served', fmtBytes(st.bytes), st.plays ? `${fmtBytes(st.bytes / st.plays)} per play` : ''),
+      stat('Data served', fmtBytes(st.bytes), `${fmtBytes(st.bytes / st.plays)} per play`),
       stat('Buffering', st.hours ? `${((st.bufferSeconds / (st.hours * 3600)) * 100).toFixed(2)}%` : '—', `of watch time · ${st.bufferEvents} stalls, ${st.bufferSeconds.toFixed(0)}s`)),
     h('div', { class: 'dash-2' },
-      h('div', { class: 'panel' }, h('h3', null, 'Hours watched per day'), hoursBox),
-      h('div', { class: 'panel' }, h('h3', null, 'Plays by hour of day'), hourBox)),
+      h('div', { class: 'panel' }, h('h2', { class: 'panel-title' }, hoursTitle), hoursBox,
+        dataTable([weekly ? 'Week' : 'Day', 'Hours', 'Plays'], full.map((l, i) => (plays[i] ? [l, fmtHours(hours[i]), plays[i]] : null)), weekly ? 'Weeks without plays are left out.' : 'Days without plays are left out.')),
+      h('div', { class: 'panel' }, h('h2', { class: 'panel-title' }, 'Plays by hour of day'), hourBox,
+        dataTable(['Hour', 'Plays'], hod.map((v, i) => (v ? [hourName(i), v] : null)), 'Hours without plays are left out.'))),
     h('div', { class: 'dash-3' },
-      h('div', { class: 'panel' }, h('h3', null, 'How streams played'), methodsTable(st, mlabel, methodColor),
-        st.reasons?.length ? [h('h4', { class: 'panel-sub' }, 'Why streams were converted'), barList(st.reasons.map((m) => ({ label: m.key, value: m.count })), (v) => `${v}`)] : null),
-      h('div', { class: 'panel' }, h('h3', null, 'Most watched'), barList((st.topItems || []).map((m) => ({ label: m.key, value: m.count })), (v) => `${v} play${v === 1 ? '' : 's'}`)),
-      h('div', { class: 'panel' }, h('h3', null, "Who's watching"), barList((st.users || []).map((m) => ({ label: m.key, value: m.value })), (v) => fmtHours(v)),
-        h('h4', { class: 'panel-sub' }, 'Clients'), barList((st.clients || []).map((m) => ({ label: m.key || 'unknown', value: m.count })), (v) => `${v} play${v === 1 ? '' : 's'}`))));
-  page.append(await historySection(ctx, days));
-  // Paging through history keeps you at the table.
-  if (ctx.query.get('offset')) requestAnimationFrame(() => document.getElementById('history')?.scrollIntoView());
+      h('div', { class: 'panel' }, h('h2', { class: 'panel-title' }, 'How streams played'), methodsTable(st),
+        st.reasons?.length ? [h('h3', { class: 'panel-sub' }, 'Why streams were converted'),
+          h('p', { class: 'small dim', style: { margin: '-4px 0 8px' } }, 'A play can count toward several reasons.'),
+          barList(st.reasons.map((m) => ({ label: reasonLabel(m.key), value: m.count })), (v) => `${v}`, null, { wrap: true })] : null),
+      h('div', { class: 'panel' }, h('h2', { class: 'panel-title' }, 'Most watched'), barList((st.topItems || []).map((m) => ({ label: m.key, value: m.count })), (v) => `${v} play${v === 1 ? '' : 's'}`)),
+      h('div', { class: 'panel' }, h('h2', { class: 'panel-title' }, "Who's watching"), barList((st.users || []).map((m) => ({ label: m.key, value: m.value })), (v) => fmtHours(v)),
+        h('h3', { class: 'panel-sub' }, 'Clients'), barList((st.clients || []).map((m) => ({ label: m.key || 'unknown', value: m.count })), (v) => `${v} play${v === 1 ? '' : 's'}`))),
+    history);
   requestAnimationFrame(() => {
-    columnChart(hoursBox, { labels, fullLabels: full, values: hours, fmt: (v) => (v > 0 && v < 1 ? `${Math.round(v * 60)}m` : `${+v.toFixed(1)}h`), tipLabel: 'watched' });
-    columnChart(hourBox, { labels: hod.map((_, i) => `${i}h`), values: hod, fmt: (v) => `${Math.round(v)}`, tipLabel: 'plays' });
+    const day = (i) => new Date(Date.now() - i * 86400000).toLocaleDateString(undefined, { dateStyle: 'medium' });
+    columnChart(hoursBox, { title: `${hoursTitle}, ${day(days - 1)} to ${day(0)}`, labels, fullLabels: full, values: hours, fmt: fmtH, tipLabel: 'watched', floor: 0.25 });
+    columnChart(hourBox, { title: 'Plays by hour of day', labels: hod.map((_, i) => `${i}h`), fullLabels: hod.map((_, i) => hourName(i)), values: hod, fmt: (v) => `${Math.round(v)}`, tipLabel: 'plays' });
   });
   return page;
 }
 
-const fmtHours = (v) => (v > 0 && v < 1 ? `${Math.round(v * 60)} min` : v < 100 ? `${v.toFixed(1)} h` : `${Math.round(v).toLocaleString()} h`);
+// dataTable puts a chart's values in a collapsed table for keyboard, screen
+// reader and touch users. Rows that are null are left out.
+function dataTable(head, rows, note) {
+  rows = rows.filter(Boolean);
+  return h('details', { class: 'chart-data' }, h('summary', null, 'Show data'),
+    h('p', { class: 'small dim' }, note),
+    h('table', { class: 'tbl' },
+      h('tr', null, head.map((t) => h('th', { scope: 'col' }, t))),
+      rows.map((r) => h('tr', null, r.map((v) => h('td', null, `${v}`))))));
+}
+
+// A few seconds read "<1 min", not "0 min"; nothing at all reads "0 h".
+const fmtHours = (v) => {
+  const min = Math.round(v * 60);
+  return !(v > 0) ? '0 h' : min < 1 ? '<1 min' : min < 60 ? `${min} min` : v < 100 ? `${v.toFixed(1)} h` : `${Math.round(v).toLocaleString()} h`;
+};
 
 // Plays, share and stall time per playback method, in one table.
-function methodsTable(st, mlabel, color) {
+function methodsTable(st) {
   const plays = Object.fromEntries((st.methods || []).map((m) => [m.key, m.count]));
   const stall = Object.fromEntries((st.bufferByMethod || []).map((m) => [m.key, m.value]));
   const total = Object.values(plays).reduce((a, b) => a + b, 0);
   const rows = ['direct', 'remux', 'transcode'].filter((k) => plays[k]);
-  if (!rows.length) return h('div', { class: 'dim small' }, 'No plays yet.');
+  if (!rows.length) return h('div', { class: 'dim small' }, 'No data yet');
   return h('table', { class: 'tbl mtable' },
-    h('tr', null, h('th', null, ''), h('th', null, 'Plays'), h('th', null, 'Stalled')),
+    h('tr', null, h('th', { scope: 'col' }, h('span', { class: 'sr-only' }, 'Method')), h('th', { scope: 'col' }, 'Plays'), h('th', { scope: 'col' }, 'Stalled')),
     rows.map((k) => h('tr', null,
-      h('td', null, h('i', { class: 'dot', style: { background: color({ key: k }) } }), mlabel(k)),
+      h('td', null, h('i', { class: `dot ${k}`, 'aria-hidden': 'true' }), METHOD_LABEL[k] || k),
       h('td', null, `${plays[k]}`, h('span', { class: 'dim' }, ` · ${Math.round((plays[k] / total) * 100)}%`)),
       h('td', null, stall[k] != null ? `${stall[k].toFixed(2)}%` : '—'))));
 }
@@ -1148,20 +1277,21 @@ async function libraryTab() {
   const st = await api('/api/admin/stats/library');
   const bucketList = (dim, b, fmtKey = (k) => k) => barList([...(b || [])].sort((x, y) => y.value - x.value)
     .map((x) => ({ label: `${fmtKey(x.key)} (${x.count})`, value: x.value, onClick: () => libraryTitles(dim, x.key, `${DIM_LABEL[dim]}: ${fmtKey(x.key)}`) })), (v) => fmtBytes(v));
+  const panel = (title, list) => h('div', { class: 'panel' }, h('h2', { class: 'panel-title' }, title), list);
   return h('div', null,
     h('div', { class: 'stats-grid' },
       stat('Movies', st.movies.toLocaleString()),
       stat('Shows', st.shows.toLocaleString(), `${st.seasons} seasons · ${st.episodes.toLocaleString()} episodes`),
-      stat('Files', fmtBytes(st.totalBytes), `${st.files.toLocaleString()} files · ${fmtHours(st.totalDuration / 3600)} of video${st.unprobed ? ` · ${st.unprobed} awaiting analysis` : ''}${st.probeErrors ? ` · ${st.probeErrors} unreadable` : ''}`),
+      stat('Storage', fmtBytes(st.totalBytes), `${st.files.toLocaleString()} files · ${fmtHours(st.totalDuration / 3600)} of video${st.unprobed ? ` · ${st.unprobed} awaiting analysis` : ''}${st.probeErrors ? ` · ${st.probeErrors} unreadable` : ''}`),
       stat('Metadata', `${st.metaMatched} matched`, `${st.metaMissing} not found · ${st.metaPending} pending`)),
-    h('p', { class: 'small dim', style: { margin: '0 0 10px' } }, 'Bars show storage used and the number of files is in brackets. Click a row to see the titles in it.'),
+    st.files ? h('p', { class: 'small dim', style: { margin: '0 0 10px' } }, 'Bars show storage used; file counts are in brackets. Select a row to see its titles.') : null,
     h('div', { class: 'dash-3' },
-      h('div', { class: 'panel' }, h('h3', null, 'Libraries'), bucketList('library', st.libraries)),
-      h('div', { class: 'panel' }, h('h3', null, 'Resolution'), bucketList('resolution', st.resolutions)),
-      h('div', { class: 'panel' }, h('h3', null, 'HDR'), bucketList('hdr', st.hdr)),
-      h('div', { class: 'panel' }, h('h3', null, 'Video codecs'), bucketList('video', st.videoCodecs, (k) => k.toUpperCase())),
-      h('div', { class: 'panel' }, h('h3', null, 'Audio (any track)'), bucketList('audio', st.audioCodecs, (k) => k.toUpperCase())),
-      h('div', { class: 'panel' }, h('h3', null, 'Containers'), bucketList('container', st.containers, (k) => k.toUpperCase()))));
+      panel('Libraries', bucketList('library', st.libraries)),
+      panel('Resolution', bucketList('resolution', st.resolutions)),
+      panel('HDR', bucketList('hdr', st.hdr)),
+      panel('Video codecs', bucketList('video', st.videoCodecs, (k) => k.toUpperCase())),
+      panel('Audio (any track)', bucketList('audio', st.audioCodecs, (k) => k.toUpperCase())),
+      panel('Containers', bucketList('container', st.containers, (k) => k.toUpperCase()))));
 }
 
 const DIM_LABEL = { library: 'Library', resolution: 'Resolution', hdr: 'HDR', video: 'Video codec', audio: 'Audio track', container: 'Container' };
@@ -1187,31 +1317,38 @@ async function libraryTitles(dim, key, label) {
   }
 }
 
-// Every play, newest first, under the playback statistics.
+// Every play, newest first, under the playback statistics. It covers all
+// time (not the selected range). Nothing at all renders nothing: the
+// statistics' empty state covers it.
 async function historySection(ctx, days) {
-  const offset = +(ctx.query.get('offset') || 0);
+  const offset = Math.max(0, +ctx.query.get('offset') || 0);
   const rows = await api(`/api/admin/history?limit=100&offset=${offset}`);
-  const page = (o) => `#/dashboard/playback?days=${days}&offset=${o}`;
+  if (!rows.length && !offset) return null;
+  const page = (o) => `#/dashboard/playback?days=${days}${o ? `&offset=${o}` : ''}`;
+  const pager = (label, o) => h('a', { class: 'btn sm', href: page(o), onclick: () => focusAfterRoute('history') }, label);
+  const reasons = (r) => r.reasons ? r.reasons.split('; ').map(reasonLabel).join('; ') : '';
   return h('section', { id: 'history', style: { marginTop: '28px' } },
-    h('div', { class: 'toolbar' }, h('h2', { class: 'section-title' }, 'History'),
+    h('div', { class: 'toolbar' }, h('h2', { class: 'section-title', tabindex: '-1', dataset: { focusKey: 'history' } }, 'History · all time'),
       rows.length ? h('span', { class: 'muted small' }, `${offset + 1}–${offset + rows.length}`) : null, h('div', { class: 'spacer' }),
-      offset > 0 ? h('a', { class: 'btn sm', href: page(Math.max(0, offset - 100)) }, 'Newer') : null,
-      rows.length === 100 ? h('a', { class: 'btn sm', href: page(offset + 100) }, 'Older') : null,
+      offset > 0 ? pager('Newer', Math.max(0, offset - 100)) : null,
+      rows.length === 100 ? pager('Older', offset + 100) : null,
       h('button', { class: 'btn sm danger', onclick: async (e) => {
         const btn = e.currentTarget;
-        if (await confirmDialog('Delete all playback history? Watch progress is kept.', 'Delete', true) && await run(btn, () => api('/api/admin/history', { method: 'DELETE' }))) route();
+        if (!(await confirmDialog('Delete all playback history? Every total, chart and list on this tab is calculated from it and will reset to zero. Watch progress and watched status are kept.', 'Delete history', true, 'Delete playback history?'))) return;
+        if (!(await run(btn, () => api('/api/admin/history', { method: 'DELETE' }), 'Playback history cleared'))) return;
+        if (offset) location.hash = page(0); else refreshSoft();
       } }, 'Clear history')),
-    rows.length ? h('div', { class: 'panel table-wrap' }, h('table', { class: 'tbl' },
-      h('tr', null, ['When', 'User', 'Title', 'Method', 'Watched', 'Data', 'Stalls', 'Output', 'Client'].map((t) => h('th', null, t))),
+    rows.length ? h('div', { class: 'panel table-wrap' }, h('table', { class: 'tbl history' },
+      h('tr', null, ['When', 'User', 'Title', 'Method', 'Watched', 'Data', 'Stalls', 'Output', 'Client'].map((t) => h('th', { scope: 'col' }, t))),
       rows.map((r) => h('tr', null,
-        h('td', { class: 'nowrap' }, fmtDate(r.startedAt)),
-        h('td', null, r.userName),
-        h('td', null, h('a', { href: `#/item/${r.itemId}` }, r.title)),
-        h('td', { title: r.reasons }, h('span', { class: `method ${r.method}` }, METHOD_LABEL[r.method] || r.method), r.reasons ? h('div', { class: 'dim small' }, r.reasons) : null),
-        h('td', { class: 'nowrap' }, fmtDuration(r.watched) || `${Math.round(r.watched)}s`),
-        h('td', { class: 'nowrap' }, fmtBytes(r.bytes)),
-        h('td', null, r.bufferEvents ? `${r.bufferEvents} (${r.bufferSeconds.toFixed(0)}s)` : '0'),
-        h('td', { class: 'small' }, [r.videoOut, r.audioOut].filter(Boolean).join(' / ')),
-        h('td', { class: 'small' }, `${r.client}`, h('div', { class: 'dim mono' }, `${r.ip}${r.remote ? ' · remote' : ''}`))))))
-      : h('div', { class: 'empty' }, h('h2', null, 'No playback history yet'), h('p', null, 'Plays are recorded when a session ends.')));
+        h('td', { class: 'nowrap h-when' }, fmtDate(r.startedAt)),
+        h('td', { class: 'h-user' }, r.userName),
+        h('td', { class: 'h-title' }, h('a', { href: `#/item/${r.itemId}` }, r.title), r.subtitle ? h('div', { class: 'dim small' }, r.subtitle) : null),
+        h('td', { class: 'h-method', title: reasons(r) || null }, h('span', { class: `method ${r.method}` }, METHOD_LABEL[r.method] || r.method), r.reasons ? h('div', { class: 'dim small h-reasons' }, reasons(r)) : null),
+        h('td', { class: 'nowrap h-num', 'data-label': 'Watched' }, r.watched < 60 ? `${Math.round(r.watched)}s` : fmtDuration(r.watched)),
+        h('td', { class: 'nowrap h-num', 'data-label': 'Data' }, fmtBytes(r.bytes)),
+        h('td', { class: 'nowrap h-num', 'data-label': 'Stalls' }, r.bufferEvents ? `${r.bufferEvents} (${r.bufferSeconds.toFixed(0)}s)` : '0'),
+        h('td', { class: 'small h-output' }, [r.videoOut, r.audioOut].filter(Boolean).join(' / ')),
+        h('td', { class: 'small h-client' }, `${r.client}`, h('div', { class: 'dim mono' }, `${r.ip}${r.remote ? ' · remote' : ''}`))))))
+      : h('div', { class: 'empty' }, h('h3', null, 'No older plays'), h('p', null, h('a', { class: 'btn sm', href: page(0) }, 'Back to the newest plays'))));
 }
