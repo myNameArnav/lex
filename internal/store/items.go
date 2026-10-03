@@ -507,13 +507,19 @@ func (s *Store) ListItems(uid int64, q ListQuery) ([]*Item, int, error) {
 
 const randomPrime = 2147483647
 
-// randomSeed folds a client seed into 1..randomPrime-1 (0: unseeded), which
-// keeps every product in the random order within 64 bits.
+// randomSeed mixes a client seed into 1..randomPrime-1 (0: unseeded), which
+// keeps every product in the random order within 64 bits. Mixing first
+// (splitmix64) matters: a seed whose square is small mod the prime would
+// otherwise leave the titles in id order.
 func randomSeed(seed int64) int64 {
-	if seed < 0 {
-		seed = -(seed % randomPrime)
+	if seed == 0 {
+		return 0
 	}
-	return seed % randomPrime
+	x := uint64(seed) + 0x9e3779b97f4a7c15
+	x = (x ^ x>>30) * 0xbf58476d1ce4e5b9
+	x = (x ^ x>>27) * 0x94d049bb133111eb
+	x ^= x >> 31
+	return int64(x%(randomPrime-1)) + 1
 }
 
 func (s *Store) Genres(libID int64) ([]string, error) {

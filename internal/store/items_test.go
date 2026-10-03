@@ -103,6 +103,12 @@ func TestListItemsSeededRandomIsStableAcrossPages(t *testing.T) {
 	if slices.IsSorted(a) || slices.Equal(a, all(999)) {
 		t.Fatalf("seeded order should be shuffled and depend on the seed: %v", a)
 	}
+	// Small seeds used to leave the titles in id order.
+	for seed := int64(1); seed <= 50; seed++ {
+		if got := all(seed); slices.IsSorted(got) {
+			t.Fatalf("seed %d gives id order: %v", seed, got)
+		}
+	}
 	// Seeds of any size stay within 64-bit arithmetic.
 	for _, seed := range []int64{-5, 1 << 62, -1 << 63} {
 		if got := all(seed); len(got) != 30 {

@@ -346,7 +346,19 @@ export async function route({ soft = false } = {}) {
         if (typeof idx !== 'number') history.back();
         else if (idx !== histIdx) history.go(histIdx - idx);
         else { reverting = null; history.replaceState(history.state, '', back || location.pathname); }
+        // history.go can't move if the entry indexes aren't contiguous (e.g.
+        // entries from an earlier visit): rewrite the address instead.
+        if (reverting != null) {
+          const want = reverting;
+          setTimeout(() => {
+            if (reverting !== want || location.hash === want) return;
+            reverting = null;
+            history.replaceState(history.state, '', want || location.pathname);
+          }, 500);
+        }
       }
+      // Typing in the search box started this navigation: the page stays.
+      if (!(back || '').startsWith('#/search') && searchInput) searchInput.value = '';
       renderNav();
       return;
     }

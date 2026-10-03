@@ -166,10 +166,15 @@ export function releaseToasts(el) {
 }
 
 function dropToast(t) { t._gone = true; clearTimeout(t._timer); t.remove(); }
-function capToasts() { while (toastBox.childElementCount > 3) dropToast(toastBox.firstElementChild); }
+// Over three: the oldest status toast goes first, so an error (which has a
+// Dismiss button) isn't pushed out by later status messages.
+function capToasts() {
+  while (toastBox.childElementCount > 3) dropToast([...toastBox.children].find((t) => !/\berror\b/.test(t.className)) || toastBox.firstElementChild);
+}
 
 // Toasts waiting for the next frame: a live region only announces changes
-// made after it is in the page, so a newly attached box gets them a frame late.
+// made after it is in the page, so a newly attached box gets them a frame
+// late. A timer backs the frame up: frames don't run in a background tab.
 let toastQueue = null;
 
 // toast shows a short status message. kind: '' | 'ok' | 'error'.
@@ -194,13 +199,15 @@ export function toast(msg, kind = '', { key, ms } = {}) {
       capToasts();
     } else {
       if (!toastQueue) {
-        toastQueue = [];
-        requestAnimationFrame(() => {
-          const q = toastQueue;
+        const q = toastQueue = [];
+        const flush = () => {
+          if (toastQueue !== q) return;
           toastQueue = null;
           q.forEach((x) => { if (!x._gone) toastBox.appendChild(x); });
           capToasts();
-        });
+        };
+        requestAnimationFrame(flush);
+        setTimeout(flush, 100);
       }
       toastQueue.push(t);
     }
@@ -266,14 +273,17 @@ export function confirmDialog(message, okLabel = 'OK', danger = false, title = '
   if (message && typeof message === 'object' && !(message instanceof Node)) ({ message, okLabel = 'OK', danger = false, title = 'Confirm' } = message);
   return new Promise((resolve) => {
     let done = false;
+    const cancel = h('button', { class: 'btn', onclick: () => { done = true; m.close(); resolve(false); } }, 'Cancel');
     const m = modal({
       title, body: h('p', { style: { margin: 0 } }, message),
       actions: [
-        h('button', { class: 'btn', onclick: () => { done = true; m.close(); resolve(false); } }, 'Cancel'),
+        cancel,
         h('button', { class: `btn ${danger ? 'danger solid' : 'primary'}`, onclick: () => { done = true; m.close(); resolve(true); } }, okLabel),
       ],
       onClose: () => { if (!done) resolve(false); },
     });
+    // Start on the safe choice, next to the action, not on the header's ×.
+    cancel.focus();
   });
 }
 

@@ -131,7 +131,10 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 		Limit: qInt(r, "limit", 100), Offset: qInt(r, "offset", 0),
 	}
 	lq.LibraryID, _ = strconv.ParseInt(q.Get("library"), 10, 64)
-	lq.Seed, _ = strconv.ParseInt(q.Get("seed"), 10, 64)
+	// An unparsable (e.g. oversized) seed means unseeded, not a fixed order.
+	if seed, err := strconv.ParseInt(q.Get("seed"), 10, 64); err == nil {
+		lq.Seed = seed
+	}
 	items, total, err := s.St.ListItems(userOf(r).ID, lq)
 	if err != nil {
 		writeErr(w, 500, err.Error())

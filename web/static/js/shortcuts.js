@@ -84,7 +84,8 @@ export function installShortcuts(nav) {
     }
     if (k === 'g') { gAt = Date.now(); return; }
     if (k === 'p' && location.hash.startsWith('#/item/')) {
-      const btn = [...document.querySelectorAll('main button')].find((b) => /^\s*(Play|Resume)\b/.test(b.textContent));
+      // The hero's main button, whatever it says ("Resume S1 E3", "Watch again…").
+      const btn = document.querySelector('main button[data-focus-key^="play-"], main button[data-focus-key^="show-play-"]');
       if (btn) { e.preventDefault(); btn.click(); }
     }
   });

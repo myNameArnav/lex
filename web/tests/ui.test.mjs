@@ -124,6 +124,14 @@ test('toasts are a live region, capitalised, deduplicated, keyed and capped', as
   assert.deepEqual(toastTexts(dom), ['Subtitle timing +0.2s', 'Database is locked', 'Fourth'], 'at most three, oldest dropped');
 });
 
+test('later status toasts never push out an error', async () => {
+  const { ui, dom, flushFrames } = await loadUI();
+  ui.toast('database is locked', 'error');
+  flushFrames();
+  for (const m of ['One', 'Two', 'Three']) ui.toast(m);
+  assert.deepEqual(toastTexts(dom), ['Database is locked', 'Two', 'Three']);
+});
+
 test('toasts fired before the live region settles keep their order', async () => {
   const { ui, dom, flushFrames } = await loadUI();
   ui.toast('first');
