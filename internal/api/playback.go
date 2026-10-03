@@ -135,6 +135,8 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID string             `json:"sessionId"`
+		FileID    int64              `json:"fileId"`
+		Method    string             `json:"method"`
 		Position  float64            `json:"position"`
 		Paused    bool               `json:"paused"`
 		Stats     stream.ClientStats `json:"stats"`
@@ -144,6 +146,20 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess, err := s.Sess.Heartbeat(req.SessionID, userOf(r).ID, req.Position, req.Paused, req.Stats)
+	// The server restarted while the player had the rest of the file
+	// buffered, so no media request re-opened the session: re-open it here,
+	// as a media request would, so progress keeps being saved.
+	if errors.Is(err, stream.ErrUnknownSession) && req.SessionID != "" && req.FileID > 0 {
+		if f, ferr := s.St.File(req.FileID); ferr == nil {
+			method := req.Method
+			if method != "remux" && method != "transcode" {
+				method = "direct"
+			}
+			if _, oerr := s.sessionFor(r, f, req.SessionID, method); oerr == nil {
+				sess, err = s.Sess.Heartbeat(req.SessionID, userOf(r).ID, req.Position, req.Paused, req.Stats)
+			}
+		}
+	}
 	if errors.Is(err, stream.ErrStopped) {
 		writeErr(w, http.StatusGone, err.Error())
 		return
@@ -274,7 +290,13 @@ func (s *Server) direct(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			select {
 			case <-ended:
-				_ = http.NewResponseController(w).SetWriteDeadline(time.Now())
+				// Not if the response finished meanwhile: the deadline
+				// would fail the connection's next keep-alive request.
+				select {
+				case <-done:
+				default:
+					_ = http.NewResponseController(w).SetWriteDeadline(time.Now())
+				}
 			case <-done:
 			}
 		}()

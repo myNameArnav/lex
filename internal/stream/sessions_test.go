@@ -113,3 +113,18 @@ func TestKilledSessionStaysStopped(t *testing.T) {
 		t.Fatalf("tombstone not pruned: %v", err)
 	}
 }
+
+// anon- ids are shared by every sid-less request for a file: a stop ends
+// the current one without blocking that file for the user afterwards.
+func TestKillDoesNotBlockAnonSessions(t *testing.T) {
+	m := &Manager{m: map[string]*Session{}}
+	if _, err := m.Open(&Session{ID: "anon-100-1", UserID: 1, ItemID: 10, FileID: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if !m.Kill("anon-100-1") {
+		t.Fatal("kill: no session")
+	}
+	if _, err := m.Open(&Session{ID: "anon-100-1", UserID: 1, ItemID: 10, FileID: 100}); err != nil {
+		t.Fatalf("anon session blocked after a stop: %v", err)
+	}
+}

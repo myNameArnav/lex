@@ -112,3 +112,38 @@ func TestKillCutsOpenDirectResponse(t *testing.T) {
 		t.Fatalf("response kept going after the stop: read %d more bytes, err %v", n, err)
 	}
 }
+
+// After a server restart the player may have the rest of the file buffered
+// and make no media request: its heartbeat re-opens the session, so
+// progress is still saved.
+func TestHeartbeatReopensSessionAfterRestart(t *testing.T) {
+	s, _ := securityServer(t)
+	s.Sess = stream.NewManager(s.St, s.Log)
+	u, err := s.St.CreateInitialAdmin("admin", "test-password-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, _ := s.St.CreateLibrary("Movies", "movies", []string{"/m"})
+	itemID, _ := s.St.InsertItem(&store.Item{LibraryID: lib.ID, Kind: "movie", Title: "Heat", Path: "/m/Heat.mkv"})
+	fileID, err := s.St.InsertFile(&store.File{ItemID: itemID, LibraryID: lib.ID, Path: "/m/Heat.mkv", Duration: 6000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	body := `{"sessionId":"sess1","fileId":` + strconv.FormatInt(fileID, 10) + `,"method":"direct","position":120}`
+	r := httptest.NewRequest("POST", "/api/playback/progress", strings.NewReader(body))
+	s.progress(rec, r.WithContext(context.WithValue(r.Context(), userKey, u)))
+	if rec.Code != 200 {
+		t.Fatalf("heartbeat for a session the server forgot: %d %s", rec.Code, rec.Body)
+	}
+	if sess := s.Sess.Get("sess1"); sess == nil || sess.ItemID != itemID || sess.Position != 120 {
+		t.Fatalf("session not re-opened: %+v", sess)
+	}
+	// Without a file id (an old client) it is still a 404.
+	rec = httptest.NewRecorder()
+	r = httptest.NewRequest("POST", "/api/playback/progress", strings.NewReader(`{"sessionId":"other","position":1}`))
+	s.progress(rec, r.WithContext(context.WithValue(r.Context(), userKey, u)))
+	if rec.Code != 404 {
+		t.Fatalf("unknown session without a file: %d", rec.Code)
+	}
+}

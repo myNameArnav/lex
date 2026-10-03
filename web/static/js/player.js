@@ -533,11 +533,13 @@ class Player {
       // Native HLS (Safari, iOS, AirPlay): the playlist covers the whole file,
       // with segment N starting at N x segment length, so seek like a file.
       v.src = this.plan.url;
-      if (start > 0) v.addEventListener('loadedmetadata', () => { v.currentTime = start; }, { once: true });
+      if (start > 0) v.addEventListener('loadedmetadata', () => { if (generation === this.attachGeneration) v.currentTime = start; }, { once: true });
     } else if (this.plan.method === 'direct') {
       v.src = this.plan.url + (start > 0 ? `#t=${start.toFixed(2)}` : '');
       if (start > 0) {
-        v.addEventListener('loadedmetadata', () => { if (Math.abs(v.currentTime - start) > 2) v.currentTime = start; }, { once: true });
+        // A source torn down before its metadata leaves this listener on
+        // the element: it mustn't seek the next one (e.g. the next episode).
+        v.addEventListener('loadedmetadata', () => { if (generation === this.attachGeneration && Math.abs(v.currentTime - start) > 2) v.currentTime = start; }, { once: true });
       }
     } else {
       this.engine = new MseEngine(v, this.plan, {
@@ -1330,7 +1332,7 @@ class Player {
   async beat() {
     if (!this.sessionId || this.closed || !this.plan || this.stopped) return;
     try {
-      const r = await api('/api/playback/progress', { method: 'POST', body: { sessionId: this.sessionId, position: this.video.currentTime, paused: this.video.paused, stats: this.clientStats() } });
+      const r = await api('/api/playback/progress', { method: 'POST', body: { sessionId: this.sessionId, fileId: this.file?.id, method: this.plan.method, position: this.video.currentTime, paused: this.video.paused, stats: this.clientStats() } });
       this.lastJob = r.job || null;
       this.serverRate = r.serverRate || 0;
     } catch (e) {

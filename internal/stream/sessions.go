@@ -101,6 +101,10 @@ type Manager struct {
 	jobSeq int
 }
 
+// ErrUnknownSession is returned for a heartbeat whose session isn't open,
+// e.g. after a server restart.
+var ErrUnknownSession = errors.New("unknown session")
+
 // ErrStopped is returned for a session an admin stopped from the dashboard.
 var ErrStopped = errors.New("Playback was stopped by the server admin")
 
@@ -260,9 +264,13 @@ func (m *Manager) Heartbeat(id string, uid int64, pos float64, paused bool, cs C
 		return nil, ErrStopped
 	}
 	s := m.m[id]
-	if s == nil || s.UserID != uid {
+	if s == nil {
 		m.mu.Unlock()
-		return nil, errors.New("unknown session")
+		return nil, ErrUnknownSession
+	}
+	if s.UserID != uid {
+		m.mu.Unlock()
+		return nil, errors.New("session belongs to another user")
 	}
 	now := time.Now()
 	if !s.Paused && !paused {
@@ -432,7 +440,9 @@ func (m *Manager) TotalRate() float64 {
 func (m *Manager) Kill(id string) bool {
 	m.mu.Lock()
 	_, ok := m.m[id]
-	if ok {
+	// anon- ids are shared by every sid-less request for a file, so they
+	// aren't blocked: the stop only ends what is playing now.
+	if ok && !strings.HasPrefix(id, "anon-") {
 		if m.killed == nil {
 			m.killed = map[string]time.Time{}
 		}
