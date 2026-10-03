@@ -510,8 +510,13 @@ function scroller(track) {
     right.hidden = track.scrollLeft >= track.scrollWidth - track.clientWidth - 1;
   };
   track.addEventListener('scroll', sync, { passive: true });
-  // Window resizes and the view being swapped out (the observer then lets go).
-  const ro = new ResizeObserver(() => { if (track.isConnected) sync(); else ro.disconnect(); });
+  // Window resizes, the view going in (it may be built before it is
+  // attached; Firefox reports that first) and the view being swapped out
+  // (the observer then lets go).
+  let shown = false;
+  const ro = new ResizeObserver(() => {
+    if (track.isConnected) { shown = true; sync(); } else if (shown) ro.disconnect();
+  });
   ro.observe(track);
   requestAnimationFrame(sync);
   return h('div', { class: 'shelf-scroll' }, left, track, right);
@@ -525,6 +530,18 @@ function shelf(title, items, kind, moreHref) {
 }
 
 // ---------- home ----------
+// refreshLater soft-refreshes the view after ms (a background re-check), but
+// only once nothing is open over it: a re-render closes the open menu and
+// leaves a dialog's opener detached. onRefresh runs just before.
+function refreshLater(ctx, ms, onRefresh) {
+  setTimeout(function tick() {
+    if (!ctx.isCurrent()) return;
+    if (isPlayerOpen() || document.querySelector('dialog[open], .menu.popup')) return setTimeout(tick, 1000);
+    onRefresh?.();
+    refreshSoft();
+  }, ms);
+}
+
 async function homeView(ctx) {
   const data = await api('/api/home');
   const wrap = h('div', { style: { paddingTop: '26px', paddingBottom: '40px' } }, h('h1', { class: 'sr-only' }, 'Home'));
@@ -539,7 +556,7 @@ async function homeView(ctx) {
     // A library that has never finished a scan may still fill up: check again shortly.
     if (data.libraries.some((l) => !l.lastScan)) {
       wrap.appendChild(emptyState({ level: 'h2', title: 'Scanning your libraries…', text: 'New titles will show up here as they are found.' }));
-      setTimeout(() => { if (ctx.isCurrent()) refreshSoft(); }, 5000);
+      refreshLater(ctx, 5000);
     } else {
       wrap.appendChild(emptyState({ level: 'h2', title: 'No media found',
         text: admin ? 'Check that your library folders contain files, e.g. Movies/Title (Year)/Title (Year).mkv.' : 'Ask your server admin to check the library folders.',
@@ -584,7 +601,7 @@ async function libraryView(ctx, id) {
     opts.seed = newSeed();
     fixSort = true;
   }
-  if (fixSort) replaceHash(hashFor(opts));
+  if (fixSort && ctx.isCurrent()) replaceHash(hashFor(opts));
   // key: the control to focus once the re-rendered view is in.
   const setQ = (patch, key) => {
     focusAfterRoute(key);
@@ -836,12 +853,12 @@ function castRow(it, excludeDirectors = false) {
 }
 
 // Metadata still being fetched: look once more a little later (once per
-// title, so a stuck fetch doesn't poll forever).
+// title, so a stuck fetch doesn't poll forever). It counts once the re-check
+// runs, so an earlier in-page refresh doesn't use it up.
 let metaRetried = 0;
 function retryWhileFetching(ctx, it) {
   if (it.metaStatus !== 0 || metaRetried === it.id) return;
-  metaRetried = it.id;
-  setTimeout(() => { if (ctx.isCurrent()) refreshSoft(); }, 8000);
+  refreshLater(ctx, 8000, () => { metaRetried = it.id; });
 }
 
 function mediaView(ctx, d) {
