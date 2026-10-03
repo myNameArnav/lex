@@ -574,7 +574,9 @@ async function libraryView(ctx, id) {
   const lib = state.libraries.find((l) => l.id === id) || (await loadLibraries(), state.libraries.find((l) => l.id === id));
   if (!lib) return emptyState({ title: 'Library not found', text: 'It may have been removed.', actions: [h('a', { class: 'btn primary', href: '#/' }, 'Go home')] });
   const q = ctx.query;
-  const opts = { sort: q.get('sort') || 'title', desc: q.get('desc') === '1', filter: q.get('filter') || '', genre: q.get('genre') || '', seed: +q.get('seed') || 0 };
+  const opts = { sort: q.get('sort') || 'title', desc: q.get('desc') === '1', filter: q.get('filter') || '', genre: q.get('genre') || '', seed: 0 };
+  // A seed the server can't read as an integer is replaced below.
+  if (Number.isSafeInteger(+q.get('seed'))) opts.seed = +q.get('seed');
   // Movies have no episodes and shows sort by their newest episode, so each
   // offers the one "newest" order that means something for it.
   const sorts = [['title', 'Title'], ['year', 'Year'],
@@ -1043,15 +1045,18 @@ async function showView(ctx, d) {
   const tabFor = (s) => [...tabs.children].find((b) => +b.dataset.id === s.id);
   // An episode toggled in the list: adjust its season's count now, then
   // refetch the show for the play button, Up next and every season count.
-  let refetch = 0;
-  const episodeChanged = (played) => {
-    active.unplayedCount = Math.max(0, (active.unplayedCount || 0) + (played ? -1 : 1));
-    seasonTabLabel(tabFor(active), active);
+  // s is the episode's season (the user may have switched tabs since).
+  let refetch = 0, seq = 0;
+  const episodeChanged = (s, played) => {
+    s.unplayedCount = Math.max(0, (s.unplayedCount || 0) + (played ? -1 : 1));
+    seasonTabLabel(tabFor(s), s);
     clearTimeout(refetch);
+    const mine = ++seq;
     refetch = setTimeout(async () => {
       let nd;
       try { nd = await api(`/api/items/${it.id}`); } catch { return; }
-      if (!ctx.isCurrent()) return;
+      // A later toggle's refetch has the newer state.
+      if (!ctx.isCurrent() || mine !== seq) return;
       for (const s of nd.children || []) {
         const old = seasons.find((x) => x.id === s.id), tab = tabFor(s);
         if (old && tab) { old.unplayedCount = s.unplayedCount; seasonTabLabel(tab, old); }
@@ -1077,7 +1082,7 @@ async function showView(ctx, d) {
     try {
       const eps = await api(`/api/items/${s.id}/children`);
       if (active !== s || !ctx.isCurrent()) return;
-      clear(list).append(...(s.overview ? [h('p', { class: 'muted', style: { maxWidth: '760px', margin: '0 0 8px' } }, s.overview)] : []), ...eps.map((e) => episodeRow(e, episodeChanged)));
+      clear(list).append(...(s.overview ? [h('p', { class: 'muted', style: { maxWidth: '760px', margin: '0 0 8px' } }, s.overview)] : []), ...eps.map((e) => episodeRow(e, (played) => episodeChanged(s, played))));
       replaceHash(`#/item/${it.id}?season=${s.id}`);
     } catch (e) {
       if (active === s && ctx.isCurrent()) clear(list).append(h('p', { class: 'bad', role: 'alert' }, e.message), h('button', { class: 'btn', onclick: () => showSeason(s) }, 'Retry'));
