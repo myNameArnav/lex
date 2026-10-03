@@ -1139,7 +1139,7 @@ function episodeRow(e, onChange) {
   return h('div', { class: 'episode' },
     art,
     h('a', { class: 'episode-info', href: `#/item/${e.id}`, 'aria-labelledby': `${id}-t`, 'aria-describedby': e.overview ? `${id}-m ${id}-o` : `${id}-m` },
-      h('h3', { id: `${id}-t` }, h('span', { class: 'num' }, `${e.episode}${e.episodeEnd ? '–' + e.episodeEnd : ''}.`), e.title),
+      h('h3', { id: `${id}-t` }, h('span', { class: 'num' }, `${e.episode}${e.episodeEnd ? '–' + e.episodeEnd : ''}.`), ' ', e.title),
       h('div', { class: 'dim small', id: `${id}-m` }, [e.premiere ? new Date(e.premiere).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '', e.duration ? fmtDuration(e.duration) : '', ud.position > 0 && !ud.played ? `${fmtDuration(e.duration - ud.position)} left` : ''].filter(Boolean).join(' · ')),
       e.overview ? h('p', { id: `${id}-o` }, e.overview) : null),
     h('div', { class: 'side' }, wbtn));
