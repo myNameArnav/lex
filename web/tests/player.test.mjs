@@ -50,7 +50,8 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
   const deps = {
     './ui.js': Object.fromEntries(['h', 'resLabel', 'fmtTime', 'fmtBitrate', 'fmtBytes', 'streamLabel', 'clear', 'langName', 'channelName', 'modal', 'containTab'].map(k => [k, () => {}])),
     './api.js': {
-      api: async (path, { body }) => {
+      api: async (path, { body } = {}) => {
+        if (path.startsWith('/api/items/')) return { item: { id: 1, userData: { position: 45 } }, files: [{ id: 2 }] };
         if (path === '/api/playback/progress') {
           if (progressError) throw Object.assign(new Error(progressError.message), { status: progressError.status });
           return {};
@@ -396,6 +397,51 @@ test('an admin stop ends playback for good: no replans, retries or fallbacks', a
   await f.advance(30000);
   assert.equal(f.requests.length, 0);
   assert.equal(f.errors.length, 1);
+});
+
+test('after an admin stop, media keys can neither resume nor start the next episode', async () => {
+  const f = await fixture({ progressError: { status: 410, message: 'stopped' } });
+  f.video.playable = true;
+  await f.player.attach(0);
+  delete f.player.beat;
+  await f.player.beat();
+  assert.equal(f.player.stopped, true);
+  f.video.play(); // what the mediaSession 'play' handler does
+  assert.equal(f.video.paused, true, 'the stop sticks');
+  f.player.detail = { next: { id: 5 } };
+  await f.player.playNext();
+  await f.advance(1000);
+  assert.equal(f.requests.length, 0);
+});
+
+test('Retry after a failed first plan asks for the resume point again', async () => {
+  const f = await fixture({ apiFailures: [500] });
+  Object.assign(f.player, { started: true, renderTitle() {}, nextBtn: { classList: classes() }, setupMediaSession() {} });
+  await f.player.start(1, null);
+  assert.deepEqual(f.errors, ['HTTP 500']);
+  f.player.retry();
+  await f.advance(1000);
+  assert.deepEqual(f.requests.map(r => r.start), [45, 45]);
+});
+
+test('a direct stream that reconnects by itself cancels the pending recovery replan', async () => {
+  const f = await fixture({ apiFailures: [0, 0, 0] });
+  f.video.playable = true;
+  await f.player.attach(0);
+  f.video.currentTime = 105;
+  f.video.pause();
+  f.video.error = { code: 2, message: 'Network error' };
+  f.video.dispatchEvent(new Event('error'));
+  await f.flush();
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.player.recovering, true);
+  // The element re-requests the file itself and plays on.
+  f.video.currentTime = 107;
+  f.video.dispatchEvent(new Event('playing'));
+  await f.advance(20000);
+  assert.equal(f.requests.length, 1, 'no replan back to the old position');
+  assert.equal(f.player.recovering, false);
+  assert.deepEqual(f.errors, []);
 });
 
 test('a 410 from the media stream stops playback with the server message', async () => {

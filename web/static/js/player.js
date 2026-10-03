@@ -252,7 +252,9 @@ class Player {
     this.onPop = () => this.close({ fromHistory: true });
     window.addEventListener('popstate', this.onPop);
 
-    v.addEventListener('play', () => { this.removeEndCard(); this.watchDirectStartup(); this.playBtn.innerHTML = icons.pause; this.labelButton(this.playBtn, 'Pause (k)'); this.poke(); this.beat(); });
+    // Media keys, the lock screen or PiP can still call play() after an
+    // admin Stop: the stop sticks.
+    v.addEventListener('play', () => { if (this.stopped) { v.pause(); return; } this.removeEndCard(); this.watchDirectStartup(); this.playBtn.innerHTML = icons.pause; this.labelButton(this.playBtn, 'Pause (k)'); this.poke(); this.beat(); });
     v.addEventListener('pause', () => { if (v.paused) this.startupWatch = null; this.playBtn.innerHTML = icons.play; this.labelButton(this.playBtn, 'Play (k)'); this.showUI(true); this.beat(); });
     v.addEventListener('waiting', () => {
       this.showSpinner(true);
@@ -265,7 +267,12 @@ class Player {
       this.setStatus('');
       if (this.stalls.since) { this.stalls.secs += (performance.now() - this.stalls.since) / 1000; this.stalls.since = 0; }
     };
-    v.addEventListener('playing', () => { ready(); this.started = true; this.startupWatch = null; });
+    v.addEventListener('playing', () => {
+      ready(); this.started = true; this.startupWatch = null;
+      // The element reconnected on its own while the recovery plan is still
+      // retrying: keep this source; applying the plan would seek back.
+      if (this.recovering && this.planPending === this.planGeneration) { this.planGeneration++; this.recovering = false; }
+    });
     v.addEventListener('canplay', ready);
     v.addEventListener('seeked', () => {
       ready(); this.beat();
@@ -420,6 +427,9 @@ class Player {
         const ud = this.item.userData;
         start = ud && ud.position > 0 && !ud.played ? ud.position : 0;
       }
+      // Retry resumes here even if this first plan fails before attach().
+      this.started = false;
+      this.startPosition = start;
       await this.loadPlan(start);
       this.setupMediaSession();
       if (prefs.get('showStats') && !this.statsEl) this.toggleStats();
@@ -469,6 +479,7 @@ class Player {
     // Closing or selecting another plan cancels the retry.
     const cancelled = () => this.closed || generation !== this.planGeneration;
     let res;
+    this.planPending = generation;
     try {
       res = await retryApi('/api/playback/plan', { method: 'POST', body: req }, {
         cancelled, retries: overrides.retries ?? 6,
@@ -477,6 +488,8 @@ class Player {
     } catch (e) {
       if (cancelled()) return false;
       throw e;
+    } finally {
+      if (this.planPending === generation) this.planPending = null;
     }
     if (cancelled()) return false;
     this.setStatus('');
@@ -657,6 +670,7 @@ class Player {
     this.startupWatch = null;
     this.video.pause();
     if (this.engine) { this.engine.destroy(); this.engine = null; }
+    this.clearMediaSession();
     this.showError(msg || 'Playback was stopped by the server admin', { title: 'Playback stopped', retry: false });
   }
 
@@ -1808,7 +1822,7 @@ class Player {
 
   async playNext() {
     const next = this.detail?.next;
-    if (!next) return;
+    if (!next || this.stopped) return;
     this.closeMenu();
     this.cancelUpNext(false);
     this.removeEndCard();
@@ -1852,6 +1866,14 @@ class Player {
     } catch {}
   }
 
+  clearMediaSession() {
+    const ms = globalThis.navigator?.mediaSession;
+    if (!ms) return;
+    for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'nexttrack']) {
+      try { ms.setActionHandler(a, null); } catch {}
+    }
+  }
+
   // fromHistory: Back already popped the player's entry. keepHistory: another
   // player takes the entry over.
   close({ fromHistory = false, keepHistory = false } = {}) {
@@ -1867,6 +1889,7 @@ class Player {
     document.removeEventListener('keydown', this.onKey);
     document.removeEventListener('fullscreenchange', this.onFs);
     window.removeEventListener('pagehide', this.onHide);
+    this.clearMediaSession();
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     if (document.pictureInPictureElement === this.video) document.exitPictureInPicture().catch(() => {});
     // e.g. subtitle search, when Back closed the player under it.
