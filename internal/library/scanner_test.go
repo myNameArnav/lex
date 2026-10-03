@@ -234,3 +234,40 @@ func mkvideo(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 }
+
+// A library nested in another's folder leaves the files the other library
+// already has where they are, without creating items for them.
+func TestScanSkipsFilesInAnotherLibrary(t *testing.T) {
+	root := t.TempDir()
+	movie := filepath.Join(root, "Copper Sky (2019)")
+	os.MkdirAll(movie, 0o755)
+	mkvideo(t, filepath.Join(movie, "Copper Sky (2019).mkv"))
+	mkvideo(t, filepath.Join(root, "Heat (1995).mkv"))
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	movies, _ := st.CreateLibrary("Movies", "movies", []string{root})
+	nested, _ := st.CreateLibrary("Copper", "movies", []string{movie})
+	s := NewScanner(st, "ffprobe", logx.New(50, false))
+	for _, l := range []*store.Library{movies, nested} {
+		if err := s.scanLibrary(context.Background(), *l); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if files, _ := st.LibraryFiles(movies.ID); len(files) != 2 {
+		t.Fatalf("Movies has %d files, want 2", len(files))
+	}
+	if files, _ := st.LibraryFiles(nested.ID); len(files) != 0 {
+		t.Fatalf("nested library took %d files from Movies", len(files))
+	}
+	var items int
+	st.DB().QueryRow(`SELECT COUNT(*) FROM items WHERE library_id=?`, nested.ID).Scan(&items)
+	if items != 0 {
+		t.Fatalf("nested library has %d items, want 0", items)
+	}
+	if others, _ := st.OtherLibraryFiles(nested.ID, nested.Paths); len(others) != 1 || others[filepath.Join(movie, "Copper Sky (2019).mkv")] != "Movies" {
+		t.Fatalf("OtherLibraryFiles = %v", others)
+	}
+}

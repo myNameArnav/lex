@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 )
 
 // Stream describes one elementary stream of a media file.
@@ -149,6 +150,37 @@ func (s *Store) ItemFiles(itemID int64) ([]*File, error) {
 
 func (s *Store) LibraryFiles(libID int64) ([]*File, error) {
 	return s.queryFiles(`SELECT `+fileCols+` FROM files WHERE library_id=?`, libID)
+}
+
+// OtherLibraryFiles maps the paths of files inside roots that belong to a
+// library other than libID to that library's name. A file can only be in
+// one library, so these are the files a nested (or enclosing) library
+// never gets.
+func (s *Store) OtherLibraryFiles(libID int64, roots []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, root := range roots {
+		// Paths under root sort between "root/" and "root0" ('0' follows
+		// '/'), so the files.path index finds them.
+		dir := strings.TrimSuffix(root, "/")
+		rows, err := s.db.Query(`SELECT f.path, l.name FROM files f JOIN libraries l ON l.id=f.library_id
+			WHERE f.library_id<>? AND f.path>? AND f.path<?`, libID, dir+"/", dir+"0")
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var p, name string
+			if err := rows.Scan(&p, &name); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[p] = name
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) AllFiles() ([]*File, error) {

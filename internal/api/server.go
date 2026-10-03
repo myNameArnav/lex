@@ -130,7 +130,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("GET /api/admin/config", a(s.getConfig))
 	mux.Handle("PUT /api/admin/config", a(s.putConfig))
 	mux.Handle("GET /api/admin/info", a(s.adminInfo))
-	mux.Handle("GET /api/admin/libraries", a(s.libraries))
+	mux.Handle("GET /api/admin/libraries", a(s.adminLibraries))
 	mux.Handle("POST /api/admin/libraries", a(s.createLibrary))
 	mux.Handle("PUT /api/admin/libraries/{id}", a(s.updateLibrary))
 	mux.Handle("DELETE /api/admin/libraries/{id}", a(s.deleteLibrary))
