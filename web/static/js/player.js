@@ -1,8 +1,9 @@
 // Full-screen player: picks a playback plan from the server, plays it via
 // direct <video src> or the MSE engine, and renders controls + stats.
 
-import { h, icons, resLabel, fmtTime, fmtBitrate, fmtBytes, streamLabel, toast, clear, langName, channelName, modal, containTab } from './ui.js';
+import { h, icons, resLabel, fmtTime, fmtBitrate, fmtBytes, streamLabel, toast, releaseToasts, clear, langName, channelName, modal, containTab, confirmDialog, run, METHOD_LABEL, reasonLabel, fmtEpisode } from './ui.js';
 import { api, img } from './api.js';
+import { state } from './app.js';
 import { detectCaps } from './caps.js';
 import { prefs, QUALITIES } from './prefs.js';
 import { MseEngine } from './mse.js';
@@ -10,14 +11,28 @@ import { MseEngine } from './mse.js';
 let current = null;
 
 export function openPlayer(opts) {
-  if (current) current.close();
-  current = new Player(opts);
+  // Replacing an open player keeps its history entry, so a pending back()
+  // can't pop the new one.
+  const reuseHistory = !!current;
+  if (current) current.close({ keepHistory: true });
+  current = new Player({ ...opts, reuseHistory });
   return current;
 }
 
 export function isPlayerOpen() { return !!current; }
 
-const METHOD_LABEL = { direct: 'Direct Play', remux: 'Direct Stream', transcode: 'Transcode' };
+export function closePlayer() { current?.close(); }
+
+// pauseForOverlay pauses playback while something covers the player (e.g.
+// the shortcuts sheet). It returns a function that resumes it, if it was
+// playing and the same player is still open.
+export function pauseForOverlay() {
+  const p = current, v = p?.video;
+  if (!v || v.paused) return () => {};
+  v.pause();
+  return () => { if (current === p && v.paused) v.play().catch(() => {}); };
+}
+
 const END_FMT = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 const DIRECT_STARTUP_TIMEOUT = 15000;
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
@@ -27,16 +42,15 @@ const LANG_CHOICES = ['eng', 'spa', 'fre', 'ger', 'ita', 'por', 'hin', 'jpn', 'k
 const LANG1 = { en: 'eng', es: 'spa', fr: 'fre', de: 'ger', it: 'ita', pt: 'por', 'pt-pt': 'por', 'pt-br': 'por', hi: 'hin', ja: 'jpn', ko: 'kor', zh: 'chi', 'zh-cn': 'chi', 'zh-tw': 'chi', ar: 'ara', ru: 'rus', nl: 'dut', sv: 'swe', no: 'nor', da: 'dan', fi: 'fin', pl: 'pol', tr: 'tur', ta: 'tam', te: 'tel', uk: 'ukr', he: 'heb', el: 'gre', cs: 'cze', hu: 'hun', ro: 'rum', th: 'tha', vi: 'vie', id: 'ind', ms: 'may' };
 const lang1to3 = (l) => LANG1[(l || '').toLowerCase()] || l;
 
+// Back/forward icons carry the configured number of seconds.
+const skipIcon = (dir, n) => (n = Math.round(+n) || 0, `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${dir < 0 ? '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>' : '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>'}<text x="12" y="15.5" font-size="${n >= 100 ? 6 : 7.5}" text-anchor="middle" fill="currentColor" stroke="none" font-weight="700" font-family="system-ui">${n}</text></svg>`);
+
 // Stats panel formatting: durations in whole seconds up to ten minutes, then
 // m:ss; positions are always m:ss.
 const secs = (s) => (s < 600 ? `${Math.round(s)}s` : fmtTime(s));
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
-// The server says "copy" and "forced remux"; the UI calls remuxing Direct Stream.
+// The server says "copy"; the UI says "copied".
 const copied = (s) => (s || '').replace(/ \(copy\)$/, ' · copied');
-const reasonLabel = (r) => {
-  const m = /^forced (direct|remux|transcode)$/.exec(r);
-  return m ? `${METHOD_LABEL[m[1]]} chosen in player settings` : r === 'forced direct play' ? 'Direct Play chosen in player settings' : r;
-};
 
 function pickAudio(file, lang) {
   const auds = (file.info?.streams || []).filter((s) => s.type === 'audio');
@@ -107,6 +121,9 @@ function styleASS(text) {
   return out.join('\n') + text.slice(end);
 }
 
+// Downloaded subtitles are shared: only whoever fetched them, or an admin, may remove them.
+const canRemoveSub = (d) => !!state.me && (state.me.isAdmin || (!!d.downloadedBy && d.downloadedBy === state.me.id));
+
 // Fetches a subtitle track; partial means the server is still extracting it.
 async function fetchSub(url) {
   const res = await fetch(url, { credentials: 'same-origin' });
@@ -114,9 +131,23 @@ async function fetchSub(url) {
   return { text: await res.text(), partial: res.headers.get('X-Lex-Partial') === '1' };
 }
 
+// A server restart briefly makes the proxy unavailable: retry with backoff.
+// Permission and media errors stay terminal; cancelled() stops the retries.
+async function retryApi(path, opts, { cancelled = () => false, retries = 6, onRetry } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await api(path, opts);
+    } catch (e) {
+      if (cancelled() || ![0, 502, 503, 504].includes(e.status) || attempt >= retries) throw e;
+      onRetry?.(attempt + 1);
+      await new Promise((resolve) => setTimeout(resolve, Math.min(8000, 1000 * (attempt + 1))));
+      if (cancelled()) throw e;
+    }
+  }
+}
+
 class Player {
-  constructor({ itemId, start = null, onClose }) {
-    this.itemId = itemId;
+  constructor({ itemId, start = null, onClose, reuseHistory = false }) {
     this.onClose = onClose;
     this.sessionId = null;
     this.engine = null;
@@ -133,16 +164,25 @@ class Player {
     this.upNextShown = false;
     this.subOffset = 0;
     this.build();
+    // Back (browser, Android gesture) closes the player instead of
+    // navigating the page behind it. Same URL, so no hashchange or route.
+    if (!reuseHistory) history.pushState({ ...history.state, lexPlayer: true }, '');
     this.bind();
     this.start(itemId, start);
   }
 
   // ---------- DOM ----------
   build() {
-    const b = (name, title, on, cls = '') => h('button', { class: `pbtn ${cls}`, title, 'aria-label': title, html: icons[name], onclick: (e) => { e.stopPropagation(); on(e); } });
+    // name: an icon name, or the icon's markup.
+    const b = (name, title, on, cls = '') => h('button', { class: `pbtn ${cls}`, title, 'aria-label': title, html: icons[name] || name, onclick: (e) => { e.stopPropagation(); on(e); } });
     this.video = h('video', { playsinline: true, preload: 'auto' });
+    // Firefox (no PiP API, so no Lex PiP button) draws its own hover PiP toggle
+    // on the right edge, under the right-anchored menus, and it swallows their
+    // clicks. It only takes effect if set before the first hover.
+    if (!('pictureInPictureEnabled' in document)) this.video.disablePictureInPicture = true;
     this.titleEl = h('div', { class: 'p-title' });
     this.center = h('div', { class: 'p-center' });
+    this.statusEl = h('div', { class: 'p-status', role: 'status' });
     // Subtitles are drawn by us (not ::cue) so we control position and size.
     this.subsEl = h('div', { class: 'p-subs', 'aria-live': 'polite' });
     this.seek = h('div', { class: 'seek', role: 'slider', tabindex: '0', 'aria-label': 'Playback position', 'aria-valuemin': '0', 'aria-valuemax': '0', 'aria-valuenow': '0', 'aria-valuetext': '0:00 of 0:00', 'aria-disabled': 'true' }, h('div', { class: 'rail' }), h('div', { class: 'knob' }));
@@ -152,7 +192,7 @@ class Player {
     this.rail.appendChild(this.fill);
     this.timeEl = h('span', { class: 'p-time' }, '0:00 / 0:00');
     this.endsEl = h('span', { class: 'p-ends', title: 'When playback will finish at the current speed' });
-    this.methodEl = h('span', { class: 'p-method hide-mobile', title: 'Playback method (click for stats)', onclick: (e) => { e.stopPropagation(); this.toggleStats(); } });
+    this.methodEl = h('button', { class: 'p-method hide-mobile', type: 'button', title: 'Playback method (click for stats)', 'aria-pressed': 'false', onclick: (e) => { e.stopPropagation(); this.toggleStats(); } });
     this.playBtn = b('play', 'Play (k)', () => this.togglePlay(), 'big');
     this.volBtn = b('volume', 'Mute (m)', () => this.toggleMute());
     this.volRange = h('input', { type: 'range', 'aria-label': 'Volume', min: 0, max: 1, step: 0.05, value: prefs.get('volume'), oninput: (e) => { this.video.volume = +e.target.value; this.video.muted = false; }, onclick: (e) => e.stopPropagation() });
@@ -160,8 +200,10 @@ class Player {
     this.fsBtn = b('fullscreen', 'Fullscreen (f)', () => this.toggleFullscreen());
     this.ccBtn = b('cc', 'Subtitles & audio (c)', (e) => this.toggleMenu('tracks'));
     this.gearBtn = b('gear', 'Settings', () => this.toggleMenu('settings'));
+    for (const btn of [this.ccBtn, this.gearBtn]) { btn.setAttribute('aria-haspopup', 'dialog'); btn.setAttribute('aria-expanded', 'false'); }
     this.pipBtn = document.pictureInPictureEnabled ? b('pip', 'Picture in picture', () => this.togglePip(), 'hide-mobile') : null;
 
+    this.center.appendChild(this.statusEl);
     this.titleEl.id = 'player-title';
     this.restoreFocus = document.activeElement;
     this.root = h('div', { class: 'player', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'player-title', tabindex: '-1' },
@@ -174,8 +216,8 @@ class Player {
         this.seek,
         h('div', { class: 'p-controls' },
           h('div', { class: 'p-transport' }, this.playBtn,
-            b('back10', `Back ${prefs.get('skipBack')}s (←)`, () => this.skip(-prefs.get('skipBack'))),
-            b('fwd30', `Forward ${prefs.get('skipFwd')}s (→)`, () => this.skip(prefs.get('skipFwd'))), this.timeEl, this.endsEl),
+            b(skipIcon(-1, prefs.get('skipBack')), `Back ${prefs.get('skipBack')}s (←)`, () => this.skip(-prefs.get('skipBack'))),
+            b(skipIcon(1, prefs.get('skipFwd')), `Forward ${prefs.get('skipFwd')}s (→)`, () => this.skip(prefs.get('skipFwd'))), this.timeEl, this.endsEl),
           h('div', { class: 'spacer' }),
           h('div', { class: 'p-tools' }, h('div', { class: 'vol' }, this.volBtn, this.volRange), this.methodEl,
             this.nextBtn, this.ccBtn, this.gearBtn, this.pipBtn, this.fsBtn))));
@@ -189,8 +231,11 @@ class Player {
     document.body.style.overflow = 'hidden';
     this.video.volume = prefs.get('volume');
     this.video.muted = prefs.get('muted');
+    this.volRange.setAttribute('aria-valuetext', this.volumeText());
     this.showSpinner(true);
   }
+
+  volumeText() { const v = this.video; return v.muted ? 'Muted' : `${Math.round(v.volume * 100)}%`; }
 
   bind() {
     const v = this.video;
@@ -204,39 +249,76 @@ class Player {
     document.addEventListener('fullscreenchange', this.onFs);
     this.onHide = () => this.sendStop(true);
     window.addEventListener('pagehide', this.onHide);
+    this.onPop = () => this.close({ fromHistory: true });
+    window.addEventListener('popstate', this.onPop);
 
-    v.addEventListener('play', () => { this.watchDirectStartup(); this.playBtn.innerHTML = icons.pause; this.labelButton(this.playBtn, 'Pause (k)'); this.poke(); this.beat(); });
+    // Media keys, the lock screen or PiP can still call play() after an
+    // admin Stop: the stop sticks.
+    v.addEventListener('play', () => { if (this.stopped) { v.pause(); return; } this.removeEndCard(); this.watchDirectStartup(); this.playBtn.innerHTML = icons.pause; this.labelButton(this.playBtn, 'Pause (k)'); this.poke(); this.beat(); });
     v.addEventListener('pause', () => { if (v.paused) this.startupWatch = null; this.playBtn.innerHTML = icons.play; this.labelButton(this.playBtn, 'Play (k)'); this.showUI(true); this.beat(); });
     v.addEventListener('waiting', () => {
       this.showSpinner(true);
+      if (!this.waitingSince) this.waitingSince = performance.now();
       if (this.started && !v.seeking) { this.stalls.count++; this.stalls.since = performance.now(); }
     });
     const ready = () => {
       this.showSpinner(false);
+      this.waitingSince = 0;
+      this.setStatus('');
       if (this.stalls.since) { this.stalls.secs += (performance.now() - this.stalls.since) / 1000; this.stalls.since = 0; }
     };
-    v.addEventListener('playing', () => { ready(); this.started = true; this.startupWatch = null; });
+    v.addEventListener('playing', () => {
+      ready(); this.started = true; this.startupWatch = null;
+      // The element reconnected on its own while the recovery plan is still
+      // retrying: keep this source; applying the plan would seek back.
+      if (this.recovering && this.planPending === this.planGeneration) { this.planGeneration++; this.recovering = false; }
+    });
     v.addEventListener('canplay', ready);
-    v.addEventListener('seeked', () => { ready(); this.beat(); });
-    v.addEventListener('seeking', () => this.showSpinner(true));
+    v.addEventListener('seeked', () => {
+      ready(); this.beat();
+      // Seeking back before the Up next point: the card can come back later.
+      if (this.upNextShown && v.currentTime < this.upNextAt) { this.cancelUpNext(false); this.upNextShown = false; }
+    });
+    v.addEventListener('seeking', () => { this.removeEndCard(); this.showSpinner(true); if (!this.waitingSince) this.waitingSince = performance.now(); });
     v.addEventListener('timeupdate', () => { this.renderTime(); this.checkIntro(); if (this.subTrack) this.renderCues(this.subTrack); });
     v.addEventListener('progress', () => this.renderTime());
     v.addEventListener('volumechange', () => {
       this.volBtn.innerHTML = v.muted || v.volume === 0 ? icons.mute : icons.volume;
       this.labelButton(this.volBtn, v.muted || v.volume === 0 ? 'Unmute (m)' : 'Mute (m)');
       this.volRange.value = v.muted ? 0 : v.volume;
+      this.volRange.setAttribute('aria-valuetext', this.volumeText());
       prefs.set('volume', v.volume); prefs.set('muted', v.muted);
     });
-    v.addEventListener('ended', () => this.onEnded());
+    // Firefox fires 'waiting' at the very end too.
+    v.addEventListener('ended', () => { ready(); this.onEnded(); });
     v.addEventListener('error', () => this.onVideoError());
+    // iPhone fullscreen is the native player, which can't see our subtitle overlay.
+    v.addEventListener('webkitbeginfullscreen', () => this.onNativeFs(true));
+    v.addEventListener('webkitendfullscreen', () => this.onNativeFs(false));
+    v.addEventListener('enterpictureinpicture', () => this.onPip(true));
+    v.addEventListener('leavepictureinpicture', () => this.onPip(false));
 
-    // Controls visibility.
-    this.root.addEventListener('mousemove', () => this.poke());
+    // Controls visibility. Only a real mouse move shows them: Android sends
+    // a compatibility mousemove before every tap's click, which would show
+    // the controls just before the tap toggles them hidden again.
+    this.root.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse') this.poke(); });
+    // Whether the controls were up when the tap began: tapping the video can
+    // move focus (Firefox focuses it), and focusin shows them before the click.
+    this.root.addEventListener('pointerdown', (e) => { this.lastPointer = e.pointerType; this.hiddenAtDown = this.root.classList.contains('hide-ui'); }, true);
     this.root.addEventListener('focusin', () => this.poke());
+    // A mouse resting on the controls (e.g. reading the seek preview) keeps them up.
+    for (const el of this.root.querySelectorAll(':scope > .p-top, :scope > .p-bot')) {
+      el.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') this.overControls = true; });
+      el.addEventListener('pointerleave', () => { if (this.overControls) { this.overControls = false; this.poke(); } });
+    }
     this.root.addEventListener('click', (e) => {
       if (e.target === v || e.target === this.center) {
+        // The second tap of a double-tap seek (if the browser still sends its
+        // click): keep the controls the seek revealed.
+        if (performance.now() < (this.skipClickUntil || 0)) { this.skipClickUntil = 0; return; }
         if (this.menu) { this.closeMenu(); return; }
-        if (matchMedia('(hover: none)').matches) { this.toggleUI(); return; }
+        // A tap (touch or pen, also on touch laptops) toggles the controls.
+        if (this.lastPointer && this.lastPointer !== 'mouse') { this.toggleUI(this.hiddenAtDown); return; }
         this.togglePlay();
       }
     });
@@ -246,9 +328,10 @@ class Player {
       const now = Date.now();
       if (now - lastTap < 300) {
         const x = e.changedTouches[0].clientX / window.innerWidth;
-        if (x < 0.35) this.skip(-prefs.get('skipBack'));
-        else if (x > 0.65) this.skip(prefs.get('skipFwd'));
+        if (x < 0.35) this.skip(-prefs.get('skipBack'), true);
+        else if (x > 0.65) this.skip(prefs.get('skipFwd'), true);
         e.preventDefault();
+        this.skipClickUntil = performance.now() + 500;
       }
       lastTap = now;
     });
@@ -284,10 +367,11 @@ class Player {
       this.seek.classList.add('drag');
       this.dragT = showTip(e);
       this.renderTime();
+      this.poke();
     });
     this.seek.addEventListener('pointermove', (e) => {
       const t = showTip(e);
-      if (dragging) { this.dragT = t; this.renderTime(); }
+      if (dragging) { this.dragT = t; this.renderTime(); this.poke(); }
     });
     this.seek.addEventListener('pointerup', (e) => {
       if (!dragging) return;
@@ -295,7 +379,7 @@ class Player {
       this.seek.classList.remove('drag');
       const t = seekAt(e).t;
       this.dragT = null;
-      this.seekTo(t);
+      this.seekTo(t); // pokes: the hide countdown restarts after release
     });
     this.seek.addEventListener('pointerleave', () => { if (!dragging && this.tip) { this.tip.remove(); this.tip = null; } });
     this.seek.addEventListener('click', (e) => e.stopPropagation());
@@ -316,9 +400,16 @@ class Player {
 
   // ---------- loading ----------
   async start(itemId, start) {
+    // Retry repeats this when the item itself didn't load (also the next episode's).
+    this.itemId = itemId;
+    this.requestedStart = start;
     this.bufferRebuilds = 0;
+    this.upNextDismissed = false;
     try {
-      const d = await api(`/api/items/${itemId}`);
+      const d = await retryApi(`/api/items/${itemId}`, undefined, {
+        cancelled: () => this.closed,
+        onRetry: (n) => this.setStatus(`Reconnecting to the server… (attempt ${n + 1})`),
+      });
       if (this.closed) return;
       this.detail = d;
       this.item = d.item;
@@ -336,11 +427,14 @@ class Player {
         const ud = this.item.userData;
         start = ud && ud.position > 0 && !ud.played ? ud.position : 0;
       }
+      // Retry resumes here even if this first plan fails before attach().
+      this.started = false;
+      this.startPosition = start;
       await this.loadPlan(start);
       this.setupMediaSession();
       if (prefs.get('showStats') && !this.statsEl) this.toggleStats();
     } catch (e) {
-      this.showError(e.message);
+      if (!this.closed) this.planFailed(e);
     }
   }
 
@@ -348,7 +442,7 @@ class Player {
     const it = this.item;
     clear(this.titleEl);
     if (it.kind === 'episode') {
-      this.titleEl.append(h('b', null, this.detail.show?.title || it.showTitle || ''), h('span', null, `S${it.season} · E${it.episode} — ${it.title}`));
+      this.titleEl.append(h('b', null, this.detail.show?.title || it.showTitle || ''), h('span', null, `${fmtEpisode(it)} — ${it.title}`));
     } else {
       this.titleEl.append(h('b', null, it.title), h('span', null, [it.year, resLabel(this.file?.width, this.file?.height)].filter(Boolean).join(' · ')));
     }
@@ -370,7 +464,7 @@ class Player {
     const forceHls = mode === 'hls';
     if (forceHls) {
       mode = 'auto';
-      if (!this.video.canPlayType('application/vnd.apple.mpegurl')) {
+      if (!this.nativeHls()) {
         toast("This browser can't play HLS natively (Safari and iOS can) — using the normal stream");
         this.mode = 'auto';
         prefs.set('mode', 'auto');
@@ -381,35 +475,42 @@ class Player {
       mode, forceHls: forceHls && this.mode === 'hls', maxBitrate: this.quality, audioLang: prefs.get('audioLang'), swEncode: !!this.swEncode,
       caps, sessionId: this.sessionId, start,
     };
+    // Retrying the same session's plan through a server restart is safe.
+    // Closing or selecting another plan cancels the retry.
+    const cancelled = () => this.closed || generation !== this.planGeneration;
     let res;
-    for (let attempt = 0; ; attempt++) {
-      if (this.closed || generation !== this.planGeneration) return false;
-      try {
-        res = await api('/api/playback/plan', { method: 'POST', body: req });
-        break;
-      } catch (e) {
-        if (this.closed || generation !== this.planGeneration) return false;
-        // A server restart briefly makes the proxy unavailable. Retrying
-        // the same session's plan is safe; permission and media errors stay
-        // terminal. Closing or selecting another plan cancels the retry.
-        if (![0, 502, 503, 504].includes(e.status) || attempt >= 6) throw e;
-        await new Promise(resolve => setTimeout(resolve, Math.min(8000, 1000 * (attempt + 1))));
-      }
+    this.planPending = generation;
+    try {
+      res = await retryApi('/api/playback/plan', { method: 'POST', body: req }, {
+        cancelled, retries: overrides.retries ?? 6,
+        onRetry: (n) => this.setStatus(`${this.recovering ? 'Connection lost — reconnecting' : 'Reconnecting to the server'}… (attempt ${n + 1})`),
+      });
+    } catch (e) {
+      if (cancelled()) return false;
+      throw e;
+    } finally {
+      if (this.planPending === generation) this.planPending = null;
     }
-    if (this.closed || generation !== this.planGeneration) return false;
+    if (cancelled()) return false;
+    this.setStatus('');
     this.plan = res.plan;
     this.cached = !!res.cached;
     if (res.segments) this.segments = res.segments;
     this.sessionId = res.plan.sessionId;
     this.audio = res.plan.audio;
     this.file = { ...this.file, ...res.file, subtitles: this.file.subtitles };
-    this.methodEl.textContent = METHOD_LABEL[this.plan.method] + (this.plan.hls ? ' · HLS' : '');
+    const label = METHOD_LABEL[this.plan.method] + (this.plan.hls ? ' · HLS' : '');
+    this.methodEl.textContent = label;
     this.methodEl.className = `p-method hide-mobile ${this.plan.method}`;
-    this.methodEl.title = (this.plan.reasons || []).join('; ') || 'Playing the original file';
+    this.methodEl.title = (this.plan.reasons || []).map(reasonLabel).join('; ') || 'Playing the original file';
+    this.methodEl.setAttribute('aria-label', `Playback method: ${label}. Stats for nerds (i)`);
     if (this.trick?.fileId !== this.file.id) this.loadTrickplay();
     await this.attach(start);
     return !this.closed && generation === this.planGeneration;
   }
+
+  // Asked once: Firefox logs a console warning for every 'no' answer.
+  nativeHls() { return (this.hlsOK ??= !!this.video.canPlayType('application/vnd.apple.mpegurl')); }
 
   teardown() {
     this.startupWatch = null;
@@ -432,11 +533,13 @@ class Player {
       // Native HLS (Safari, iOS, AirPlay): the playlist covers the whole file,
       // with segment N starting at N x segment length, so seek like a file.
       v.src = this.plan.url;
-      if (start > 0) v.addEventListener('loadedmetadata', () => { v.currentTime = start; }, { once: true });
+      if (start > 0) v.addEventListener('loadedmetadata', () => { if (generation === this.attachGeneration) v.currentTime = start; }, { once: true });
     } else if (this.plan.method === 'direct') {
       v.src = this.plan.url + (start > 0 ? `#t=${start.toFixed(2)}` : '');
       if (start > 0) {
-        v.addEventListener('loadedmetadata', () => { if (Math.abs(v.currentTime - start) > 2) v.currentTime = start; }, { once: true });
+        // A source torn down before its metadata leaves this listener on
+        // the element: it mustn't seek the next one (e.g. the next episode).
+        v.addEventListener('loadedmetadata', () => { if (generation === this.attachGeneration && Math.abs(v.currentTime - start) > 2) v.currentTime = start; }, { once: true });
       }
     } else {
       this.engine = new MseEngine(v, this.plan, {
@@ -465,16 +568,26 @@ class Player {
     this.beat();
   }
 
-  async replan(overrides) {
+  async replan(overrides = {}) {
     // Metadata may never arrive for an unsupported native container, so
     // currentTime is still zero even when playback was requested at a resume point.
     const t = this.video.currentTime || (!this.started && this.startPosition) || 0;
-    const wasPaused = this.video.paused && this.started;
+    // overrides.resume: an error paused the element, not the viewer.
+    const wasPaused = this.video.paused && this.started && !overrides.resume;
     const generation = (this.planGeneration || 0) + 1;
     try {
       const applied = await this.loadPlan(t, overrides);
       if (applied && wasPaused) this.video.pause();
-    } catch (e) { if (!this.closed && generation === this.planGeneration) this.showError(e.message); }
+    } catch (e) { if (!this.closed && generation === this.planGeneration) this.planFailed(e); }
+  }
+
+  // A plan (or the item) couldn't be loaded.
+  planFailed(e) {
+    if (e.status === 410) this.stopByServer(e.message);
+    // MSE refused the stream's type (addSourceBuffer): a codec problem, so
+    // fall back as for a decode error.
+    else if (e.name === 'NotSupportedError' && this.plan) this.fallback(`The browser rejected the stream (${e.message})`);
+    else this.showError(e.message);
   }
 
   // ---------- errors & fallback ----------
@@ -500,12 +613,72 @@ class Player {
 
   async onVideoError() {
     const err = this.video.error;
-    if (!err || err.code === 1 || this.closed || !this.plan) return;
+    if (!err || err.code === 1 || this.closed || !this.plan || this.stopped) return;
+    // The server went away mid-file: that says nothing about the codec.
+    if (err.code === 2) return this.recoverNetwork(); // MEDIA_ERR_NETWORK
+    // A stopped session's media requests fail too; the heartbeat says why.
+    await this.beat();
+    if (this.closed || this.stopped) return;
     // MEDIA_ERR_SRC_NOT_SUPPORTED on direct play, or decode errors: fall back.
     await this.fallback(`${this.plan.method} failed (${err.message || 'media error ' + err.code})`);
   }
 
+  // Lost the connection to the server (restart, Wi-Fi): say so and replan the
+  // same method at the same position, retrying for a minute or so. Doesn't
+  // count as a failed plan, so no codec fallback.
+  async recoverNetwork() {
+    if (this.closed || this.stopped || this.recovering || !this.plan || this.errEl) return;
+    this.recovering = true;
+    this.startupWatch = null;
+    this.setStatus('Connection lost — reconnecting…');
+    try {
+      await this.replan({ mode: this.plan.hls ? this.mode : this.plan.method, resume: true, retries: 12 });
+    } finally {
+      this.recovering = false;
+    }
+  }
+
+  // Direct/HLS playback waiting on data: a quick check tells a server outage
+  // (reconnect now) from a slow network (just keep waiting).
+  async probeServer() {
+    this.lastProbe = performance.now();
+    try {
+      await api('/api/public/info');
+    } catch (e) {
+      if (e.name !== 'AbortError' && [0, 502, 503, 504].includes(e.status) && this.waitingSince) this.recoverNetwork();
+    }
+  }
+
+  checkWaiting() {
+    if (!this.waitingSince || this.closed || this.errEl || this.recovering || this.video.ended) return;
+    const waited = performance.now() - this.waitingSince;
+    if (this.engine?.retries > 0 && waited >= 1000) this.setStatus('Connection lost — reconnecting…');
+    else if (waited >= 8000 && !this.statusEl.textContent) this.setStatus('Still buffering…');
+    // The MSE engine retries its own stream.
+    if (waited >= 1000 && !this.engine && this.plan && performance.now() - (this.lastProbe || 0) > 5000) this.probeServer();
+  }
+
+  setStatus(text) { if (this.statusEl && this.statusEl.textContent !== text) this.statusEl.textContent = text; }
+
+  // An admin stopped this session from the dashboard: stay stopped (no
+  // replan, retry or fallback) and say why. Playing the title again starts
+  // a new session.
+  stopByServer(msg) {
+    if (this.closed || this.stopped) return;
+    this.stopped = true;
+    this.planGeneration = (this.planGeneration || 0) + 1; // cancels pending plan retries
+    this.cancelUpNext(false);
+    // Keep the last frame and position on screen; just stop streaming.
+    this.startupWatch = null;
+    this.video.pause();
+    if (this.engine) { this.engine.destroy(); this.engine = null; }
+    this.clearMediaSession();
+    this.showError(msg || 'Playback was stopped by the server admin', { title: 'Playback stopped', retry: false });
+  }
+
   async onStreamError(msg, status, decode, rebuild) {
+    if (status === 410) return this.stopByServer(msg);
+    if (this.stopped) return;
     if (rebuild && !this.bufferRebuilds) {
       if (this.closed || !this.plan || this.failedPlan === this.plan) return;
       this.failedPlan = this.plan;
@@ -514,16 +687,17 @@ class Player {
       return this.replan({ mode: this.plan.method });
     }
     if (decode) return this.fallback(msg);
-    this.showError(msg, status !== 503);
+    // 500: the server couldn't produce this stream (e.g. a remux), which a transcode may fix.
+    this.showError(msg, { retry: status !== 503, transcode: status === 500 });
   }
 
   async fallback(reason) {
     // An error event and the startup deadline can report the same failure.
     // Each plan gets one fallback; a newly attached plan can fail separately.
-    if (this.closed || !this.plan || this.failedPlan === this.plan) return;
+    if (this.closed || !this.plan || this.failedPlan === this.plan || this.stopped) return;
     this.failedPlan = this.plan;
     this.startupWatch = null;
-    if (this.plan.hls && this.mode === 'hls') { this.showError(`HLS playback failed: ${reason}`); return; }
+    if (this.plan.hls && this.mode === 'hls') { this.showError(`HLS playback failed: ${reason}`, { transcode: true }); return; }
     const order = ['direct', 'remux', 'transcode'];
     const idx = order.indexOf(this.plan.method);
     // A hardware-encoded transcode the browser can't parse: retry once with
@@ -531,32 +705,60 @@ class Player {
     if (idx === 2 && /hardware/.test(this.plan.videoOut || '') && !this.swEncode) {
       this.swEncode = true;
       toast('Hardware transcode failed in this browser — retrying with the software encoder');
-      await this.replan({ mode: 'transcode' });
+      await this.replan({ mode: 'transcode', resume: true });
       return;
     }
-    if (this.fallbacks >= 2 || idx >= 2) { this.showError(`Playback failed: ${reason}`); return; }
+    if (this.fallbacks >= 2 || idx >= 2) { this.showError(`Playback failed: ${reason}`, { transcode: true }); return; }
     this.fallbacks++;
     const next = order[idx + 1];
     toast(`${METHOD_LABEL[this.plan.method]} didn't work in this browser — switching to ${METHOD_LABEL[next]}`);
     this.mode = next;
-    await this.replan({ mode: next });
+    // Media errors pause the element; that isn't the viewer pausing.
+    await this.replan({ mode: next, resume: true });
   }
 
-  showError(msg, retry = true) {
+  // The error overlay is a modal alert over the player: the controls behind
+  // it are inert and Tab stays inside. transcode offers 'Try transcoding',
+  // only for failures a transcode can fix (codec/container, not network,
+  // missing files or a stopped session).
+  showError(msg, { retry = true, transcode = false, title = "Can't play this" } = {}) {
     this.startupWatch = null;
+    this.waitingSince = 0;
     this.showSpinner(false);
+    this.setStatus('');
     this.hideError();
-    this.errEl = h('div', { class: 'p-error' }, h('div', null,
-      h('h2', { style: { margin: 0 } }, "Can't play this"),
-      h('p', { class: 'muted', style: { margin: 0 } }, msg),
-      h('div', { class: 'row' },
-        retry ? h('button', { class: 'btn primary', onclick: () => { this.hideError(); this.replan(); } }, 'Retry') : null,
-        this.plan?.method !== 'transcode' ? h('button', { class: 'btn', onclick: () => { this.hideError(); this.mode = 'transcode'; this.replan({ mode: 'transcode' }); } }, 'Try transcoding') : null,
+    this.video.pause();
+    this.errEl = h('div', { class: 'p-error', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'p-err-title', 'aria-describedby': 'p-err-msg' }, h('div', null,
+      h('h2', { id: 'p-err-title', style: { margin: 0 } }, title),
+      h('p', { id: 'p-err-msg', class: 'muted', style: { margin: 0 } }, msg),
+      h('div', { class: 'row wrap' },
+        retry ? h('button', { class: 'btn primary', onclick: () => this.retry() }, 'Retry') : null,
+        transcode && this.item && this.plan && this.plan.method !== 'transcode' ? h('button', { class: 'btn', onclick: () => { this.hideError(); this.mode = 'transcode'; this.replan({ mode: 'transcode', resume: true }); } }, 'Try transcoding') : null,
         h('button', { class: 'btn', onclick: () => this.close() }, 'Close'))));
     this.root.appendChild(this.errEl);
+    for (const el of this.root.querySelectorAll(':scope > .p-top, :scope > .p-bot')) el.inert = true;
+    this.closeMenu();
+    this.showUI(true);
+    this.errEl.querySelector('button').focus();
   }
 
-  hideError() { if (this.errEl) { this.errEl.remove(); this.errEl = null; } }
+  // The error paused the video; Retry means play again. The item itself (or
+  // the next episode) may never have loaded.
+  retry() {
+    this.hideError();
+    if (this.item && String(this.item.id) === String(this.itemId)) this.replan({ resume: true });
+    else this.start(this.itemId, this.requestedStart);
+  }
+
+  hideError() {
+    if (!this.errEl) return;
+    const hadFocus = this.errEl.contains(document.activeElement);
+    this.errEl.remove();
+    this.errEl = null;
+    for (const el of this.root.querySelectorAll(':scope > .p-top, :scope > .p-bot')) el.inert = false;
+    // Retry removed the focused button: keep focus in the player.
+    if (hadFocus || document.activeElement === document.body) this.root.focus();
+  }
 
   // ---------- subtitles ----------
   subById(idx) { return (this.file.subtitles || []).find((s) => s.index === idx); }
@@ -564,7 +766,9 @@ class Player {
   // Subtitles are fetched first and attached as a blob: a <track> whose src is
   // still loading holds the video at HAVE_CURRENT_DATA (per the HTML spec),
   // and extracting subs from a large file can take a while on a Pi.
-  async setSubtitleTrack(idx) {
+  // Resolves false when the track failed to load (or was superseded). plain
+  // skips the ASS renderer (native fullscreen can only show a <track>).
+  async setSubtitleTrack(idx, { plain = false } = {}) {
     const v = this.video;
     const token = (this.subToken = (this.subToken || 0) + 1);
     for (const t of [...v.querySelectorAll('track')]) t.remove();
@@ -574,11 +778,11 @@ class Player {
     this.destroyASS();
     if (this.subBlob) { URL.revokeObjectURL(this.subBlob); this.subBlob = null; }
     const s = this.subById(idx);
-    if (!s || !s.textSub) return;
+    if (!s || !s.textSub) return true;
     // Styled (ASS/SSA) subtitles are rendered with libass so positioning,
     // fonts and karaoke survive; anything else goes through our overlay.
-    if (/^(ass|ssa)$/.test(s.codec) && !s.downloaded && prefs.get('assRender') !== false && await this.setASS(s, token)) return;
-    if (token !== this.subToken) return;
+    if (!plain && /^(ass|ssa)$/.test(s.codec) && !s.downloaded && prefs.get('assRender') !== false && await this.setASS(s, token)) return token === this.subToken;
+    if (token !== this.subToken) return false;
     const slow = setTimeout(() => { if (token === this.subToken) toast('Extracting subtitles from the file… they will appear shortly'); }, 1500);
     const install = (text) => {
       const old = this.subBlob;
@@ -587,7 +791,7 @@ class Player {
       for (const t of [...v.querySelectorAll('track')]) t.remove();
       v.appendChild(track);
       const tt = track.track;
-      tt.mode = 'hidden';
+      tt.mode = this.root.classList.contains('native-fs') ? 'showing' : 'hidden';
       const render = () => this.renderCues(tt);
       tt.addEventListener('cuechange', render);
       track.addEventListener('load', () => { this.cueKey = null; render(); });
@@ -597,11 +801,19 @@ class Player {
     try {
       const url = `/api/files/${this.file.id}/subs/${idx}.vtt?v=${this.file.mtime || 0}`;
       const { text, partial } = await fetchSub(url);
-      if (token !== this.subToken || this.closed) return;
+      if (token !== this.subToken || this.closed) return false;
       install(text);
       if (partial) this.pollSub(token, url, install);
+      return true;
     } catch (e) {
-      if (token === this.subToken) toast(`Could not load subtitles: ${e.message}`, 'error');
+      if (token !== this.subToken) return false;
+      toast(`Could not load subtitles: ${e.message}`, 'error');
+      // Don't leave the failed track checked in the menu (or asked for by the next plan).
+      if (this.subtitle === idx) {
+        this.subtitle = -1;
+        if (this.menuName === 'tracks') this.renderMenu();
+      }
+      return false;
     } finally {
       clearTimeout(slow);
     }
@@ -689,9 +901,9 @@ class Player {
   }
 
   nudgeSubs(d) {
-    if (!this.subById(this.subtitle)?.textSub) return;
+    if (!this.subById(this.subtitle)?.textSub) { toast('Turn on text subtitles to adjust timing', '', { key: 'subOffset' }); return; }
     this.setSubOffset(this.subOffset + d);
-    toast(`Subtitle timing ${this.subOffset > 0 ? '+' : ''}${this.subOffset.toFixed(1)}s`);
+    toast(`Subtitle timing ${this.subOffset > 0 ? '+' : ''}${this.subOffset.toFixed(1)}s`, '', { key: 'subOffset' });
   }
 
   // Find subtitles on OpenSubtitles.com and add them to this file.
@@ -699,8 +911,18 @@ class Player {
     const wasPlaying = !this.video.paused;
     const langSel = h('select', { class: 'input' }, LANG_CHOICES.map(([k, l]) => h('option', { value: k, selected: k === (prefs.get('subLang') || 'eng') }, l)));
     const list = h('div', { class: 'sub-results' });
-    const status = h('div', { class: 'muted small' });
+    const status = h('div', { class: 'muted small', role: 'status' });
     const downloaded = h('div', { class: 'sub-results' });
+    const remove = async (e, d) => {
+      const btn = e.currentTarget;
+      if (!await confirmDialog('Remove these downloaded subtitles for everyone?', 'Remove', true, 'Remove subtitles?')) return;
+      const ok = await run(btn, () => api(`/api/files/${this.file.id}/subs/${d.index}`, { method: 'DELETE' }), 'Subtitles removed');
+      if (!ok) return;
+      this.file.subtitles = this.file.subtitles.filter((x) => x.index !== d.index);
+      this.syncFileSubs();
+      if (this.subtitle === d.index) this.chooseSubtitle(-1);
+      renderDownloaded();
+    };
     const renderDownloaded = () => {
       clear(downloaded);
       const mine = (this.file.subtitles || []).filter((x) => x.downloaded);
@@ -709,16 +931,18 @@ class Player {
       for (const d of mine) {
         downloaded.append(h('div', { class: 'sub-res' },
           h('div', { class: 'sub-res-main' }, h('b', null, d.title || 'Downloaded'), h('span', { class: 'muted small' }, langName(d.language))),
-          h('button', { class: 'btn sm danger', onclick: async () => {
-            try {
-              await api(`/api/files/${this.file.id}/subs/${d.index}`, { method: 'DELETE' });
-              this.file.subtitles = this.file.subtitles.filter((x) => x.index !== d.index);
-              this.syncFileSubs();
-              if (this.subtitle === d.index) this.chooseSubtitle(-1);
-              renderDownloaded();
-            } catch (e) { toast(e.message, 'error'); }
-          } }, 'Remove')));
+          canRemoveSub(d) ? h('button', { class: 'btn sm danger', onclick: (e) => remove(e, d) }, 'Remove') : null));
       }
+    };
+    const failed = (e) => {
+      status.textContent = '';
+      if (e.code === 'no_key') {
+        list.append(h('div', { class: 'sub-err', role: 'alert' }, state.me?.isAdmin
+          ? ['Subtitle search isn’t set up yet. Add an OpenSubtitles API key in ', h('a', { href: '#/settings/metadata', onclick: (ev) => { ev.preventDefault(); this.goTo('#/settings/metadata'); } }, 'Settings › Metadata'), '.']
+          : 'Subtitle search isn’t set up on this server.'));
+        return;
+      }
+      list.append(h('div', { class: 'sub-err row', role: 'alert' }, h('span', { class: 'spacer' }, e.message), h('button', { class: 'btn sm', onclick: search }, 'Retry')));
     };
     const search = async () => {
       clear(list);
@@ -755,19 +979,33 @@ class Player {
             btn));
         }
       } catch (e) {
-        status.textContent = '';
-        list.append(h('div', { class: 'sub-err' }, e.message));
+        failed(e);
       }
     };
-    langSel.onchange = () => { prefs.set('subLang', langSel.value); search(); };
+    // A filter for this search, not the preferred subtitle language.
+    langSel.onchange = search;
     if (wasPlaying) this.video.pause();
     const m = modal({
       title: 'Search subtitles', wide: true, parent: this.root,
-      body: [h('div', { class: 'row', style: { gap: '10px', alignItems: 'center' } }, h('span', { class: 'muted' }, 'Language'), langSel, h('div', { class: 'spacer' }), status), downloaded, list],
-      onClose: () => { if (wasPlaying) this.video.play().catch(() => {}); },
+      body: [h('div', { class: 'row wrap', style: { gap: '10px', alignItems: 'center' } },
+        h('label', { class: 'row', style: { gap: '10px' } }, h('span', { class: 'muted' }, 'Language'), langSel), h('div', { class: 'spacer' }), status), downloaded, list],
+      onClose: () => {
+        if (this.closed) return;
+        // The menu item that opened this is gone: back to the CC button.
+        this.ccBtn.focus();
+        if (wasPlaying) this.video.play().catch(() => {});
+      },
     });
     renderDownloaded();
     search();
+  }
+
+  // Leave the player for an app page: the player's history entry is popped
+  // first, or that Back would undo the navigation.
+  goTo(hash) {
+    if (history.state?.lexPlayer) window.addEventListener('popstate', () => { location.hash = hash; }, { once: true });
+    else setTimeout(() => { location.hash = hash; });
+    this.close();
   }
 
   // Keep the item's file list in sync so switching versions keeps new subs.
@@ -776,20 +1014,37 @@ class Player {
     if (f) f.subtitles = this.file.subtitles;
   }
 
+  // The choice is remembered for this device, but turning subtitles off here
+  // never turns off forced/foreign-audio subtitles everywhere (that's a
+  // Settings choice), and a forced track doesn't change the preferred language.
   async chooseSubtitle(idx) {
     const prev = this.subById(this.subtitle);
     const next = this.subById(idx);
     this.subtitle = idx;
     const needBurn = next && !next.textSub;
     const hadBurn = prev && !prev.textSub;
-    if (next) { prefs.set('subLang', next.language || prefs.get('subLang')); if (prefs.get('subMode') === 'off') prefs.set('subMode', 'always'); }
-    else prefs.set('subMode', 'off');
+    const mode = prefs.get('subMode');
+    if (!next && mode === 'always') prefs.set('subMode', 'auto');
+    let ok = true;
     if (needBurn || hadBurn) {
       if (needBurn) toast('Image-based subtitles need to be burned in: transcoding');
       await this.replan();
     } else {
-      this.setSubtitleTrack(idx);
+      ok = await this.setSubtitleTrack(idx);
     }
+    if (!next || !ok || this.subtitle !== idx) return;
+    if (next.forced) { if (mode === 'off') prefs.set('subMode', 'auto'); return; }
+    if (next.language) prefs.set('subLang', next.language);
+    if (mode === 'off') prefs.set('subMode', 'always');
+  }
+
+  // iPhone native fullscreen shows only <track> cues: show ours there (the
+  // plain-text version of styled subtitles) and go back to the overlay after.
+  onNativeFs(on) {
+    this.root.classList.toggle('native-fs', on);
+    if (on && this.jassub) { this.nativeAss = true; this.setSubtitleTrack(this.subtitle, { plain: true }); return; }
+    if (!on && this.nativeAss) { this.nativeAss = false; this.setSubtitleTrack(this.subtitle); return; }
+    if (this.subTrack) this.subTrack.mode = on ? 'showing' : 'hidden';
   }
 
   async chooseAudio(idx) {
@@ -855,7 +1110,16 @@ class Player {
     else { v.pause(); this.flash('pause'); }
   }
 
-  skip(d) { this.seekTo(this.video.currentTime + d); }
+  // show: on-screen '+30s' / '−10s' (keys and double-taps; the buttons are their own feedback).
+  skip(d, show = false) {
+    this.seekTo(this.video.currentTime + d);
+    if (!show) return;
+    // Repeated presses or taps add up in one bubble.
+    const o = this.osdSkip;
+    const sum = o && o.el.isConnected && Math.sign(o.sum) === Math.sign(d) ? o.sum + d : d;
+    const el = this.osd(sum < 0 ? `−${-sum}s` : `+${sum}s`, sum < 0 ? 'left' : 'right');
+    this.osdSkip = { el, sum };
+  }
 
   seekTo(t) {
     const d = this.duration();
@@ -870,6 +1134,18 @@ class Player {
     setTimeout(() => f.remove(), 600);
   }
 
+  // A short on-screen message (volume, skips) that fades like flash().
+  osd(text, side = 'center') {
+    this.osdEl?.remove();
+    clearTimeout(this.osdTimer);
+    const el = this.osdEl = h('div', { class: `p-flash p-osd ${side}` }, text);
+    this.center.appendChild(el);
+    this.osdTimer = setTimeout(() => el.remove(), 900);
+    return el;
+  }
+
+  osdVolume() { this.osd(this.video.muted ? 'Muted' : `Volume ${this.volumeText()}`); }
+
   showSpinner(on) {
     if (on && !this.spin) { this.spin = h('div', { class: 'spinner' }); this.center.appendChild(this.spin); }
     if (!on && this.spin) { this.spin.remove(); this.spin = null; }
@@ -878,16 +1154,29 @@ class Player {
   poke() {
     this.showUI(true);
     clearTimeout(this.hideTimer);
-    this.hideTimer = setTimeout(() => { if (!this.video.paused && !this.menu && !this.root.querySelector(':focus-visible')) this.showUI(false); }, 3000);
+    this.hideTimer = setTimeout(() => {
+      if (!this.video.paused && !this.menu && !this.overControls && !this.seek.classList.contains('drag') && !this.root.querySelector(':focus-visible')) this.showUI(false);
+    }, 3000);
   }
 
   showUI(on) { this.root.classList.toggle('hide-ui', !on); }
-  toggleUI() { if (this.root.classList.contains('hide-ui')) this.poke(); else this.showUI(false); }
+  toggleUI(hidden = this.root.classList.contains('hide-ui')) { if (hidden) this.poke(); else this.showUI(false); }
 
   toggleFullscreen() {
     if (document.fullscreenElement) document.exitFullscreen();
     else if (this.root.requestFullscreen) this.root.requestFullscreen().catch(() => {});
     else if (this.video.webkitEnterFullscreen) this.video.webkitEnterFullscreen();
+  }
+
+  onPip(on) {
+    this.root.classList.toggle('pip', on);
+    if (this.pipBtn) {
+      this.labelButton(this.pipBtn, on ? 'Exit picture in picture' : 'Picture in picture');
+      this.pipBtn.setAttribute('aria-pressed', String(on));
+    }
+    this.pipMsg?.remove();
+    this.pipMsg = on ? h('div', { class: 'p-pipmsg' }, 'Playing in picture-in-picture') : null;
+    if (on) this.center.appendChild(this.pipMsg);
   }
 
   async togglePip() {
@@ -900,8 +1189,18 @@ class Player {
   key(e) {
     if (e.defaultPrevented || this.root.querySelector('.modal-bg')) return;
     if (e.key === 'Tab') {
-      containTab(e, this.root);
+      containTab(e, this.errEl || this.root);
       this.poke();
+      return;
+    }
+    // The error overlay's buttons take every key; Escape still closes.
+    if (this.errEl) {
+      if (e.key === 'Escape' && !document.fullscreenElement) { e.preventDefault(); this.close(); }
+      return;
+    }
+    if (this.menu && e.target.closest?.('.p-menu') && /^(Arrow(Up|Down)|Home|End)$/.test(e.key) && !(e.metaKey || e.ctrlKey || e.altKey)) {
+      e.preventDefault();
+      this.menuKey(e);
       return;
     }
     if (e.target.tagName === 'INPUT' && e.target.type === 'range') {
@@ -915,13 +1214,13 @@ class Player {
     const k = e.key.toLowerCase();
     const map = {
       ' ': () => this.togglePlay(), k: () => this.togglePlay(),
-      arrowleft: () => this.skip(-prefs.get('skipBack')), j: () => this.skip(-prefs.get('skipBack')),
-      arrowright: () => this.skip(prefs.get('skipFwd')), l: () => this.skip(prefs.get('skipFwd')),
-      arrowup: () => { v.volume = Math.min(1, v.volume + 0.05); v.muted = false; },
-      arrowdown: () => { v.volume = Math.max(0, v.volume - 0.05); },
-      f: () => this.toggleFullscreen(), m: () => this.toggleMute(),
+      arrowleft: () => this.skip(-prefs.get('skipBack'), true), j: () => this.skip(-prefs.get('skipBack'), true),
+      arrowright: () => this.skip(prefs.get('skipFwd'), true), l: () => this.skip(prefs.get('skipFwd'), true),
+      arrowup: () => { v.volume = Math.min(1, v.volume + 0.05); v.muted = false; this.osdVolume(); },
+      arrowdown: () => { v.volume = Math.max(0, v.volume - 0.05); this.osdVolume(); },
+      f: () => this.toggleFullscreen(), m: () => { this.toggleMute(); this.osdVolume(); },
       i: () => this.toggleStats(), c: () => this.toggleMenu('tracks'),
-      n: () => this.playNext(),
+      n: () => this.playNext(), s: () => this.skipBtn?.click(),
       g: () => this.nudgeSubs(-0.1), h: () => this.nudgeSubs(0.1),
       escape: () => { if (this.menu) this.closeMenu(); else if (!document.fullscreenElement) this.close(); },
       home: () => this.seekTo(0), end: () => this.seekTo(this.duration() - 5),
@@ -1007,7 +1306,7 @@ class Player {
   // UI tick refreshes it too.
   renderEnds() {
     const d = this.duration(), left = d - (this.dragT ?? this.video.currentTime);
-    const txt = isFinite(d) && d && left > 0 ? `Ends at: ${END_FMT.format(Date.now() + (left / (this.video.playbackRate || 1)) * 1000)}` : '';
+    const txt = isFinite(d) && d && left > 0 && !this.video.ended ? `Ends at: ${END_FMT.format(Date.now() + (left / (this.video.playbackRate || 1)) * 1000)}` : '';
     if (this.endsEl.textContent !== txt) this.endsEl.textContent = txt;
   }
 
@@ -1031,12 +1330,14 @@ class Player {
   }
 
   async beat() {
-    if (!this.sessionId || this.closed || !this.plan) return;
+    if (!this.sessionId || this.closed || !this.plan || this.stopped) return;
     try {
-      const r = await api('/api/playback/progress', { method: 'POST', body: { sessionId: this.sessionId, position: this.video.currentTime, paused: this.video.paused, stats: this.clientStats() } });
+      const r = await api('/api/playback/progress', { method: 'POST', body: { sessionId: this.sessionId, fileId: this.file?.id, method: this.plan.method, position: this.video.currentTime, paused: this.video.paused, stats: this.clientStats() } });
       this.lastJob = r.job || null;
       this.serverRate = r.serverRate || 0;
-    } catch {}
+    } catch (e) {
+      if (e.status === 410) this.stopByServer(e.message);
+    }
   }
 
   sendStop(beacon) {
@@ -1054,11 +1355,12 @@ class Player {
     if (this.bufHist.length > 90) this.bufHist.shift();
     if (this.statsEl) this.renderStats(es);
     this.renderEnds();
+    this.checkWaiting();
     this.checkUpNext();
   }
 
   toggleStats() {
-    if (this.statsEl) { this.statsEl.remove(); this.statsEl = null; prefs.set('showStats', false); return; }
+    if (this.statsEl) { this.statsEl.remove(); this.statsEl = null; prefs.set('showStats', false); this.statsChanged(); return; }
     if (!this.plan) return;
     prefs.set('showStats', true);
     const stop = (on) => (e) => { e.stopPropagation(); on(e); };
@@ -1080,7 +1382,14 @@ class Player {
       this.statsBody);
     this.root.appendChild(this.statsEl);
     this.renderStats(this.clientStats());
+    this.statsChanged();
     this.beat();
+  }
+
+  // The badge and an open Settings menu show whether the panel is up.
+  statsChanged() {
+    this.methodEl.setAttribute('aria-pressed', String(!!this.statsEl));
+    if (this.menuName === 'settings' && !this.menuPage) this.renderMenu();
   }
 
   // Everything the stats panel shows, as data: rendered into the panel and
@@ -1239,47 +1548,91 @@ class Player {
   // ---------- menus ----------
   // Two-level menus: a main list of "Label  value ›" rows and toggles; a row
   // opens a sub-page of choices with a back button.
-  closeMenu() { if (this.menu) { this.menu.remove(); this.menu = null; this.menuName = null; this.menuPage = null; } }
+  // restore: focus goes back to the button that opened the menu, if it was
+  // inside the menu.
+  closeMenu(restore = true) {
+    if (!this.menu) return;
+    const hadFocus = this.menu.contains(document.activeElement);
+    this.menu.remove();
+    this.menu = null; this.menuName = null; this.menuPage = null;
+    const opener = this.menuOpener;
+    this.menuOpener = null;
+    opener?.setAttribute('aria-expanded', 'false');
+    if (restore && hadFocus) opener?.focus();
+  }
 
   toggleMenu(name) {
     if (this.menuName === name) { this.closeMenu(); return; }
-    this.closeMenu();
+    this.closeMenu(false);
     this.menuName = name;
     this.menuPage = null;
-    this.menu = h('div', { class: 'p-menu', onclick: (e) => e.stopPropagation() });
-    this.renderMenu();
+    this.menuOpener = name === 'tracks' ? this.ccBtn : this.gearBtn;
+    this.menuOpener.setAttribute('aria-expanded', 'true');
+    this.menu = h('div', { class: 'p-menu', role: 'dialog', 'aria-label': name === 'tracks' ? 'Subtitles and audio' : 'Settings', onclick: (e) => e.stopPropagation() });
     this.root.appendChild(this.menu);
+    this.renderMenu();
+    this.menu.querySelector('.pm-row, .pm-opt')?.focus();
     this.showUI(true);
   }
 
-  openPage(page) { this.menuPage = page; this.renderMenu(); }
+  openPage(page) {
+    const from = this.menuPage;
+    this.menuPage = page;
+    this.renderMenu({ from });
+  }
+
+  // Up/Down (and Home/End) move between the menu's controls.
+  menuKey(e) {
+    const els = [...this.menu.querySelectorAll('button:not(:disabled), input:not(:disabled)')];
+    if (!els.length) return;
+    const i = els.indexOf(document.activeElement);
+    const n = els.length;
+    const next = { ArrowDown: i < 0 ? 0 : (i + 1) % n, ArrowUp: i < 0 ? n - 1 : (i - 1 + n) % n, Home: 0, End: n - 1 }[e.key];
+    els[next].focus();
+  }
 
   qualityLabel(k) {
     const q = QUALITIES.find(([v]) => v === k);
     return q ? q[1].split(' · ')[0] : 'Original';
   }
 
-  renderMenu() {
-    const m = clear(this.menu);
-    const row = (label, value, page) => h('button', { class: 'pm-row', onclick: () => this.openPage(page) },
+  // Re-renders the open menu. Focus follows: to Back when a sub-page opens,
+  // to the row it came from when going back (opts.from), otherwise it stays
+  // on the same control (e.g. a timing step).
+  renderMenu(opts) {
+    const m = this.menu;
+    if (!m) return;
+    const active = m.contains(document.activeElement) ? document.activeElement : null;
+    const key = active?.dataset.key;
+    clear(m);
+    this.fillMenu(m);
+    let target = null;
+    if (opts && 'from' in opts) target = this.menuPage ? m.querySelector('.pm-back') : m.querySelector(`[data-key="${opts.from}"]`) || m.querySelector('.pm-row');
+    else if (key) target = m.querySelector(`[data-key="${key}"]`);
+    if (target || active) (target || m.querySelector('.pm-row, .pm-opt'))?.focus();
+  }
+
+  fillMenu(m) {
+    const row = (label, value, page) => h('button', { class: 'pm-row', 'data-key': page, onclick: () => this.openPage(page) },
       h('span', { class: 'pm-label' }, label), h('span', { class: 'pm-val' }, value), h('span', { class: 'pm-chev', html: icons.chevR }));
     const sw = (label, on, set, hint) => h('label', { class: 'pm-row pm-toggle' },
       h('span', { class: 'pm-label' }, label, hint ? h('small', null, hint) : null),
-      h('span', { class: 'switch' }, h('input', { type: 'checkbox', checked: on, onchange: (e) => set(e.target.checked) }), h('i')));
+      h('span', { class: 'switch' }, h('input', { type: 'checkbox', 'data-key': `sw-${label}`, checked: on, onchange: (e) => set(e.target.checked) }), h('i')));
+    // Choices are a radio group; actions (e.g. 'Search online…') follow it.
     const page = (title, items) => {
       m.append(h('div', { class: 'pm-head' },
-        h('button', { class: 'pm-back', html: icons.chevL, 'aria-label': 'Back', onclick: () => this.openPage(null) }), h('b', null, title)));
-      const list = h('div', { class: 'pm-list' });
-      for (const it of items) {
-        list.appendChild(h('button', { class: `pm-opt ${it.active ? 'on' : ''}`, onclick: it.on },
-          h('span', { class: 'ck', html: it.active ? icons.check : '' }),
-          h('span', { class: 'pm-opt-l' }, it.label, it.sub ? h('small', null, it.sub) : null),
-          it.right ? h('span', { class: 'pm-val' }, it.right) : null));
-      }
-      m.append(list);
+        h('button', { class: 'pm-back', 'data-key': 'back', html: icons.chevL, 'aria-label': 'Back', onclick: () => this.openPage(null) }), h('b', null, title)));
+      const opt = (it, role) => h('button', { class: `pm-opt ${it.active ? 'on' : ''}`, role, 'aria-checked': role ? String(!!it.active) : null, onclick: it.on },
+        h('span', { class: 'ck', html: it.active ? icons.check : '' }),
+        h('span', { class: 'pm-opt-l' }, it.label, it.sub ? h('small', null, it.sub) : null),
+        it.right ? h('span', { class: 'pm-val' }, it.right) : null);
+      m.append(h('div', { class: 'pm-list', role: 'radiogroup', 'aria-label': title }, items.filter((it) => !it.action).map((it) => opt(it, 'radio'))));
+      for (const it of items.filter((x) => x.action)) m.append(opt(it, null));
     };
     const auds = (this.file.info?.streams || []).filter((s) => s.type === 'audio');
     const subs = this.file.subtitles || [];
+    // Below 900px the menu spans the subtitles: close it so the change shows.
+    const styled = () => (matchMedia('(max-width: 900px)').matches ? this.closeMenu() : this.openPage(null));
 
     if (this.menuName === 'tracks') {
       switch (this.menuPage) {
@@ -1287,26 +1640,30 @@ class Player {
           return page('Subtitles', [
             { label: 'Off', active: this.subtitle < 0, on: () => { this.chooseSubtitle(-1); this.closeMenu(); } },
             ...subs.map((s) => ({ label: streamLabel(s), active: this.subtitle === s.index, on: () => { this.chooseSubtitle(s.index); this.closeMenu(); } })),
-            { label: 'Search online…', sub: 'OpenSubtitles.com', on: () => { this.closeMenu(); this.searchSubtitles(); } },
-          ]);
+            // Hidden when search isn't set up, unless there are downloads this user may remove.
+            state.caps?.subtitleSearch !== false || subs.some((s) => s.downloaded && canRemoveSub(s))
+              ? { label: 'Search online…', sub: 'OpenSubtitles.com', action: true, on: () => { this.closeMenu(); this.searchSubtitles(); } } : null,
+          ].filter(Boolean));
         case 'audio':
           return page('Audio', auds.map((a) => ({ label: streamLabel(a), active: this.audio === a.index, on: () => { if (a.index !== this.audio) this.chooseAudio(a.index); this.closeMenu(); } })));
         case 'size':
-          return page('Subtitle size', [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']].map(([k, l]) => ({ label: l, active: prefs.get('subSize') === k, on: () => { prefs.set('subSize', k); this.applySubStyle(); this.openPage(null); } })));
+          return page('Subtitle size', [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']].map(([k, l]) => ({ label: l, active: prefs.get('subSize') === k, on: () => { prefs.set('subSize', k); this.applySubStyle(); styled(); } })));
         case 'pos':
-          return page('Subtitle position', [['low', 'Low'], ['normal', 'Normal'], ['high', 'High']].map(([k, l]) => ({ label: l, active: prefs.get('subPos') === k, on: () => { prefs.set('subPos', k); this.applySubStyle(); this.openPage(null); } })));
+          return page('Subtitle position', [['low', 'Low'], ['normal', 'Normal'], ['high', 'High']].map(([k, l]) => ({ label: l, active: prefs.get('subPos') === k, on: () => { prefs.set('subPos', k); this.applySubStyle(); styled(); } })));
       }
       const cur = this.subById(this.subtitle);
       m.append(h('div', { class: 'pm-title' }, 'Subtitles & audio'));
-      m.append(row('Subtitles', cur ? streamLabel(cur).split(' · ')[0] : 'Off', 'subs'));
+      const curLabel = cur && (cur.language ? langName(cur.language) : streamLabel(cur).split(' · ')[0]) + (cur.forced ? ' (Forced)' : '') + (cur.hearingImpaired ? ' (SDH)' : '');
+      m.append(row('Subtitles', cur ? curLabel : 'Off', 'subs'));
       if (auds.length) m.append(row('Audio', streamLabel(auds.find((a) => a.index === this.audio) || auds[0]).split(' · ').slice(0, 2).join(' · '), 'audio'));
       if (cur && cur.textSub) {
         const off = this.subOffset || 0;
-        const step = (d) => h('button', { class: 'pm-step', onclick: () => this.setSubOffset(Math.round((off + d) * 10) / 10) }, d > 0 ? `+${d}` : `${d}`);
-        m.append(h('div', { class: 'pm-row pm-stepper' },
+        const fmt = `${off > 0 ? '+' : ''}${off.toFixed(1)}s`;
+        const step = (d) => h('button', { class: 'pm-step', 'data-key': `step-${d}`, 'aria-label': `Subtitles ${d > 0 ? 'later' : 'earlier'} by ${Math.abs(d)} seconds`, onclick: () => this.setSubOffset(Math.round((off + d) * 10) / 10) }, d > 0 ? `+${d}` : `${d}`);
+        m.append(h('div', { class: 'pm-row pm-stepper', role: 'group', 'aria-label': 'Subtitle timing' },
           h('span', { class: 'pm-label' }, 'Timing', h('small', null, 'keys G / H')),
           h('div', { class: 'pm-steps' }, step(-0.5), step(-0.1),
-            h('button', { class: 'pm-step pm-zero', title: 'Reset', onclick: () => this.setSubOffset(0) }, `${off > 0 ? '+' : ''}${off.toFixed(1)}s`),
+            h('button', { class: 'pm-step pm-zero', 'data-key': 'step-zero', title: 'Reset', 'aria-label': `Reset subtitle timing (now ${fmt})`, onclick: () => this.setSubOffset(0) }, fmt),
             step(0.1), step(0.5))));
       }
       m.append(h('div', { class: 'pm-sep' }));
@@ -1318,7 +1675,14 @@ class Player {
 
     // settings
     const src = this.file?.info?.bitrate ? Math.round(this.file.info.bitrate / 1000) : 0;
-    const modes = [['auto', 'Automatic', 'Direct play, then remux, then transcode'], ['direct', 'Direct play', 'Original file'], ['remux', 'Direct stream', 'Remux; video untouched'], ['transcode', 'Transcode', 'Re-encode on the server'], ['hls', 'HLS', 'For AirPlay and older devices']];
+    const modes = [
+      ['auto', 'Automatic', `${METHOD_LABEL.direct}, then ${METHOD_LABEL.remux}, then ${METHOD_LABEL.transcode}`],
+      ['direct', METHOD_LABEL.direct, 'Original file'],
+      ['remux', METHOD_LABEL.remux, 'New container; video untouched'],
+      ['transcode', METHOD_LABEL.transcode, 'Re-encode on the server'],
+      ['hls', 'HLS', 'For AirPlay and older devices'],
+    // HLS needs native support (Safari, iOS); elsewhere it only falls back.
+    ].filter(([k]) => k !== 'hls' || this.mode === 'hls' || this.nativeHls());
     switch (this.menuPage) {
       case 'quality':
         return page('Quality', QUALITIES.filter(([k]) => !k || !src || k <= src * 1.5 || k === this.quality).map(([k, l]) => ({
@@ -1328,18 +1692,20 @@ class Player {
       case 'method':
         return page('Playback method', modes.map(([k, l, d]) => ({ label: l, sub: d, active: this.mode === k, on: () => { this.mode = k; prefs.set('mode', k); this.fallbacks = 0; this.swEncode = false; this.closeMenu(); this.replan(); } })));
       case 'speed':
-        return page('Speed', SPEEDS.map((sp) => ({ label: sp === 1 ? 'Normal' : `${sp}x`, active: this.video.playbackRate === sp, on: () => { this.video.playbackRate = sp; this.openPage(null); } })));
+        // The default rate survives load(), so the speed outlasts track,
+        // quality and method changes, fallbacks and the next episode.
+        return page('Speed', SPEEDS.map((sp) => ({ label: sp === 1 ? 'Normal' : `${sp}x`, active: this.video.playbackRate === sp, on: () => { this.video.defaultPlaybackRate = this.video.playbackRate = sp; this.openPage(null); } })));
       case 'version':
         return page('Version', this.files.map((f) => ({ label: `${resLabel(f.width, f.height)} ${(f.vcodec || '').toUpperCase()}`, right: fmtBytes(f.size), active: this.file.id === f.id, on: () => { this.file = { ...f, subtitles: f.subtitles }; this.chaptersDrawn = false; this.closeMenu(); this.replan(); } })));
     }
     m.append(h('div', { class: 'pm-title' }, 'Settings'));
     m.append(row('Quality', this.qualityLabel(this.quality), 'quality'));
-    m.append(row('Playback', (modes.find(([k]) => k === this.mode) || modes[0])[1], 'method'));
+    m.append(row('Playback method', (modes.find(([k]) => k === this.mode) || modes[0])[1], 'method'));
     m.append(row('Speed', this.video.playbackRate === 1 ? 'Normal' : `${this.video.playbackRate}x`, 'speed'));
     if (this.files.length > 1) m.append(row('Version', `${resLabel(this.file.width, this.file.height)} ${(this.file.vcodec || '').toUpperCase()}`, 'version'));
     m.append(h('div', { class: 'pm-sep' }));
     m.append(sw('Stats for nerds', !!this.statsEl, () => this.toggleStats(), 'Shortcut: I'));
-    m.append(sw('Autoplay next episode', prefs.get('autoplayNext'), (v) => prefs.set('autoplayNext', v)));
+    m.append(sw('Autoplay next episode', prefs.get('autoplayNext'), (v) => { prefs.set('autoplayNext', v); if (!v) this.cancelUpNext(false); }));
     m.append(sw('Skip intros automatically', prefs.get('autoSkipIntro'), (v) => prefs.set('autoSkipIntro', v)));
   }
 
@@ -1357,15 +1723,18 @@ class Player {
       return;
     }
     if (inside && !this.skipBtn) {
-      this.skipBtn = h('button', { class: 'btn skip-intro', onclick: (e) => {
+      this.skipBtn = h('button', { class: 'btn skip-intro', 'aria-keyshortcuts': 's', title: 'Skip intro (s)', onclick: (e) => {
         e.stopPropagation();
         this.introSkipped = true;
         this.seekTo(seg.end);
       } }, 'Skip Intro', h('span', { html: icons.next }));
-      this.root.appendChild(this.skipBtn);
+      // Early in Tab order, right after Close (it's positioned, so it doesn't move).
+      this.root.insertBefore(this.skipBtn, this.root.querySelector(':scope > .p-bot'));
     } else if (!inside && this.skipBtn) {
+      const hadFocus = this.skipBtn.contains(document.activeElement);
       this.skipBtn.remove();
       this.skipBtn = null;
+      if (hadFocus) this.root.focus();
     }
   }
 
@@ -1373,43 +1742,92 @@ class Player {
   checkUpNext() {
     const next = this.detail?.next;
     const d = this.duration(), t = this.video.currentTime;
-    if (!next || !d || this.upNextShown || this.video.paused) return;
+    if (!next || !d || this.upNextShown || this.upNextDismissed || this.video.paused || this.errEl) return;
     const credits = (this.file?.info?.chapters || []).find((c) => /credit|outro|ending|ed\b/i.test(c.title || '') && c.start > d * 0.7);
     const at = credits ? credits.start : d - Math.max(20, prefs.get('countdown') + 5);
     if (t < at) return;
     this.upNextShown = true;
+    this.upNextAt = at;
     let n = prefs.get('countdown');
-    const count = h('span', null, String(n));
-    const card = h('div', { class: 'upnext', onclick: (e) => e.stopPropagation() },
+    const autoplay = prefs.get('autoplayNext');
+    // One text node: the button's flex gap would split 'Play in 9 s'.
+    const label = h('span', null, autoplay ? `Play in ${n}s` : 'Play now');
+    // Announced once, not on every tick of the countdown.
+    const live = h('span', { class: 'sr-only', 'aria-live': 'polite' });
+    const card = h('div', { class: 'upnext', role: 'region', 'aria-label': 'Up next', onclick: (e) => e.stopPropagation() },
       h('img', { src: img(next, 'thumb', 480), alt: '' }),
       h('div', { class: 'b' },
         h('div', { class: 'small muted' }, 'Up next'),
-        h('b', null, `S${next.season} · E${next.episode} — ${next.title}`),
+        h('b', null, `${fmtEpisode(next)} — ${next.title}`),
         h('div', { class: 'row' },
-          h('button', { class: 'btn primary sm', onclick: () => this.playNext() }, icons.play ? h('span', { html: icons.play, style: { width: '16px', display: 'inline-flex' } }) : null, prefs.get('autoplayNext') ? ['Play in ', count, 's'] : 'Play now'),
-          h('button', { class: 'btn sm', onclick: () => { clearInterval(this.cdTimer); card.remove(); } }, 'Hide'))));
+          h('button', { class: 'btn primary sm', onclick: () => this.playNext() }, h('span', { html: icons.play, style: { width: '16px', display: 'inline-flex' } }), label),
+          h('button', { class: 'btn sm', onclick: () => { this.cancelUpNext(true); this.playBtn.focus(); } }, 'Cancel'))),
+      live);
+    // Never cover an open menu.
+    this.closeMenu();
     this.root.appendChild(card);
     this.upNextEl = card;
-    if (prefs.get('autoplayNext')) {
+    setTimeout(() => { live.textContent = `Up next: ${fmtEpisode(next)} ${next.title}${autoplay ? `, playing in ${n} seconds` : ''}`; }, 100);
+    if (autoplay) {
       this.cdTimer = setInterval(() => {
         if (this.video.paused) return;
         n--;
-        count.textContent = String(n);
+        label.textContent = `Play in ${n}s`;
         if (n <= 0) { clearInterval(this.cdTimer); this.playNext(); }
       }, 1000);
     }
   }
 
+  // dismiss: the viewer cancelled Up next, so this episode just ends.
+  cancelUpNext(dismiss) {
+    clearInterval(this.cdTimer);
+    this.cdTimer = null;
+    this.upNextEl?.remove();
+    this.upNextEl = null;
+    if (dismiss) this.upNextDismissed = true;
+  }
+
   onEnded() {
-    if (this.detail?.next && prefs.get('autoplayNext')) this.playNext();
-    else this.showUI(true);
+    if (this.detail?.next && prefs.get('autoplayNext') && !this.upNextDismissed) this.playNext();
+    else this.onMovieEnd();
+  }
+
+  // Nothing plays next: offer the way out, or watching again. No auto-close.
+  onMovieEnd() {
+    this.cancelUpNext(false);
+    this.removeEndCard();
+    this.showUI(true);
+    if (!this.item || this.errEl) return;
+    const it = this.item;
+    const card = h('div', { class: 'upnext end-card', role: 'region', 'aria-label': 'Finished', onclick: (e) => e.stopPropagation() },
+      h('div', { class: 'b' },
+        h('div', { class: 'small muted' }, 'Finished'),
+        h('b', null, it.kind === 'episode' ? `${fmtEpisode(it)} — ${it.title}` : it.title),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn primary sm', onclick: () => this.close() }, 'Back to details'),
+          h('button', { class: 'btn sm', onclick: () => { this.removeEndCard(); this.seekTo(0); this.video.play().catch(() => {}); } }, 'Play from start'),
+          // Autoplay off or Up next cancelled: the next episode is still a click away.
+          this.detail?.next ? h('button', { class: 'btn sm', onclick: () => this.playNext() }, `Play ${fmtEpisode(this.detail.next)}`) : null)));
+    this.closeMenu(false);
+    this.root.appendChild(card);
+    this.endCard = card;
+    card.querySelector('button').focus();
+  }
+
+  removeEndCard() {
+    if (!this.endCard) return;
+    const hadFocus = this.endCard.contains(document.activeElement);
+    this.endCard.remove();
+    this.endCard = null;
+    if (hadFocus) this.root.focus();
   }
 
   async playNext() {
     const next = this.detail?.next;
-    if (!next) return;
-    clearInterval(this.cdTimer);
-    if (this.upNextEl) { this.upNextEl.remove(); this.upNextEl = null; }
+    if (!next || this.stopped) return;
+    this.closeMenu();
+    this.cancelUpNext(false);
+    this.removeEndCard();
     this.sendStop();
     this.stopSent = false;
     this.sessionId = null;
@@ -1437,7 +1855,7 @@ class Player {
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: it.kind === 'episode' ? it.title : it.title,
-        artist: it.kind === 'episode' ? `${this.detail.show?.title || ''} · S${it.season}E${it.episode}` : String(it.year || ''),
+        artist: it.kind === 'episode' ? `${this.detail.show?.title || ''} · ${fmtEpisode(it)}` : String(it.year || ''),
         artwork: [{ src: img(it, it.kind === 'episode' ? 'thumb' : 'poster', 480), sizes: '480x480', type: 'image/jpeg' }],
       });
       const ms = navigator.mediaSession;
@@ -1450,9 +1868,21 @@ class Player {
     } catch {}
   }
 
-  close() {
+  clearMediaSession() {
+    const ms = globalThis.navigator?.mediaSession;
+    if (!ms) return;
+    for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'nexttrack']) {
+      try { ms.setActionHandler(a, null); } catch {}
+    }
+  }
+
+  // fromHistory: Back already popped the player's entry. keepHistory: another
+  // player takes the entry over.
+  close({ fromHistory = false, keepHistory = false } = {}) {
     if (this.closed) return;
     this.closed = true;
+    window.removeEventListener('popstate', this.onPop);
+    if (!fromHistory && !keepHistory && history.state?.lexPlayer) history.back();
     this.sendStop();
     clearInterval(this.hbTimer);
     clearInterval(this.uiTimer);
@@ -1461,10 +1891,15 @@ class Player {
     document.removeEventListener('keydown', this.onKey);
     document.removeEventListener('fullscreenchange', this.onFs);
     window.removeEventListener('pagehide', this.onHide);
+    this.clearMediaSession();
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    if (document.pictureInPictureElement === this.video) document.exitPictureInPicture().catch(() => {});
+    // e.g. subtitle search, when Back closed the player under it.
+    for (const d of this.root.querySelectorAll('dialog[open]')) d.close();
     this.teardown();
     this.destroyASS();
     this.root.remove();
+    releaseToasts(this.root);
     if (this.background?.isConnected) this.background.inert = this.backgroundWasInert;
     if (this.restoreFocus?.isConnected) this.restoreFocus.focus();
     document.body.style.overflow = '';

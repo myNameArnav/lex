@@ -237,6 +237,13 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 		okRoots[root] = true
 	}
 	s.update(func(st *Status) { st.Found += len(entries) })
+	// A file can only be in one library: files another library (nested in
+	// this one's folders, or enclosing them) already has stay there.
+	others, err := s.st.OtherLibraryFiles(lib.ID, lib.Paths)
+	if err != nil {
+		return err
+	}
+	elsewhere := 0
 
 	// Decide per directory between folder- and file-named movies.
 	oneMovie := movieFolders(entries)
@@ -257,6 +264,10 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 		}
 	}
 	for _, e := range entries {
+		if _, ok := others[e.path]; ok && byPath[e.path] == nil {
+			elsewhere++
+			continue
+		}
 		t := classify(lib, e, oneMovie, hints)
 		itemID, err := s.ensureItem(lib, t, cache)
 		if err != nil {
@@ -292,6 +303,9 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 			continue
 		}
 		s.update(func(st *Status) { st.Added++ })
+	}
+	if elsewhere > 0 {
+		s.log.Infof("library %q: %d file(s) skipped: already in another library", lib.Name, elsewhere)
 	}
 	removed := 0
 	for p, f := range byPath {

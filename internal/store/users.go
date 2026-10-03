@@ -236,6 +236,7 @@ type TokenInfo struct {
 	LastSeen int64  `json:"lastSeen"`
 	Client   string `json:"client"`
 	IP       string `json:"ip"`
+	Current  bool   `json:"current"` // the requesting session (set by the API)
 }
 
 func (s *Store) Tokens() ([]TokenInfo, error) {

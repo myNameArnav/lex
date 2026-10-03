@@ -111,7 +111,7 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 		AuthToken: s.token(r),
 	})
 	if err != nil {
-		writeErr(w, 403, err.Error())
+		writeSessionErr(w, err)
 		return
 	}
 	s.Subs.Prefetch(f)
@@ -135,6 +135,8 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SessionID string             `json:"sessionId"`
+		FileID    int64              `json:"fileId"`
+		Method    string             `json:"method"`
 		Position  float64            `json:"position"`
 		Paused    bool               `json:"paused"`
 		Stats     stream.ClientStats `json:"stats"`
@@ -144,6 +146,24 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess, err := s.Sess.Heartbeat(req.SessionID, userOf(r).ID, req.Position, req.Paused, req.Stats)
+	// The server restarted while the player had the rest of the file
+	// buffered, so no media request re-opened the session: re-open it here,
+	// as a media request would, so progress keeps being saved.
+	if errors.Is(err, stream.ErrUnknownSession) && req.SessionID != "" && req.FileID > 0 {
+		if f, ferr := s.St.File(req.FileID); ferr == nil {
+			method := req.Method
+			if method != "remux" && method != "transcode" {
+				method = "direct"
+			}
+			if _, oerr := s.sessionFor(r, f, req.SessionID, method); oerr == nil {
+				sess, err = s.Sess.Heartbeat(req.SessionID, userOf(r).ID, req.Position, req.Paused, req.Stats)
+			}
+		}
+	}
+	if errors.Is(err, stream.ErrStopped) {
+		writeErr(w, http.StatusGone, err.Error())
+		return
+	}
 	if err != nil {
 		writeErr(w, 404, err.Error())
 		return
@@ -175,8 +195,20 @@ func (s *Server) stopPlayback(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+// writeSessionErr answers a request whose play session can't be used: 410
+// once an admin stopped it (the player shows the message and stays stopped),
+// 403 when it belongs to someone else.
+func writeSessionErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, stream.ErrStopped) {
+		writeErr(w, http.StatusGone, err.Error())
+		return
+	}
+	writeErr(w, 403, err.Error())
+}
+
 // sessionFor finds the play session for a media request, creating a minimal
-// one if the server restarted mid-playback.
+// one if the server restarted mid-playback. A session an admin stopped stays
+// stopped (stream.ErrStopped).
 func (s *Server) sessionFor(r *http.Request, f *store.File, sid, method string) (*stream.Session, error) {
 	u := userOf(r)
 	if sid == "" {
@@ -239,7 +271,7 @@ func (s *Server) direct(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, err := s.sessionFor(r, f, r.URL.Query().Get("sid"), "direct")
 	if err != nil {
-		writeErr(w, 403, err.Error())
+		writeSessionErr(w, err)
 		return
 	}
 	s.Sess.Touch(sess, 1)
@@ -249,7 +281,44 @@ func (s *Server) direct(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "private, no-transform")
 	cw := &countingWriter{ResponseWriter: w, n: func(n int) { s.Sess.AddBytes(sess, n) }}
+	// An admin Stop ends the session: cut this response off too, so the
+	// browser can't keep playing from the open connection. The deadline
+	// fails a write blocked on a full socket; endedReader stops the copy.
+	if ended := sess.Ended(); ended != nil {
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			select {
+			case <-ended:
+				// Not if the response finished meanwhile: the deadline
+				// would fail the connection's next keep-alive request.
+				select {
+				case <-done:
+				default:
+					_ = http.NewResponseController(w).SetWriteDeadline(time.Now())
+				}
+			case <-done:
+			}
+		}()
+		http.ServeContent(cw, r, "", st.ModTime(), &endedReader{ReadSeeker: fh, ended: ended})
+		return
+	}
 	http.ServeContent(cw, r, "", st.ModTime(), fh)
+}
+
+// endedReader fails reads once its session has ended.
+type endedReader struct {
+	io.ReadSeeker
+	ended <-chan struct{}
+}
+
+func (e *endedReader) Read(b []byte) (int, error) {
+	select {
+	case <-e.ended:
+		return 0, stream.ErrStopped
+	default:
+		return e.ReadSeeker.Read(b)
+	}
 }
 
 // streamFile runs ffmpeg and pipes fragmented MP4 to the client. Backpressure
@@ -299,7 +368,7 @@ func (s *Server) streamFile(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, err := s.sessionFor(r, f, p.SessionID, method)
 	if err != nil {
-		writeErr(w, 403, err.Error())
+		writeSessionErr(w, err)
 		return
 	}
 	job, err := s.Sess.AttachJob(sess, cfg.MaxTranscodes, !p.VideoCopy, func() (*stream.Job, error) {

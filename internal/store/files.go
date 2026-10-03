@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 )
 
 // Stream describes one elementary stream of a media file.
@@ -32,6 +33,7 @@ type Stream struct {
 	TextSub       bool    `json:"textSub,omitempty"`
 	External      bool    `json:"external,omitempty"`
 	Downloaded    bool    `json:"downloaded,omitempty"`
+	DownloadedBy  int64   `json:"downloadedBy,omitempty"` // user who downloaded it; they or an admin may remove it
 	ExternalPath  string  `json:"-"`
 	CodecString   string  `json:"codecString,omitempty"` // RFC 6381 codec id for MSE
 }
@@ -148,6 +150,37 @@ func (s *Store) ItemFiles(itemID int64) ([]*File, error) {
 
 func (s *Store) LibraryFiles(libID int64) ([]*File, error) {
 	return s.queryFiles(`SELECT `+fileCols+` FROM files WHERE library_id=?`, libID)
+}
+
+// OtherLibraryFiles maps the paths of files inside roots that belong to a
+// library other than libID to that library's name. A file can only be in
+// one library, so these are the files a nested (or enclosing) library
+// never gets.
+func (s *Store) OtherLibraryFiles(libID int64, roots []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, root := range roots {
+		// Paths under root sort between "root/" and "root0" ('0' follows
+		// '/'), so the files.path index finds them.
+		dir := strings.TrimSuffix(root, "/")
+		rows, err := s.db.Query(`SELECT f.path, l.name FROM files f JOIN libraries l ON l.id=f.library_id
+			WHERE f.library_id<>? AND f.path>? AND f.path<?`, libID, dir+"/", dir+"0")
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var p, name string
+			if err := rows.Scan(&p, &name); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[p] = name
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) AllFiles() ([]*File, error) {
@@ -294,6 +327,7 @@ type HistoryEntry struct {
 	UserName      string  `json:"userName"`
 	ItemID        int64   `json:"itemId"`
 	Title         string  `json:"title"`
+	Subtitle      string  `json:"subtitle,omitempty"` // "S1 E3 · Episode title" for episodes (History only)
 	FileID        int64   `json:"fileId"`
 	StartedAt     int64   `json:"startedAt"`
 	EndedAt       int64   `json:"endedAt"`
@@ -319,8 +353,12 @@ func (s *Store) AddHistory(h *HistoryEntry) error {
 }
 
 func (s *Store) History(limit, offset int) ([]HistoryEntry, error) {
-	rows, err := s.db.Query(`SELECT id,user_id,user_name,item_id,title,file_id,started_at,ended_at,watched,method,reasons,client,ip,remote,bytes,video_out,audio_out,buffer_events,buffer_seconds
-		FROM history ORDER BY started_at DESC LIMIT ? OFFSET ?`, limit, offset)
+	// history.title is the show for episodes; the episode comes from items,
+	// so older rows get it too.
+	rows, err := s.db.Query(`SELECT h.id,h.user_id,h.user_name,h.item_id,h.title,
+		CASE WHEN i.kind='episode' THEN 'S' || i.season || ' E' || i.episode || CASE WHEN i.episode_end > i.episode THEN '–' || i.episode_end ELSE '' END || ' · ' || i.title ELSE '' END,
+		h.file_id,h.started_at,h.ended_at,h.watched,h.method,h.reasons,h.client,h.ip,h.remote,h.bytes,h.video_out,h.audio_out,h.buffer_events,h.buffer_seconds
+		FROM history h LEFT JOIN items i ON i.id = h.item_id ORDER BY h.started_at DESC, h.id DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +366,7 @@ func (s *Store) History(limit, offset int) ([]HistoryEntry, error) {
 	var out []HistoryEntry
 	for rows.Next() {
 		var h HistoryEntry
-		if err := rows.Scan(&h.ID, &h.UserID, &h.UserName, &h.ItemID, &h.Title, &h.FileID, &h.StartedAt, &h.EndedAt, &h.Watched, &h.Method, &h.Reasons,
+		if err := rows.Scan(&h.ID, &h.UserID, &h.UserName, &h.ItemID, &h.Title, &h.Subtitle, &h.FileID, &h.StartedAt, &h.EndedAt, &h.Watched, &h.Method, &h.Reasons,
 			&h.Client, &h.IP, &h.Remote, &h.Bytes, &h.VideoOut, &h.AudioOut, &h.BufferEvents, &h.BufferSeconds); err != nil {
 			return nil, err
 		}

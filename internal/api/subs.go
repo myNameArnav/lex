@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -65,9 +66,18 @@ func (s *Server) downloadedStreams(fileID int64) []store.Stream {
 			title = d.Title
 		}
 		out = append(out, store.Stream{Index: store.DownloadedSubBase + int(d.ID), Type: "subtitle", Codec: "subrip", TextSub: true, External: true,
-			Language: d.Language, Title: title, Downloaded: true})
+			Language: d.Language, Title: title, Downloaded: true, DownloadedBy: d.UserID})
 	}
 	return out
+}
+
+// writeNoKey tells the client subtitle search isn't configured; the code
+// lets it word the message for admins and viewers.
+func writeNoKey(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(400)
+	json.NewEncoder(w).Encode(map[string]string{"error": subsearch.ErrNoKey.Error(), "code": "no_key"})
 }
 
 func (s *Server) subSearch(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +94,12 @@ func (s *Server) subSearch(w http.ResponseWriter, r *http.Request) {
 	it, err := s.St.Item(f.ItemID)
 	if err != nil {
 		notFoundOr500(w, err)
+		return
+	}
+	client := s.subClient()
+	// Before hashing the file: that reads it from disk.
+	if client.Key == "" {
+		writeNoKey(w)
 		return
 	}
 	lang := r.URL.Query().Get("lang")
@@ -111,13 +127,12 @@ func (s *Server) subSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	res, err := s.subClient().Search(ctx, q)
-	if err != nil {
-		code := 502
-		if err == subsearch.ErrNoKey {
-			code = 400
-		}
-		writeErr(w, code, err.Error())
+	res, err := client.Search(ctx, q)
+	if errors.Is(err, subsearch.ErrNoKey) {
+		writeNoKey(w)
+		return
+	} else if err != nil {
+		writeErr(w, 502, err.Error())
 		return
 	}
 	writeJSON(w, res)

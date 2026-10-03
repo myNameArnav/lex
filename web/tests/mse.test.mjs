@@ -383,3 +383,26 @@ test('quota recovery partway through a split read keeps every byte in order', as
   assert.deepEqual(f.errors, []);
   f.engine.destroy();
 });
+
+test('a fully streamed file stays ended so the video can fire ended', async () => {
+  const f = await fixture(hanging);
+  // Per the MSE spec, remove() on an ended MediaSource reopens it.
+  const ms = { readyState: 'ended', endOfStream() { this.readyState = 'ended'; } };
+  f.engine.ms = ms;
+  let removes = 0;
+  const realRemove = f.sb.remove;
+  f.sb.remove = (start, end) => { removes++; ms.readyState = 'open'; realRemove(start, end); };
+  f.setRanges([[1000, 1200]]);
+  f.video.currentTime = 1199;
+  f.engine.eos = true;
+  f.engine.ended = true;
+  await f.advance(20000);
+  assert.equal(removes, 0, 'eviction after end of stream reopens the source');
+  assert.equal(ms.readyState, 'ended');
+  assert.equal(f.requests.length, 0);
+  // Anything else that reopens the source is closed again on the next tick.
+  ms.readyState = 'open';
+  await f.advance(500);
+  assert.equal(ms.readyState, 'ended');
+  f.engine.destroy();
+});

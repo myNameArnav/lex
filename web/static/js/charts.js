@@ -1,11 +1,16 @@
-// Minimal canvas charts for the dashboard. Palette: validated categorical
-// dark-mode slots (blue, orange, aqua) against the panel surface.
-import { h } from './ui.js';
+// Minimal canvas charts for the dashboard. Series palette: validated
+// categorical dark-mode slots (blue, orange, aqua) against the panel surface;
+// grid, axis and surface colours come from the CSS theme.
+import { h, icons } from './ui.js';
 
 export const SERIES = ['#3987e5', '#d95926', '#199e70'];
-const GRID = '#262a33';
-const AXIS_TEXT = '#8a90a0';
-const SURFACE = '#14161b';
+const SERIES_HOVER = '#5598e7';
+
+function theme() {
+  const s = getComputedStyle(document.documentElement);
+  const v = (name) => s.getPropertyValue(name).trim();
+  return { grid: v('--bg4'), axis: v('--text3'), surface: v('--bg2'), cross: v('--line-strong') };
+}
 
 function setupCanvas(canvas, height) {
   const dpr = window.devicePixelRatio || 1;
@@ -19,139 +24,217 @@ function setupCanvas(canvas, height) {
   return { ctx, w, h: height };
 }
 
-function niceMax(v) {
-  if (v <= 0) return 1;
-  const p = Math.pow(10, Math.floor(Math.log10(v)));
-  for (const m of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (m * p >= v) return m * p;
-  return 10 * p;
+// niceStep picks a round gridline step (1, 2, 2.5 or 5 × 10^n; whole numbers
+// for counts) so that `ticks` steps reach max.
+export function niceStep(max, ticks = 3, integer = false) {
+  const raw = max / ticks;
+  if (!(raw > 0)) return 1;
+  const p = 10 ** Math.floor(Math.log10(raw));
+  const step = (integer ? [1, 2, 5, 10] : [1, 2, 2.5, 5, 10]).map((m) => m * p).find((s) => s >= raw * (1 - 1e-9));
+  return integer ? Math.max(1, Math.ceil(step)) : step;
 }
 
-function tooltipEl(box) {
-  let t = box.querySelector('.ctip');
-  if (!t) {
-    t = h('div', { class: 'ctip', style: { position: 'absolute', pointerEvents: 'none', background: 'rgba(12,13,16,.96)', border: '1px solid #2b2f39', borderRadius: '8px', padding: '6px 9px', fontSize: '12px', whiteSpace: 'nowrap', zIndex: 5, display: 'none' } });
-    box.appendChild(t);
+// Axis labels drop a trailing ".0" ("1.0 Mbps" reads as "1 Mbps"). A chart's
+// axisFmt(max) gives the formatter for its whole axis, so every tick (0
+// too) uses the unit of the top one; fmt alone formats each value on its own.
+const axisLabel = (fmt, v) => fmt(v).replace(/(\d)\.0(?!\d)/g, '$1');
+
+// Single-unit axes: minutes up to an hour, else hours; kbps below 1 Mbps.
+export const axisHours = (max) => (max < 1 ? (v) => `${Math.round(v * 60)}m` : (v) => `${+v.toFixed(2)}h`);
+export const axisBitrate = (max) => (max < 1e6 ? (v) => `${Math.round(v / 1e3)} kbps` : (v) => `${+(v / 1e6).toFixed(2)} Mbps`);
+
+function yAxis(ctx, t, fmt, max, ticks, padL, padR, w, y) {
+  ctx.font = '11px system-ui, sans-serif';
+  ctx.strokeStyle = t.grid; ctx.fillStyle = t.axis; ctx.lineWidth = 1;
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for (let i = 0; i <= ticks; i++) {
+    const v = (max * i) / ticks, yy = Math.round(y(v)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(w - padR, yy); ctx.stroke();
+    ctx.fillText(axisLabel(fmt, v), padL - 6, yy);
   }
-  return t;
+}
+
+function labelWidth(ctx, fmt, max, ticks) {
+  ctx.font = '11px system-ui, sans-serif';
+  let wMax = 0;
+  for (let i = 0; i <= ticks; i++) wMax = Math.max(wMax, ctx.measureText(axisLabel(fmt, (max * i) / ticks)).width);
+  return Math.ceil(wMax) + 12;
+}
+
+// mount gives box one canvas (role=img, named by label) with a read-out
+// tooltip for mouse hover, touch (tap, or drag sideways) and keyboard (arrow
+// keys, Home/End, Escape), and repaints it when the box changes width.
+// draw(canvas, pick) paints and returns { n, w, at(px), cx(i), tip(i) };
+// pick(geometry) gives the index to highlight (-1 for none).
+function mount(box, cls, label, draw) {
+  if (!box.isConnected) { requestAnimationFrame(() => box.isConnected && mount(box, cls, label, draw)); return; }
+  const c = box._chart ||= setup(box, cls);
+  c.draw = draw;
+  c.canvas.setAttribute('aria-label', label);
+  render(c);
+}
+
+function render(c) {
+  // A fresh data draw keeps the read-out on the same spot (pointer) or index
+  // (keyboard), so a polled chart never shows a stale tooltip.
+  c.g = c.draw(c.canvas, (g) => (c.i = c.px != null ? g.at(c.px) : Math.min(c.i, g.n - 1)));
+  const { tip, g } = c;
+  if (c.i < 0) { tip.hidden = true; return; }
+  tip.replaceChildren(...g.tip(c.i));
+  tip.hidden = false;
+  const x = g.cx(c.i), left = x + 12;
+  tip.style.left = `${left + tip.offsetWidth > g.w ? Math.max(0, x - tip.offsetWidth - 12) : left}px`;
+}
+
+function setup(box, cls) {
+  box.style.position = 'relative';
+  const canvas = h('canvas', { class: `${cls} chart`, role: 'img', tabindex: '0' });
+  const tip = h('div', { class: 'ctip', hidden: true });
+  box.prepend(canvas);
+  box.append(tip);
+  const c = { canvas, tip, i: -1, px: null };
+  const pos = (e) => e.clientX - canvas.getBoundingClientRect().left;
+  const outside = (e) => { if (!box.contains(e.target)) hide(); };
+  const hide = () => {
+    document.removeEventListener('pointerdown', outside, true);
+    if (c.i < 0 && c.px == null) return;
+    c.i = -1; c.px = null; render(c);
+  };
+  canvas.onpointerdown = (e) => {
+    c.px = pos(e); render(c);
+    // Touch has no hover: the read-out stays until a tap elsewhere.
+    if (e.pointerType !== 'mouse') document.addEventListener('pointerdown', outside, true);
+  };
+  canvas.onpointermove = (e) => { if (e.pointerType === 'mouse' || e.buttons) { c.px = pos(e); render(c); } };
+  canvas.onpointerleave = (e) => { if (e.pointerType === 'mouse') hide(); };
+  const steps = { ArrowLeft: -1, ArrowRight: 1, Home: -Infinity, End: Infinity };
+  canvas.onkeydown = (e) => {
+    const n = c.g?.n || 0;
+    if (e.key === 'Escape' && c.i >= 0) { e.stopPropagation(); hide(); return; }
+    if (!(e.key in steps) || !n) return;
+    e.preventDefault();
+    const d = steps[e.key] * (c.g.step || 1), from = c.i < 0 ? (d > 0 ? -1 : n) : c.i;
+    c.px = null;
+    c.i = Math.max(0, Math.min(n - 1, from + d));
+    render(c);
+  };
+  canvas.onblur = () => { if (c.px == null) hide(); };
+  let w = box.clientWidth;
+  new ResizeObserver(() => { if (box.clientWidth !== w) { w = box.clientWidth; render(c); } }).observe(box);
+  return c;
 }
 
 // lineChart draws one or more series over shared x values (unix seconds).
-// opts: { series: [{name, values}], times, height, fmt, max, area }
+// opts: { title, series: [{name, values, color?}], times, height, fmt,
+// max?, floor? (smallest axis top), ticks?, area?, axisFmt? }
 export function lineChart(box, opts) {
-  if (!box.isConnected) { requestAnimationFrame(() => box.isConnected && lineChart(box, opts)); return; }
-  box.style.position = 'relative';
-  let canvas = box.querySelector('canvas.lc');
-  if (!canvas) { canvas = h('canvas', { class: 'lc chart' }); box.prepend(canvas); }
-  const height = opts.height || 160;
-  const { ctx, w, h: H } = setupCanvas(canvas, height);
-  const padR = 8, padT = 8, padB = 20;
   const n = opts.times.length;
-  const all = opts.series.flatMap((s) => s.values);
-  const max = opts.max || niceMax(Math.max(0, ...all) * 1.1);
-  // Room for the widest y-axis label.
-  ctx.font = '11px system-ui, sans-serif';
-  const padL = Math.ceil(Math.max(...[0, 1, 2, 3].map((i) => ctx.measureText(opts.fmt((max * i) / 3)).width))) + 12;
-  const x = (i) => padL + (n <= 1 ? 0 : (i / (n - 1)) * (w - padL - padR));
-  const y = (v) => padT + (1 - Math.min(v, max) / max) * (H - padT - padB);
-  // Grid + y labels
-  ctx.font = '11px system-ui, sans-serif';
-  ctx.fillStyle = AXIS_TEXT;
-  ctx.strokeStyle = GRID;
-  ctx.lineWidth = 1;
-  for (let i = 0; i <= 3; i++) {
-    const v = (max * i) / 3, yy = Math.round(y(v)) + 0.5;
-    ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(w - padR, yy); ctx.stroke();
-    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    ctx.fillText(opts.fmt(v), padL - 6, yy);
-  }
-  // x labels: start / middle / end
-  if (n > 1) {
-    ctx.textBaseline = 'alphabetic';
-    const lbl = (i) => new Date(opts.times[i] * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    ctx.textAlign = 'left'; ctx.fillText(lbl(0), padL, H - 4);
-    ctx.textAlign = 'center'; ctx.fillText(lbl(Math.floor(n / 2)), x(Math.floor(n / 2)), H - 4);
-    ctx.textAlign = 'right'; ctx.fillText(lbl(n - 1), w - padR, H - 4);
-  }
-  opts.series.forEach((s, si) => {
-    const color = s.color || SERIES[si];
-    if (n < 2) return;
-    if (opts.series.length === 1 || opts.area) {
-      ctx.beginPath();
-      s.values.forEach((v, i) => (i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v))));
-      ctx.lineTo(x(n - 1), y(0)); ctx.lineTo(x(0), y(0)); ctx.closePath();
-      ctx.globalAlpha = 0.1; ctx.fillStyle = color; ctx.fill(); ctx.globalAlpha = 1;
-    }
-    ctx.beginPath();
-    s.values.forEach((v, i) => (i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v))));
-    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
-    // End marker with surface ring.
-    const lx = x(n - 1), ly = y(s.values[n - 1]);
-    ctx.beginPath(); ctx.arc(lx, ly, 6, 0, Math.PI * 2); ctx.fillStyle = SURFACE; ctx.fill();
-    ctx.beginPath(); ctx.arc(lx, ly, 4, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
-  });
+  const ticks = opts.ticks || 3;
+  const max = opts.max || ticks * niceStep(Math.max(opts.floor || 0, ...opts.series.flatMap((s) => s.values)), ticks);
+  const height = opts.height || 160;
+  const latest = (s) => opts.fmt(s.values[n - 1] || 0);
   // Legend for >= 2 series (line keys, text in text tokens).
   let legend = box.querySelector('.legend');
   if (opts.series.length > 1) {
-    if (!legend) { legend = h('div', { class: 'legend' }); box.appendChild(legend); }
+    if (!legend) { legend = h('div', { class: 'legend', 'aria-hidden': 'true' }); box.appendChild(legend); }
     legend.replaceChildren(...opts.series.map((s, si) => h('span', null,
       h('i', { style: { background: s.color || SERIES[si], height: '2px', width: '14px', borderRadius: '2px', verticalAlign: '3px' } }),
-      `${s.name} · ${opts.fmt(s.values[n - 1] || 0)}`)));
+      `${s.name} · ${latest(s)}`)));
   }
-  // Crosshair tooltip
-  const tip = tooltipEl(box);
-  canvas.onpointermove = (e) => {
-    if (n < 2) return;
-    const r = canvas.getBoundingClientRect();
-    const px = e.clientX - r.left;
-    const i = Math.max(0, Math.min(n - 1, Math.round(((px - padL) / (w - padL - padR)) * (n - 1))));
-    lineChart(box, opts); // redraw clean
-    const c = canvas.getContext('2d');
-    c.strokeStyle = '#6f7686'; c.lineWidth = 1;
-    c.beginPath(); c.moveTo(Math.round(x(i)) + 0.5, padT); c.lineTo(Math.round(x(i)) + 0.5, H - padB); c.stroke();
-    tip.replaceChildren(
-      h('div', { class: 'dim' }, new Date(opts.times[i] * 1000).toLocaleTimeString()),
-      ...opts.series.map((s, si) => h('div', { class: 'row', style: { gap: '6px' } },
-        h('i', { style: { display: 'inline-block', width: '10px', height: '2px', background: s.color || SERIES[si] } }),
-        h('b', null, opts.fmt(s.values[i] || 0)), h('span', { class: 'muted' }, s.name))));
-    tip.style.display = 'block';
-    const left = x(i) + 12;
-    tip.style.left = `${left + tip.offsetWidth > w ? x(i) - tip.offsetWidth - 12 : left}px`;
-    tip.style.top = '8px';
-    canvas.onpointerleave = () => { tip.style.display = 'none'; lineChart(box, opts); };
-  };
+  const span = n > 1 ? opts.times[n - 1] - opts.times[0] : 0;
+  const time = (i, secs) => new Date(opts.times[i] * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: secs ? '2-digit' : undefined });
+  const label = `${opts.title}: ${opts.series.map((s) => `${s.name} ${latest(s)}`).join(', ')}`;
+  mount(box, 'lc', label, (canvas, pick) => {
+    const t = theme();
+    const { ctx, w, h: H } = setupCanvas(canvas, height);
+    const padR = 8, padT = 8, padB = 20;
+    const yFmt = opts.axisFmt ? opts.axisFmt(max) : opts.fmt;
+    const padL = labelWidth(ctx, yFmt, max, ticks);
+    const x = (i) => padL + (n <= 1 ? 0 : (i / (n - 1)) * (w - padL - padR));
+    const y = (v) => padT + (1 - Math.min(v, max) / max) * (H - padT - padB);
+    const g = {
+      n: n > 1 ? n : 0, w, cx: x, step: Math.ceil(n / 40),
+      at: (px) => (n < 2 ? -1 : Math.max(0, Math.min(n - 1, Math.round(((px - padL) / (w - padL - padR)) * (n - 1))))),
+      tip: (i) => [h('div', { class: 'dim' }, time(i, true)),
+        ...opts.series.map((s, si) => h('div', { class: 'row', style: { gap: '6px' } },
+          h('i', { style: { display: 'inline-block', width: '10px', height: '2px', background: s.color || SERIES[si] } }),
+          h('b', null, opts.fmt(s.values[i] || 0)), h('span', { class: 'muted' }, s.name)))],
+    };
+    const hover = pick(g);
+    yAxis(ctx, t, yFmt, max, ticks, padL, padR, w, y);
+    // x labels: start / middle / end, with seconds while the history is short.
+    if (n > 1) {
+      const secs = span < 180;
+      ctx.textBaseline = 'alphabetic';
+      const ends = [time(0, secs), time(n - 1, secs)], mid = time(Math.floor(n / 2), secs);
+      ctx.textAlign = 'left'; ctx.fillText(ends[0], padL, H - 4);
+      ctx.textAlign = 'right'; ctx.fillText(ends[1], w - padR, H - 4);
+      // The middle label only where it can't run into the ends.
+      const need = Math.max(...ends.map((l) => ctx.measureText(l).width)) * 2 + ctx.measureText(mid).width + 24;
+      if (need <= w - padL - padR) { ctx.textAlign = 'center'; ctx.fillText(mid, x(Math.floor(n / 2)), H - 4); }
+    }
+    if (n < 2) return g;
+    opts.series.forEach((s, si) => {
+      const color = s.color || SERIES[si];
+      if (opts.series.length === 1 || opts.area) {
+        ctx.beginPath();
+        s.values.forEach((v, i) => (i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v))));
+        ctx.lineTo(x(n - 1), y(0)); ctx.lineTo(x(0), y(0)); ctx.closePath();
+        ctx.globalAlpha = 0.1; ctx.fillStyle = color; ctx.fill(); ctx.globalAlpha = 1;
+      }
+      ctx.beginPath();
+      s.values.forEach((v, i) => (i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v))));
+      ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
+      // End marker with surface ring.
+      const lx = x(n - 1), ly = y(s.values[n - 1]);
+      ctx.beginPath(); ctx.arc(lx, ly, 6, 0, Math.PI * 2); ctx.fillStyle = t.surface; ctx.fill();
+      ctx.beginPath(); ctx.arc(lx, ly, 4, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+    });
+    if (hover >= 0) {
+      const xx = Math.round(x(hover)) + 0.5;
+      ctx.strokeStyle = t.cross; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(xx, padT); ctx.lineTo(xx, H - padB); ctx.stroke();
+    }
+    return g;
+  });
 }
 
-// columnChart: labels + values, one series. opts: { labels, values, fmt, height, tipLabel }
+// columnChart: labels + values, one series. opts: { title, labels, values,
+// fmt, height, tipLabel, fullLabels?, floor? (smallest axis top), axisFmt? }.
+// Its accessible name sums it up.
 export function columnChart(box, opts) {
-  if (!box.isConnected) { requestAnimationFrame(() => box.isConnected && columnChart(box, opts)); return; }
-  box.style.position = 'relative';
-  let canvas = box.querySelector('canvas.cc');
-  if (!canvas) { canvas = h('canvas', { class: 'cc chart' }); box.prepend(canvas); }
+  const n = opts.values.length;
+  const full = opts.fullLabels || opts.labels;
+  const ticks = 3;
+  const counts = opts.values.every(Number.isInteger);
+  const top = Math.max(0, ...opts.values);
+  const max = ticks * niceStep(Math.max(top, opts.floor || 0), ticks, counts);
+  const sum = opts.values.reduce((a, b) => a + b, 0);
+  const peak = opts.values.indexOf(top);
+  const label = sum ? `${opts.title}. Total ${opts.fmt(sum)}; highest ${opts.fmt(top)} (${full[peak]}).` : `${opts.title}. No data.`;
   const height = opts.height || 180;
-  const draw = (hover = -1) => {
+  mount(box, 'cc', label, (canvas, pick) => {
+    const t = theme();
     const { ctx, w, h: H } = setupCanvas(canvas, height);
     const padR = 6, padT = 10, padB = 22;
-    const n = opts.values.length;
-    let max = niceMax(Math.max(0, ...opts.values));
-    // Counts: keep the three gridlines on whole numbers.
-    if (opts.values.every(Number.isInteger)) max = Math.max(3, Math.ceil(max / 3) * 3);
-    ctx.font = '11px system-ui, sans-serif';
-    const padL = Math.ceil(Math.max(...[0, 1, 2, 3].map((i) => ctx.measureText(opts.fmt((max * i) / 3)).width))) + 12;
+    const yFmt = opts.axisFmt ? opts.axisFmt(max) : opts.fmt;
+    const padL = labelWidth(ctx, yFmt, max, ticks);
     const band = (w - padL - padR) / Math.max(1, n);
     const bw = Math.max(2, Math.min(24, band - 2));
     const y = (v) => padT + (1 - v / max) * (H - padT - padB);
-    ctx.font = '11px system-ui, sans-serif';
-    ctx.strokeStyle = GRID; ctx.fillStyle = AXIS_TEXT; ctx.lineWidth = 1;
-    for (let i = 0; i <= 3; i++) {
-      const v = (max * i) / 3, yy = Math.round(y(v)) + 0.5;
-      ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(w - padR, yy); ctx.stroke();
-      ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.fillText(opts.fmt(v), padL - 6, yy);
-    }
+    const g = {
+      n, w,
+      at: (px) => { const i = Math.floor((px - padL) / band); return i >= 0 && i < n ? i : -1; },
+      cx: (i) => padL + band * i + band / 2,
+      tip: (i) => [h('b', null, opts.fmt(opts.values[i])), h('span', { class: 'muted' }, ` ${opts.tipLabel || ''} · ${full[i]}`)],
+    };
+    const hover = pick(g);
+    yAxis(ctx, t, yFmt, max, ticks, padL, padR, w, y);
     opts.values.forEach((v, i) => {
-      const cx = padL + band * i + band / 2, top = y(v), base = y(0);
+      const cx = g.cx(i), top = y(v), base = y(0);
       const hgt = base - top;
       if (hgt <= 0) return;
-      ctx.fillStyle = i === hover ? '#5598e7' : SERIES[0];
+      ctx.fillStyle = i === hover ? SERIES_HOVER : SERIES[0];
       const r = Math.min(4, bw / 2, hgt);
       ctx.beginPath();
       ctx.moveTo(cx - bw / 2, base);
@@ -162,55 +245,30 @@ export function columnChart(box, opts) {
       ctx.lineTo(cx + bw / 2, base);
       ctx.closePath(); ctx.fill();
     });
+    if (hover >= 0 && !(opts.values[hover] > 0)) {
+      // An empty column still shows where the read-out points.
+      ctx.fillStyle = t.cross; ctx.fillRect(g.cx(hover) - bw / 2, y(0) - 2, bw, 2);
+    }
     // Sparse x labels
-    ctx.fillStyle = AXIS_TEXT; ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'center';
+    ctx.fillStyle = t.axis; ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'center';
     const step = Math.ceil(n / Math.max(1, Math.floor((w - padL) / 56)));
-    opts.labels.forEach((l, i) => { if (i % step === 0) ctx.fillText(l, padL + band * i + band / 2, H - 5); });
-    return { padL, band, w };
-  };
-  const g = draw();
-  const tip = tooltipEl(box);
-  canvas.onpointermove = (e) => {
-    const r = canvas.getBoundingClientRect();
-    const i = Math.floor((e.clientX - r.left - g.padL) / g.band);
-    if (i < 0 || i >= opts.values.length) { tip.style.display = 'none'; draw(); return; }
-    draw(i);
-    tip.replaceChildren(h('b', null, opts.fmt(opts.values[i])), h('span', { class: 'muted' }, ` ${opts.tipLabel || ''} · ${opts.fullLabels ? opts.fullLabels[i] : opts.labels[i]}`));
-    tip.style.display = 'block';
-    const left = g.padL + g.band * i + g.band / 2 + 10;
-    tip.style.left = `${left + tip.offsetWidth > g.w ? left - tip.offsetWidth - 20 : left}px`;
-    tip.style.top = '4px';
-  };
-  canvas.onpointerleave = () => { tip.style.display = 'none'; draw(); };
+    opts.labels.forEach((l, i) => { if (i % step === 0) ctx.fillText(l, g.cx(i), H - 5); });
+    return g;
+  });
 }
 
-// sparkline for stat tiles: de-emphasis stroke with the latest point accented.
-export function sparkline(canvas, values, max) {
-  if (!canvas.isConnected) { requestAnimationFrame(() => canvas.isConnected && sparkline(canvas, values, max)); return; }
-  const { ctx, w, h: H } = setupCanvas(canvas, 44);
-  if (values.length < 2) return;
-  const m = max || niceMax(Math.max(...values, 0.0001) * 1.1);
-  const x = (i) => (i / (values.length - 1)) * (w - 6) + 1;
-  const y = (v) => 3 + (1 - Math.min(v, m) / m) * (H - 6);
-  ctx.beginPath();
-  values.forEach((v, i) => (i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v))));
-  ctx.lineTo(x(values.length - 1), H); ctx.lineTo(x(0), H); ctx.closePath();
-  ctx.globalAlpha = 0.1; ctx.fillStyle = SERIES[0]; ctx.fill(); ctx.globalAlpha = 1;
-  ctx.beginPath();
-  values.forEach((v, i) => (i ? ctx.lineTo(x(i), y(v)) : ctx.moveTo(x(i), y(v))));
-  ctx.strokeStyle = '#4b5263'; ctx.lineWidth = 1.5; ctx.stroke();
-  const lx = x(values.length - 1), ly = y(values[values.length - 1]);
-  ctx.beginPath(); ctx.arc(lx, ly, 5, 0, Math.PI * 2); ctx.fillStyle = SURFACE; ctx.fill();
-  ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI * 2); ctx.fillStyle = SERIES[0]; ctx.fill();
-}
-
-// barList renders horizontal bars as HTML (label · bar · value).
-// barList: labelled horizontal bars. Items with onClick become buttons.
-export function barList(items, fmt, colorFor) {
-  const max = Math.max(1, ...items.map((i) => i.value));
+// barList: labelled horizontal bars (label · bar · value). Items with onClick
+// become buttons with a chevron; wrap lets long labels wrap instead of
+// truncating.
+export function barList(items, fmt, colorFor, { wrap = false } = {}) {
   if (!items.length) return h('div', { class: 'dim small' }, 'No data yet');
-  return h('div', { class: 'bar-list' }, items.map((it, idx) => h(it.onClick ? 'button' : 'div', { class: `bar-item${it.onClick ? ' link' : ''}`, title: `${it.label}: ${fmt(it.value)}`, onclick: it.onClick || null },
-    h('span', { class: 'ellipsis' }, it.label),
-    h('span', { class: 'track' }, h('i', { style: { width: `${Math.max(1, (it.value / max) * 100)}%`, background: colorFor ? colorFor(it, idx) : SERIES[0] } })),
-    h('span', { class: 'muted nowrap' }, fmt(it.value)))));
+  const max = Math.max(1, ...items.map((i) => i.value));
+  return h('div', { class: 'bar-list' }, items.map((it, idx) => h(it.onClick ? 'button' : 'div', {
+    class: `bar-item${it.onClick ? ' link' : ''}${wrap ? ' wrap' : ''}`, type: it.onClick ? 'button' : null,
+    title: `${it.label}: ${fmt(it.value)}`, onclick: it.onClick || null,
+  },
+  h('span', { class: 'ellipsis' }, it.label),
+  h('span', { class: 'track' }, h('i', { style: { width: `${Math.max(1, (it.value / max) * 100)}%`, background: colorFor ? colorFor(it, idx) : SERIES[0] } })),
+  h('span', { class: 'muted nowrap' }, fmt(it.value)),
+  it.onClick ? h('span', { class: 'chev', 'aria-hidden': 'true', html: icons.chevR }) : null)));
 }

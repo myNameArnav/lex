@@ -1,8 +1,11 @@
 // App-wide keyboard shortcuts and the "?" help sheet. The player handles its
 // own keys while it's open; this module only adds the help sheet there.
+// Single-key shortcuts can be turned off (Settings > Playback) for speech
+// input and accidental presses; Ctrl/⌘ shortcuts and the player keys stay.
 
 import { h, modal } from './ui.js';
-import { isPlayerOpen } from './player.js';
+import { isPlayerOpen, pauseForOverlay } from './player.js';
+import { prefs } from './prefs.js';
 
 export const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
 
@@ -26,10 +29,10 @@ const SECTIONS = [
     [['Space'], 'Play / pause'], [['k'], 'Play / pause'],
     [['←', '→'], 'Skip back / forward'], [['j', 'l'], 'Skip back / forward'],
     [['↑', '↓'], 'Volume'], [['m'], 'Mute'],
-    [['0 – 9'], 'Jump to 0% – 90%'], [['Home', 'End'], 'Start / end'],
+    [['0 – 9'], 'Jump to 0% – 90%'], [['Home', 'End'], 'Start / near the end'],
     [['f'], 'Fullscreen'], [['c'], 'Subtitles & audio'],
     [['g', 'h'], 'Subtitles earlier / later (0.1 s)'],
-    [['n'], 'Next episode'], [['i'], 'Stats for nerds'],
+    [['n'], 'Next episode'], [['s'], 'Skip intro'], [['i'], 'Stats for nerds'],
     [['Esc'], 'Close the menu, then the player'],
   ]],
 ];
@@ -39,14 +42,20 @@ let open = null;
 export function showShortcuts() {
   if (open) { open.close(); return; }
   const inPlayer = isPlayerOpen();
-  // In the player, list its keys first: that's what you're using.
-  const sections = inPlayer ? [SECTIONS[3], ...SECTIONS.slice(0, 3)] : SECTIONS;
+  const single = prefs.get('shortcuts');
+  const help = single ? [['?'], 'Show keyboard shortcuts'] : [[MOD, '/'], 'Show keyboard shortcuts', '+'];
+  // The app's own keys don't work over the player, so it lists only its keys.
+  const sections = inPlayer ? [SECTIONS[3], ['General', [help]]] : SECTIONS;
   // join: '+' held together, 'then' pressed in turn, '/' alternatives.
   const keys = (ks, join = '/') => h('span', { class: 'keys' }, ks.map((k, i) => [i ? h('span', { class: 'join' }, join) : null, h('kbd', null, k)]));
-  const body = h('div', { class: 'shortcuts' }, sections.map(([title, rows]) => h('section', null,
-    h('h3', null, title),
-    h('dl', null, rows.map(([ks, what, join]) => [h('dt', null, keys(ks, join)), h('dd', null, what)])))));
-  const m = modal({ title: 'Keyboard shortcuts', body, wide: true, parent: document.querySelector('.player') || document.body, onClose: () => { open = null; } });
+  const body = [
+    !single && !inPlayer ? h('p', { class: 'help', style: { margin: 0 } }, 'Single-key shortcuts are off (Settings › Playback), so only Ctrl/⌘ shortcuts work outside the player.') : null,
+    h('div', { class: 'shortcuts' }, sections.map(([title, rows]) => h('section', null,
+      h('h3', null, title),
+      h('dl', null, rows.map(([ks, what, join]) => [h('dt', null, keys(ks, join)), h('dd', null, what)]))))),
+  ];
+  const resume = pauseForOverlay();
+  const m = modal({ title: 'Keyboard shortcuts', body, wide: true, parent: document.querySelector('.player') || document.body, onClose: () => { open = null; resume(); } });
   open = m;
 }
 
@@ -57,11 +66,12 @@ export function installShortcuts(nav) {
   let gAt = 0;
   document.addEventListener('keydown', (e) => {
     const mod = e.metaKey || e.ctrlKey;
+    const single = prefs.get('shortcuts');
     // Help: "?" (Shift + /) or Ctrl/⌘ + /
-    if ((e.key === '?' && !typing(e.target)) || (mod && e.key === '/')) { e.preventDefault(); showShortcuts(); return; }
+    if ((e.key === '?' && single && !typing(e.target)) || (mod && e.key === '/')) { e.preventDefault(); showShortcuts(); return; }
     if (isPlayerOpen()) return; // the player owns every other key
     if (mod && !e.altKey && e.key.toLowerCase() === 'k') { e.preventDefault(); nav.focusSearch(); return; }
-    if (typing(e.target) || mod || e.altKey || document.querySelector('.modal-bg')) return;
+    if (!single || typing(e.target) || mod || e.altKey || document.querySelector('.modal-bg')) return;
     const k = e.key;
     if (k === '/') { e.preventDefault(); nav.focusSearch(); return; }
     if (Date.now() - gAt < 1200) {
@@ -74,7 +84,8 @@ export function installShortcuts(nav) {
     }
     if (k === 'g') { gAt = Date.now(); return; }
     if (k === 'p' && location.hash.startsWith('#/item/')) {
-      const btn = [...document.querySelectorAll('main button')].find((b) => /^\s*(Play|Resume)\b/.test(b.textContent));
+      // The hero's main button, whatever it says ("Resume S1 E3", "Watch again…").
+      const btn = document.querySelector('main button[data-focus-key^="play-"], main button[data-focus-key^="show-play-"]');
       if (btn) { e.preventDefault(); btn.click(); }
     }
   });
