@@ -111,7 +111,7 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 		AuthToken: s.token(r),
 	})
 	if err != nil {
-		writeErr(w, 403, err.Error())
+		writeSessionErr(w, err)
 		return
 	}
 	s.Subs.Prefetch(f)
@@ -144,6 +144,10 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess, err := s.Sess.Heartbeat(req.SessionID, userOf(r).ID, req.Position, req.Paused, req.Stats)
+	if errors.Is(err, stream.ErrStopped) {
+		writeErr(w, http.StatusGone, err.Error())
+		return
+	}
 	if err != nil {
 		writeErr(w, 404, err.Error())
 		return
@@ -175,8 +179,20 @@ func (s *Server) stopPlayback(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+// writeSessionErr answers a request whose play session can't be used: 410
+// once an admin stopped it (the player shows the message and stays stopped),
+// 403 when it belongs to someone else.
+func writeSessionErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, stream.ErrStopped) {
+		writeErr(w, http.StatusGone, err.Error())
+		return
+	}
+	writeErr(w, 403, err.Error())
+}
+
 // sessionFor finds the play session for a media request, creating a minimal
-// one if the server restarted mid-playback.
+// one if the server restarted mid-playback. A session an admin stopped stays
+// stopped (stream.ErrStopped).
 func (s *Server) sessionFor(r *http.Request, f *store.File, sid, method string) (*stream.Session, error) {
 	u := userOf(r)
 	if sid == "" {
@@ -239,7 +255,7 @@ func (s *Server) direct(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, err := s.sessionFor(r, f, r.URL.Query().Get("sid"), "direct")
 	if err != nil {
-		writeErr(w, 403, err.Error())
+		writeSessionErr(w, err)
 		return
 	}
 	s.Sess.Touch(sess, 1)
@@ -299,7 +315,7 @@ func (s *Server) streamFile(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, err := s.sessionFor(r, f, p.SessionID, method)
 	if err != nil {
-		writeErr(w, 403, err.Error())
+		writeSessionErr(w, err)
 		return
 	}
 	job, err := s.Sess.AttachJob(sess, cfg.MaxTranscodes, !p.VideoCopy, func() (*stream.Job, error) {
