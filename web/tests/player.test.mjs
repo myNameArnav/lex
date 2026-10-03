@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 // Run the actual Player methods with a native video whose play() stays
 // pending and never emits an error, as in the Firefox MKV startup hang.
-async function fixture({ method = 'direct', hls = false, blocked = false, rejectRemux = false, apiGate = null, openGate = null, apiFailures = [] } = {}) {
+async function fixture({ method = 'direct', hls = false, blocked = false, rejectRemux = false, apiGate = null, openGate = null, apiFailures = [], progressError = null, prefValues = {} } = {}) {
   let now = 0;
   let timerID = 0;
   const timers = new Map();
@@ -39,8 +39,9 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
     querySelectorAll() { return []; }
   }
   const video = new Video();
+  const history = { state: null, backs: 0, back() { this.backs++; } };
   const context = vm.createContext({
-    performance: { now: () => now },
+    performance: { now: () => now }, history,
     document: new EventTarget(), window: new EventTarget(),
     setInterval: () => 1, clearInterval() {},
     setTimeout: (fn, ms) => { const id = ++timerID; timers.set(id, { fn, at: now + ms }); return id; },
@@ -50,6 +51,10 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
     './ui.js': Object.fromEntries(['h', 'resLabel', 'fmtTime', 'fmtBitrate', 'fmtBytes', 'streamLabel', 'clear', 'langName', 'channelName', 'modal', 'containTab'].map(k => [k, () => {}])),
     './api.js': {
       api: async (path, { body }) => {
+        if (path === '/api/playback/progress') {
+          if (progressError) throw Object.assign(new Error(progressError.message), { status: progressError.status });
+          return {};
+        }
         assert.equal(path, '/api/playback/plan');
         requests.push(body);
         if (apiGate) await apiGate;
@@ -61,7 +66,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
       }, img() {},
     },
     './caps.js': { detectCaps: () => ({ mse: true }) },
-    './prefs.js': { prefs: { get: k => k === 'heartbeat' ? 10 : 0, set() {} }, QUALITIES: [] },
+    './prefs.js': { prefs: { get: k => k in prefValues ? prefValues[k] : k === 'heartbeat' ? 10 : 0, set() {} }, QUALITIES: [] },
     './mse.js': { MseEngine: class {
       async open() {
         if (openGate) await (typeof openGate === 'function' ? openGate() : openGate);
@@ -99,7 +104,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
     closed: false, started: false, fallbacks: 0, bufHist: [], stalls: { count: 0, secs: 0, since: 0 },
     root: Object.assign(new EventTarget(), { remove() {} }), seek: new EventTarget(),
     playBtn: { setAttribute() {} }, methodEl: {}, fsBtn: { setAttribute() {} },
-    poke() {}, beat() {}, setSubtitleTrack: value => subtitleCalls.push(value), hideError() {}, showUI() {},
+    poke() {}, beat() {}, setStatus() {}, setSubtitleTrack: value => subtitleCalls.push(value), hideError() {}, showUI() {},
     clientStats: () => ({ bufferAhead: 0 }), checkUpNext() {}, renderEnds() {},
     showSpinner: value => spinners.push(value), showError: msg => errors.push(msg),
     sendStop() {}, destroyASS() {},
@@ -115,7 +120,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
       player.tickUI(); await flush();
     } while (now < until);
   };
-  return { player, video, requests, errors, spinners, subtitleCalls, advance, flush };
+  return { player, video, requests, errors, spinners, subtitleCalls, advance, flush, history };
 }
 
 function gate() {
@@ -333,4 +338,73 @@ test('planning retries are bounded and permission errors are not retried', async
     assert.equal(f.requests.length, status === 503 ? 7 : 1);
     assert.deepEqual(f.errors, [`HTTP ${status}`]);
   }
+});
+
+test('a network error mid-file reconnects with the same method instead of a codec fallback', async () => {
+  const f = await fixture({ apiFailures: [0, 502] });
+  f.video.playable = true;
+  await f.player.attach(0);
+  f.video.currentTime = 120;
+  f.video.pause(); // media errors pause the element
+  f.video.error = { code: 2, message: 'Network error' };
+  f.video.dispatchEvent(new Event('error'));
+  await f.advance(10000);
+  assert.equal(f.requests.length, 3);
+  assert.ok(f.requests.every(r => r.mode === 'direct' && r.start === 120));
+  assert.equal(f.player.mode, 'auto', 'the preferred mode must not change');
+  assert.equal(f.player.failedPlan, undefined);
+  assert.equal(f.video.paused, false, 'playback resumes on its own');
+  assert.deepEqual(f.errors, []);
+});
+
+test('an admin stop ends playback for good: no replans, retries or fallbacks', async () => {
+  const message = 'Playback was stopped by the server admin';
+  const f = await fixture({ progressError: { status: 410, message } });
+  f.video.playable = true;
+  await f.player.attach(0);
+  delete f.player.beat; // use the real heartbeat
+  await f.player.beat();
+  assert.equal(f.player.stopped, true);
+  assert.deepEqual(f.errors, [message]);
+  assert.equal(f.video.paused, true);
+  // The stream's own failures afterwards change nothing.
+  f.video.error = { code: 2, message: 'Network error' };
+  f.video.dispatchEvent(new Event('error'));
+  await f.player.onStreamError('gone', 410);
+  await f.player.fallback('decode');
+  await f.advance(30000);
+  assert.equal(f.requests.length, 0);
+  assert.equal(f.errors.length, 1);
+});
+
+test('a 410 from the media stream stops playback with the server message', async () => {
+  const f = await fixture({ method: 'remux' });
+  void f.player.attach(0);
+  await f.flush();
+  await f.player.onStreamError('Playback was stopped by the server admin', 410);
+  await f.advance(30000);
+  assert.equal(f.player.stopped, true);
+  assert.equal(f.requests.length, 0);
+  assert.deepEqual(f.errors, ['Playback was stopped by the server admin']);
+});
+
+test('closing pops the player history entry unless Back already did', async () => {
+  for (const [opts, backs] of [[undefined, 1], [{ fromHistory: true }, 0], [{ keepHistory: true }, 0]]) {
+    const f = await fixture();
+    f.history.state = { lexPlayer: true };
+    f.player.close(opts);
+    assert.equal(f.history.backs, backs);
+  }
+});
+
+test('cancelling Up next lets the episode end without playing the next one', async () => {
+  const f = await fixture({ prefValues: { autoplayNext: true } });
+  let nexts = 0, ends = 0;
+  Object.assign(f.player, { detail: { next: { id: 9 } }, playNext() { nexts++; }, onMovieEnd() { ends++; } });
+  f.player.onEnded();
+  assert.equal(nexts, 1);
+  f.player.cancelUpNext(true);
+  f.player.onEnded();
+  assert.equal(nexts, 1);
+  assert.equal(ends, 1);
 });

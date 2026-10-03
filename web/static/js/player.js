@@ -10,8 +10,11 @@ import { MseEngine } from './mse.js';
 let current = null;
 
 export function openPlayer(opts) {
-  if (current) current.close();
-  current = new Player(opts);
+  // Replacing an open player keeps its history entry, so a pending back()
+  // can't pop the new one.
+  const reuseHistory = !!current;
+  if (current) current.close({ keepHistory: true });
+  current = new Player({ ...opts, reuseHistory });
   return current;
 }
 
@@ -121,9 +124,25 @@ async function fetchSub(url) {
   return { text: await res.text(), partial: res.headers.get('X-Lex-Partial') === '1' };
 }
 
+// A server restart briefly makes the proxy unavailable: retry with backoff.
+// Permission and media errors stay terminal; cancelled() stops the retries.
+async function retryApi(path, opts, { cancelled = () => false, retries = 6, onRetry } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await api(path, opts);
+    } catch (e) {
+      if (cancelled() || ![0, 502, 503, 504].includes(e.status) || attempt >= retries) throw e;
+      onRetry?.(attempt + 1);
+      await new Promise((resolve) => setTimeout(resolve, Math.min(8000, 1000 * (attempt + 1))));
+      if (cancelled()) throw e;
+    }
+  }
+}
+
 class Player {
-  constructor({ itemId, start = null, onClose }) {
+  constructor({ itemId, start = null, onClose, reuseHistory = false }) {
     this.itemId = itemId;
+    this.requestedStart = start;
     this.onClose = onClose;
     this.sessionId = null;
     this.engine = null;
@@ -140,6 +159,9 @@ class Player {
     this.upNextShown = false;
     this.subOffset = 0;
     this.build();
+    // Back (browser, Android gesture) closes the player instead of
+    // navigating the page behind it. Same URL, so no hashchange or route.
+    if (!reuseHistory) history.pushState({ ...history.state, lexPlayer: true }, '');
     this.bind();
     this.start(itemId, start);
   }
@@ -148,8 +170,13 @@ class Player {
   build() {
     const b = (name, title, on, cls = '') => h('button', { class: `pbtn ${cls}`, title, 'aria-label': title, html: icons[name], onclick: (e) => { e.stopPropagation(); on(e); } });
     this.video = h('video', { playsinline: true, preload: 'auto' });
+    // Firefox (no PiP API, so no Lex PiP button) draws its own hover PiP toggle
+    // on the right edge, under the right-anchored menus, and it swallows their
+    // clicks. It only takes effect if set before the first hover.
+    if (!('pictureInPictureEnabled' in document)) this.video.disablePictureInPicture = true;
     this.titleEl = h('div', { class: 'p-title' });
     this.center = h('div', { class: 'p-center' });
+    this.statusEl = h('div', { class: 'p-status', role: 'status' });
     // Subtitles are drawn by us (not ::cue) so we control position and size.
     this.subsEl = h('div', { class: 'p-subs', 'aria-live': 'polite' });
     this.seek = h('div', { class: 'seek', role: 'slider', tabindex: '0', 'aria-label': 'Playback position', 'aria-valuemin': '0', 'aria-valuemax': '0', 'aria-valuenow': '0', 'aria-valuetext': '0:00 of 0:00', 'aria-disabled': 'true' }, h('div', { class: 'rail' }), h('div', { class: 'knob' }));
@@ -169,6 +196,7 @@ class Player {
     this.gearBtn = b('gear', 'Settings', () => this.toggleMenu('settings'));
     this.pipBtn = document.pictureInPictureEnabled ? b('pip', 'Picture in picture', () => this.togglePip(), 'hide-mobile') : null;
 
+    this.center.appendChild(this.statusEl);
     this.titleEl.id = 'player-title';
     this.restoreFocus = document.activeElement;
     this.root = h('div', { class: 'player', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'player-title', tabindex: '-1' },
@@ -211,21 +239,30 @@ class Player {
     document.addEventListener('fullscreenchange', this.onFs);
     this.onHide = () => this.sendStop(true);
     window.addEventListener('pagehide', this.onHide);
+    this.onPop = () => this.close({ fromHistory: true });
+    window.addEventListener('popstate', this.onPop);
 
     v.addEventListener('play', () => { this.watchDirectStartup(); this.playBtn.innerHTML = icons.pause; this.labelButton(this.playBtn, 'Pause (k)'); this.poke(); this.beat(); });
     v.addEventListener('pause', () => { if (v.paused) this.startupWatch = null; this.playBtn.innerHTML = icons.play; this.labelButton(this.playBtn, 'Play (k)'); this.showUI(true); this.beat(); });
     v.addEventListener('waiting', () => {
       this.showSpinner(true);
+      if (!this.waitingSince) this.waitingSince = performance.now();
       if (this.started && !v.seeking) { this.stalls.count++; this.stalls.since = performance.now(); }
     });
     const ready = () => {
       this.showSpinner(false);
+      this.waitingSince = 0;
+      this.setStatus('');
       if (this.stalls.since) { this.stalls.secs += (performance.now() - this.stalls.since) / 1000; this.stalls.since = 0; }
     };
     v.addEventListener('playing', () => { ready(); this.started = true; this.startupWatch = null; });
     v.addEventListener('canplay', ready);
-    v.addEventListener('seeked', () => { ready(); this.beat(); });
-    v.addEventListener('seeking', () => this.showSpinner(true));
+    v.addEventListener('seeked', () => {
+      ready(); this.beat();
+      // Seeking back before the Up next point: the card can come back later.
+      if (this.upNextShown && v.currentTime < this.upNextAt) { this.cancelUpNext(false); this.upNextShown = false; }
+    });
+    v.addEventListener('seeking', () => { this.showSpinner(true); if (!this.waitingSince) this.waitingSince = performance.now(); });
     v.addEventListener('timeupdate', () => { this.renderTime(); this.checkIntro(); if (this.subTrack) this.renderCues(this.subTrack); });
     v.addEventListener('progress', () => this.renderTime());
     v.addEventListener('volumechange', () => {
@@ -234,16 +271,24 @@ class Player {
       this.volRange.value = v.muted ? 0 : v.volume;
       prefs.set('volume', v.volume); prefs.set('muted', v.muted);
     });
-    v.addEventListener('ended', () => this.onEnded());
+    // Firefox fires 'waiting' at the very end too.
+    v.addEventListener('ended', () => { ready(); this.onEnded(); });
     v.addEventListener('error', () => this.onVideoError());
 
-    // Controls visibility.
-    this.root.addEventListener('mousemove', () => this.poke());
+    // Controls visibility. Only a real mouse move shows them: Android sends
+    // a compatibility mousemove before every tap's click, which would show
+    // the controls just before the tap toggles them hidden again.
+    this.root.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse') this.poke(); });
+    this.root.addEventListener('pointerdown', (e) => { this.lastPointer = e.pointerType; }, true);
     this.root.addEventListener('focusin', () => this.poke());
     this.root.addEventListener('click', (e) => {
       if (e.target === v || e.target === this.center) {
+        // The second tap of a double-tap seek (if the browser still sends its
+        // click): keep the controls the seek revealed.
+        if (performance.now() < (this.skipClickUntil || 0)) { this.skipClickUntil = 0; return; }
         if (this.menu) { this.closeMenu(); return; }
-        if (matchMedia('(hover: none)').matches) { this.toggleUI(); return; }
+        // A tap (touch or pen, also on touch laptops) toggles the controls.
+        if (this.lastPointer && this.lastPointer !== 'mouse') { this.toggleUI(); return; }
         this.togglePlay();
       }
     });
@@ -256,6 +301,7 @@ class Player {
         if (x < 0.35) this.skip(-prefs.get('skipBack'));
         else if (x > 0.65) this.skip(prefs.get('skipFwd'));
         e.preventDefault();
+        this.skipClickUntil = performance.now() + 500;
       }
       lastTap = now;
     });
@@ -324,8 +370,12 @@ class Player {
   // ---------- loading ----------
   async start(itemId, start) {
     this.bufferRebuilds = 0;
+    this.upNextDismissed = false;
     try {
-      const d = await api(`/api/items/${itemId}`);
+      const d = await retryApi(`/api/items/${itemId}`, undefined, {
+        cancelled: () => this.closed,
+        onRetry: (n) => this.setStatus(`Reconnecting to the server… (attempt ${n + 1})`),
+      });
       if (this.closed) return;
       this.detail = d;
       this.item = d.item;
@@ -347,7 +397,7 @@ class Player {
       this.setupMediaSession();
       if (prefs.get('showStats') && !this.statsEl) this.toggleStats();
     } catch (e) {
-      this.showError(e.message);
+      if (!this.closed) this.planFailed(e);
     }
   }
 
@@ -388,22 +438,21 @@ class Player {
       mode, forceHls: forceHls && this.mode === 'hls', maxBitrate: this.quality, audioLang: prefs.get('audioLang'), swEncode: !!this.swEncode,
       caps, sessionId: this.sessionId, start,
     };
+    // Retrying the same session's plan through a server restart is safe.
+    // Closing or selecting another plan cancels the retry.
+    const cancelled = () => this.closed || generation !== this.planGeneration;
     let res;
-    for (let attempt = 0; ; attempt++) {
-      if (this.closed || generation !== this.planGeneration) return false;
-      try {
-        res = await api('/api/playback/plan', { method: 'POST', body: req });
-        break;
-      } catch (e) {
-        if (this.closed || generation !== this.planGeneration) return false;
-        // A server restart briefly makes the proxy unavailable. Retrying
-        // the same session's plan is safe; permission and media errors stay
-        // terminal. Closing or selecting another plan cancels the retry.
-        if (![0, 502, 503, 504].includes(e.status) || attempt >= 6) throw e;
-        await new Promise(resolve => setTimeout(resolve, Math.min(8000, 1000 * (attempt + 1))));
-      }
+    try {
+      res = await retryApi('/api/playback/plan', { method: 'POST', body: req }, {
+        cancelled, retries: overrides.retries ?? 6,
+        onRetry: (n) => this.setStatus(`${this.recovering ? 'Connection lost — reconnecting' : 'Reconnecting to the server'}… (attempt ${n + 1})`),
+      });
+    } catch (e) {
+      if (cancelled()) return false;
+      throw e;
     }
-    if (this.closed || generation !== this.planGeneration) return false;
+    if (cancelled()) return false;
+    this.setStatus('');
     this.plan = res.plan;
     this.cached = !!res.cached;
     if (res.segments) this.segments = res.segments;
@@ -472,16 +521,23 @@ class Player {
     this.beat();
   }
 
-  async replan(overrides) {
+  async replan(overrides = {}) {
     // Metadata may never arrive for an unsupported native container, so
     // currentTime is still zero even when playback was requested at a resume point.
     const t = this.video.currentTime || (!this.started && this.startPosition) || 0;
-    const wasPaused = this.video.paused && this.started;
+    // overrides.resume: an error paused the element, not the viewer.
+    const wasPaused = this.video.paused && this.started && !overrides.resume;
     const generation = (this.planGeneration || 0) + 1;
     try {
       const applied = await this.loadPlan(t, overrides);
       if (applied && wasPaused) this.video.pause();
-    } catch (e) { if (!this.closed && generation === this.planGeneration) this.showError(e.message); }
+    } catch (e) { if (!this.closed && generation === this.planGeneration) this.planFailed(e); }
+  }
+
+  // A plan (or the item) couldn't be loaded.
+  planFailed(e) {
+    if (e.status === 410) this.stopByServer(e.message);
+    else this.showError(e.message);
   }
 
   // ---------- errors & fallback ----------
@@ -507,12 +563,71 @@ class Player {
 
   async onVideoError() {
     const err = this.video.error;
-    if (!err || err.code === 1 || this.closed || !this.plan) return;
+    if (!err || err.code === 1 || this.closed || !this.plan || this.stopped) return;
+    // The server went away mid-file: that says nothing about the codec.
+    if (err.code === 2) return this.recoverNetwork(); // MEDIA_ERR_NETWORK
+    // A stopped session's media requests fail too; the heartbeat says why.
+    await this.beat();
+    if (this.closed || this.stopped) return;
     // MEDIA_ERR_SRC_NOT_SUPPORTED on direct play, or decode errors: fall back.
     await this.fallback(`${this.plan.method} failed (${err.message || 'media error ' + err.code})`);
   }
 
+  // Lost the connection to the server (restart, Wi-Fi): say so and replan the
+  // same method at the same position, retrying for a minute or so. Doesn't
+  // count as a failed plan, so no codec fallback.
+  async recoverNetwork() {
+    if (this.closed || this.stopped || this.recovering || !this.plan || this.errEl) return;
+    this.recovering = true;
+    this.startupWatch = null;
+    this.setStatus('Connection lost — reconnecting…');
+    try {
+      await this.replan({ mode: this.plan.hls ? this.mode : this.plan.method, resume: true, retries: 12 });
+    } finally {
+      this.recovering = false;
+    }
+  }
+
+  // Direct/HLS playback waiting on data: a quick check tells a server outage
+  // (reconnect now) from a slow network (just keep waiting).
+  async probeServer() {
+    this.lastProbe = performance.now();
+    try {
+      await api('/api/public/info');
+    } catch (e) {
+      if (e.name !== 'AbortError' && [0, 502, 503, 504].includes(e.status) && this.waitingSince) this.recoverNetwork();
+    }
+  }
+
+  checkWaiting() {
+    if (!this.waitingSince || this.closed || this.errEl || this.recovering || this.video.ended) return;
+    const waited = performance.now() - this.waitingSince;
+    if (this.engine?.retries > 0 && waited >= 1000) this.setStatus('Connection lost — reconnecting…');
+    else if (waited >= 8000 && !this.statusEl.textContent) this.setStatus('Still buffering…');
+    // The MSE engine retries its own stream.
+    if (waited >= 1000 && !this.engine && this.plan && performance.now() - (this.lastProbe || 0) > 5000) this.probeServer();
+  }
+
+  setStatus(text) { if (this.statusEl && this.statusEl.textContent !== text) this.statusEl.textContent = text; }
+
+  // An admin stopped this session from the dashboard: stay stopped (no
+  // replan, retry or fallback) and say why. Playing the title again starts
+  // a new session.
+  stopByServer(msg) {
+    if (this.closed || this.stopped) return;
+    this.stopped = true;
+    this.planGeneration = (this.planGeneration || 0) + 1; // cancels pending plan retries
+    this.cancelUpNext(false);
+    // Keep the last frame and position on screen; just stop streaming.
+    this.startupWatch = null;
+    this.video.pause();
+    if (this.engine) { this.engine.destroy(); this.engine = null; }
+    this.showError(msg || 'Playback was stopped by the server admin', { title: 'Playback stopped', retry: false });
+  }
+
   async onStreamError(msg, status, decode, rebuild) {
+    if (status === 410) return this.stopByServer(msg);
+    if (this.stopped) return;
     if (rebuild && !this.bufferRebuilds) {
       if (this.closed || !this.plan || this.failedPlan === this.plan) return;
       this.failedPlan = this.plan;
@@ -521,16 +636,16 @@ class Player {
       return this.replan({ mode: this.plan.method });
     }
     if (decode) return this.fallback(msg);
-    this.showError(msg, status !== 503);
+    this.showError(msg, { retry: status !== 503 });
   }
 
   async fallback(reason) {
     // An error event and the startup deadline can report the same failure.
     // Each plan gets one fallback; a newly attached plan can fail separately.
-    if (this.closed || !this.plan || this.failedPlan === this.plan) return;
+    if (this.closed || !this.plan || this.failedPlan === this.plan || this.stopped) return;
     this.failedPlan = this.plan;
     this.startupWatch = null;
-    if (this.plan.hls && this.mode === 'hls') { this.showError(`HLS playback failed: ${reason}`); return; }
+    if (this.plan.hls && this.mode === 'hls') { this.showError(`HLS playback failed: ${reason}`, { transcode: true }); return; }
     const order = ['direct', 'remux', 'transcode'];
     const idx = order.indexOf(this.plan.method);
     // A hardware-encoded transcode the browser can't parse: retry once with
@@ -538,32 +653,58 @@ class Player {
     if (idx === 2 && /hardware/.test(this.plan.videoOut || '') && !this.swEncode) {
       this.swEncode = true;
       toast('Hardware transcode failed in this browser — retrying with the software encoder');
-      await this.replan({ mode: 'transcode' });
+      await this.replan({ mode: 'transcode', resume: true });
       return;
     }
-    if (this.fallbacks >= 2 || idx >= 2) { this.showError(`Playback failed: ${reason}`); return; }
+    if (this.fallbacks >= 2 || idx >= 2) { this.showError(`Playback failed: ${reason}`, { transcode: true }); return; }
     this.fallbacks++;
     const next = order[idx + 1];
     toast(`${METHOD_LABEL[this.plan.method]} didn't work in this browser — switching to ${METHOD_LABEL[next]}`);
     this.mode = next;
-    await this.replan({ mode: next });
+    // Media errors pause the element; that isn't the viewer pausing.
+    await this.replan({ mode: next, resume: true });
   }
 
-  showError(msg, retry = true) {
+  // The error overlay is a modal alert over the player: the controls behind
+  // it are inert and Tab stays inside. transcode offers 'Try transcoding',
+  // only for failures a transcode can fix (codec/container, not network,
+  // missing files or a stopped session).
+  showError(msg, { retry = true, transcode = false, title = "Can't play this" } = {}) {
     this.startupWatch = null;
+    this.waitingSince = 0;
     this.showSpinner(false);
+    this.setStatus('');
     this.hideError();
-    this.errEl = h('div', { class: 'p-error' }, h('div', null,
-      h('h2', { style: { margin: 0 } }, "Can't play this"),
-      h('p', { class: 'muted', style: { margin: 0 } }, msg),
-      h('div', { class: 'row' },
-        retry ? h('button', { class: 'btn primary', onclick: () => { this.hideError(); this.replan(); } }, 'Retry') : null,
-        this.plan?.method !== 'transcode' ? h('button', { class: 'btn', onclick: () => { this.hideError(); this.mode = 'transcode'; this.replan({ mode: 'transcode' }); } }, 'Try transcoding') : null,
+    this.video.pause();
+    const again = () => {
+      this.hideError();
+      // The item itself may never have loaded.
+      if (this.item) this.replan();
+      else this.start(this.itemId, this.requestedStart);
+    };
+    this.errEl = h('div', { class: 'p-error', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'p-err-title', 'aria-describedby': 'p-err-msg' }, h('div', null,
+      h('h2', { id: 'p-err-title', style: { margin: 0 } }, title),
+      h('p', { id: 'p-err-msg', class: 'muted', style: { margin: 0 } }, msg),
+      h('div', { class: 'row wrap' },
+        retry ? h('button', { class: 'btn primary', onclick: again }, 'Retry') : null,
+        transcode && this.item && this.plan && this.plan.method !== 'transcode' ? h('button', { class: 'btn', onclick: () => { this.hideError(); this.mode = 'transcode'; this.replan({ mode: 'transcode' }); } }, 'Try transcoding') : null,
         h('button', { class: 'btn', onclick: () => this.close() }, 'Close'))));
     this.root.appendChild(this.errEl);
+    for (const el of this.root.querySelectorAll(':scope > .p-top, :scope > .p-bot')) el.inert = true;
+    this.closeMenu();
+    this.showUI(true);
+    this.errEl.querySelector('button').focus();
   }
 
-  hideError() { if (this.errEl) { this.errEl.remove(); this.errEl = null; } }
+  hideError() {
+    if (!this.errEl) return;
+    const hadFocus = this.errEl.contains(document.activeElement);
+    this.errEl.remove();
+    this.errEl = null;
+    for (const el of this.root.querySelectorAll(':scope > .p-top, :scope > .p-bot')) el.inert = false;
+    // Retry removed the focused button: keep focus in the player.
+    if (hadFocus || document.activeElement === document.body) this.root.focus();
+  }
 
   // ---------- subtitles ----------
   subById(idx) { return (this.file.subtitles || []).find((s) => s.index === idx); }
@@ -907,8 +1048,13 @@ class Player {
   key(e) {
     if (e.defaultPrevented || this.root.querySelector('.modal-bg')) return;
     if (e.key === 'Tab') {
-      containTab(e, this.root);
+      containTab(e, this.errEl || this.root);
       this.poke();
+      return;
+    }
+    // The error overlay's buttons take every key; Escape still closes.
+    if (this.errEl) {
+      if (e.key === 'Escape' && !document.fullscreenElement) { e.preventDefault(); this.close(); }
       return;
     }
     if (e.target.tagName === 'INPUT' && e.target.type === 'range') {
@@ -1038,12 +1184,14 @@ class Player {
   }
 
   async beat() {
-    if (!this.sessionId || this.closed || !this.plan) return;
+    if (!this.sessionId || this.closed || !this.plan || this.stopped) return;
     try {
       const r = await api('/api/playback/progress', { method: 'POST', body: { sessionId: this.sessionId, position: this.video.currentTime, paused: this.video.paused, stats: this.clientStats() } });
       this.lastJob = r.job || null;
       this.serverRate = r.serverRate || 0;
-    } catch {}
+    } catch (e) {
+      if (e.status === 410) this.stopByServer(e.message);
+    }
   }
 
   sendStop(beacon) {
@@ -1061,6 +1209,7 @@ class Player {
     if (this.bufHist.length > 90) this.bufHist.shift();
     if (this.statsEl) this.renderStats(es);
     this.renderEnds();
+    this.checkWaiting();
     this.checkUpNext();
   }
 
@@ -1346,7 +1495,7 @@ class Player {
     if (this.files.length > 1) m.append(row('Version', `${resLabel(this.file.width, this.file.height)} ${(this.file.vcodec || '').toUpperCase()}`, 'version'));
     m.append(h('div', { class: 'pm-sep' }));
     m.append(sw('Stats for nerds', !!this.statsEl, () => this.toggleStats(), 'Shortcut: I'));
-    m.append(sw('Autoplay next episode', prefs.get('autoplayNext'), (v) => prefs.set('autoplayNext', v)));
+    m.append(sw('Autoplay next episode', prefs.get('autoplayNext'), (v) => { prefs.set('autoplayNext', v); if (!v) this.cancelUpNext(false); }));
     m.append(sw('Skip intros automatically', prefs.get('autoSkipIntro'), (v) => prefs.set('autoSkipIntro', v)));
   }
 
@@ -1380,11 +1529,12 @@ class Player {
   checkUpNext() {
     const next = this.detail?.next;
     const d = this.duration(), t = this.video.currentTime;
-    if (!next || !d || this.upNextShown || this.video.paused) return;
+    if (!next || !d || this.upNextShown || this.upNextDismissed || this.video.paused || this.errEl) return;
     const credits = (this.file?.info?.chapters || []).find((c) => /credit|outro|ending|ed\b/i.test(c.title || '') && c.start > d * 0.7);
     const at = credits ? credits.start : d - Math.max(20, prefs.get('countdown') + 5);
     if (t < at) return;
     this.upNextShown = true;
+    this.upNextAt = at;
     let n = prefs.get('countdown');
     const count = h('span', null, String(n));
     const card = h('div', { class: 'upnext', onclick: (e) => e.stopPropagation() },
@@ -1394,7 +1544,9 @@ class Player {
         h('b', null, `${fmtEpisode(next)} — ${next.title}`),
         h('div', { class: 'row' },
           h('button', { class: 'btn primary sm', onclick: () => this.playNext() }, icons.play ? h('span', { html: icons.play, style: { width: '16px', display: 'inline-flex' } }) : null, prefs.get('autoplayNext') ? ['Play in ', count, 's'] : 'Play now'),
-          h('button', { class: 'btn sm', onclick: () => { clearInterval(this.cdTimer); card.remove(); } }, 'Hide'))));
+          h('button', { class: 'btn sm', onclick: () => { this.cancelUpNext(true); this.playBtn.focus(); } }, 'Cancel'))));
+    // Never cover an open menu.
+    this.closeMenu();
     this.root.appendChild(card);
     this.upNextEl = card;
     if (prefs.get('autoplayNext')) {
@@ -1407,16 +1559,26 @@ class Player {
     }
   }
 
-  onEnded() {
-    if (this.detail?.next && prefs.get('autoplayNext')) this.playNext();
-    else this.showUI(true);
+  // dismiss: the viewer cancelled Up next, so this episode just ends.
+  cancelUpNext(dismiss) {
+    clearInterval(this.cdTimer);
+    this.cdTimer = null;
+    this.upNextEl?.remove();
+    this.upNextEl = null;
+    if (dismiss) this.upNextDismissed = true;
   }
+
+  onEnded() {
+    if (this.detail?.next && prefs.get('autoplayNext') && !this.upNextDismissed) this.playNext();
+    else this.onMovieEnd();
+  }
+
+  onMovieEnd() { this.showUI(true); }
 
   async playNext() {
     const next = this.detail?.next;
     if (!next) return;
-    clearInterval(this.cdTimer);
-    if (this.upNextEl) { this.upNextEl.remove(); this.upNextEl = null; }
+    this.cancelUpNext(false);
     this.sendStop();
     this.stopSent = false;
     this.sessionId = null;
@@ -1457,9 +1619,13 @@ class Player {
     } catch {}
   }
 
-  close() {
+  // fromHistory: Back already popped the player's entry. keepHistory: another
+  // player takes the entry over.
+  close({ fromHistory = false, keepHistory = false } = {}) {
     if (this.closed) return;
     this.closed = true;
+    window.removeEventListener('popstate', this.onPop);
+    if (!fromHistory && !keepHistory && history.state?.lexPlayer) history.back();
     this.sendStop();
     clearInterval(this.hbTimer);
     clearInterval(this.uiTimer);

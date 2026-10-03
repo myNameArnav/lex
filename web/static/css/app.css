@@ -517,6 +517,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .p-time { font-variant-numeric: tabular-nums; font-size: 13.5px; margin: 0 10px; white-space: nowrap; color: rgba(255,255,255,.9); }
 .p-ends { font-size: 12.5px; white-space: nowrap; color: rgba(255,255,255,.6); }
 .p-method { font-size: 10.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; background: rgba(255,255,255,.12); cursor: pointer; margin-right: 6px; }
+.p-method:empty { display: none; }
 .p-method.direct { color: var(--method-direct); } .p-method.remux { color: var(--method-remux); } .p-method.transcode { color: var(--method-transcode); }
 .seek { position: relative; height: 22px; display: flex; align-items: center; cursor: pointer; margin: 0 6px 4px; touch-action: none; }
 .seek .rail { position: absolute; left: 0; right: 0; height: 4px; border-radius: 4px; background: rgba(255,255,255,.2); transition: height .1s; overflow: hidden; }
@@ -533,11 +534,14 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .vol:hover input, .vol input:focus { width: 90px; opacity: 1; margin-right: 6px; }
 .p-center { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
 .p-center .spinner { width: 56px; height: 56px; border-width: 4px; }
+/* Under the spinner, without moving it off centre. */
+.p-status { position: absolute; top: calc(50% + 44px); left: 16px; right: 16px; text-align: center; font-size: 13px; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.8); }
 .p-flash { width: 84px; height: 84px; border-radius: 50%; background: rgba(0,0,0,.5); display: grid; place-items: center; animation: flash .6s forwards; }
 .p-flash svg { width: 40px; height: 40px; }
 @keyframes flash { from { opacity: 1; transform: scale(.8) } to { opacity: 0; transform: scale(1.25) } }
 .p-error { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.7); z-index: 5; }
 .p-error > div { max-width: 520px; text-align: center; padding: 20px; display: grid; gap: 14px; justify-items: center; }
+.p-error .row { justify-content: center; }
 .p-menu { position: absolute; right: 20px; bottom: 90px; width: 320px; max-height: min(70vh, calc(100% - 120px)); overflow: auto; overscroll-behavior: contain; background: rgba(24,25,30,.94); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,.1); border-radius: 14px; box-shadow: 0 16px 48px rgba(0,0,0,.55); padding: 6px; z-index: 4; font-size: 14px; animation: pm-in .14s ease-out; }
 @keyframes pm-in { from { opacity: 0; transform: translateY(6px) scale(.98) } to { opacity: 1; transform: none } }
 .p-menu .pm-title { padding: 10px 12px 6px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: rgba(255,255,255,.5); }
