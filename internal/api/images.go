@@ -9,6 +9,7 @@ import (
 	"image/jpeg"
 	_ "image/png"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -154,6 +155,43 @@ func (s *Server) castImage(w http.ResponseWriter, r *http.Request) {
 	}
 	ref, err := s.Images.Fetch(r.Context(), it.Cast[index].Image)
 	if err != nil {
+		w.Header().Set("Cache-Control", "private, max-age=300")
+		http.Error(w, "no image", 404)
+		return
+	}
+	s.serveImage(w, r, s.Images.Path(ref))
+}
+
+// metaPosterHosts are the image hosts that metadata search results link to.
+// The page's CSP only allows same-origin images, so Fix match shows their
+// posters through metadataPoster.
+var metaPosterHosts = map[string]bool{
+	"image.tmdb.org":       true,
+	"static.tvmaze.com":    true,
+	"assets.fanart.tv":     true,
+	"artworks.thetvdb.com": true,
+}
+
+// metaPosterURL is the same-origin address of a search result's poster.
+func metaPosterURL(u string) string {
+	if u == "" {
+		return ""
+	}
+	return "/api/admin/metadata/poster?url=" + url.QueryEscape(u)
+}
+
+// metadataPoster proxies a metadata search poster (admin only), through the
+// artwork client's public-address checks, size cap and disk cache.
+func (s *Server) metadataPoster(w http.ResponseWriter, r *http.Request) {
+	u, err := url.Parse(r.URL.Query().Get("url"))
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.Port() != "" || !metaPosterHosts[u.Hostname()] {
+		writeErr(w, 400, "unsupported image URL")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	ref, err := s.Images.Fetch(ctx, u.String())
+	if err != nil || ref == "" {
 		w.Header().Set("Cache-Control", "private, max-age=300")
 		http.Error(w, "no image", 404)
 		return

@@ -138,6 +138,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("GET /api/admin/tasks", a(s.tasks))
 	mux.Handle("POST /api/admin/metadata/refresh", a(s.refreshAllMetadata))
 	mux.Handle("GET /api/admin/metadata/search", a(s.metaSearch))
+	mux.Handle("GET /api/admin/metadata/poster", a(s.metadataPoster))
 	mux.Handle("POST /api/items/{id}/refresh", a(s.refreshItem))
 	mux.Handle("POST /api/items/{id}/match", a(s.matchItem))
 	mux.Handle("POST /api/items/{id}/unmatch", a(s.unmatchItem))
