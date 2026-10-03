@@ -157,7 +157,32 @@ func (s *Server) validLibrary(req *libReq, self int64) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	for _, l := range libs {
+		if l.ID != self && strings.EqualFold(l.Name, req.Name) {
+			return nil, errBad(fmt.Sprintf("there is already a library called %q", l.Name))
+		}
+	}
 	return paths, checkLibraryPaths(paths, libs, self)
+}
+
+// overlapsOther reports whether a folder in paths contains, or is inside,
+// a folder of another library. Files there belong to whichever library
+// scanned them first, so removing or moving one hands them to the other.
+func overlapsOther(paths []string, libs []store.Library, self int64) bool {
+	for _, l := range libs {
+		if l.ID == self {
+			continue
+		}
+		for _, q := range l.Paths {
+			q = filepath.Clean(q)
+			for _, p := range paths {
+				if p = filepath.Clean(p); pathWithin(p, q) || pathWithin(q, p) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 type errBad string
@@ -214,7 +239,13 @@ func (s *Server) updateLibrary(w http.ResponseWriter, r *http.Request) {
 	if old.Kind != req.Kind {
 		s.St.DB().Exec(`DELETE FROM items WHERE library_id=?`, id)
 	}
-	s.Scanner.Trigger(id)
+	// Folders that overlap another library's: rescan both, so files this
+	// one let go of (or now covers) end up in the right one.
+	if libs, err := s.St.Libraries(); err == nil && overlapsOther(slices.Concat(paths, old.Paths), libs, id) {
+		s.Scanner.Trigger(0)
+	} else {
+		s.Scanner.Trigger(id)
+	}
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -224,9 +255,18 @@ func (s *Server) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad id")
 		return
 	}
+	old, err := s.St.Library(id)
+	if err != nil {
+		notFoundOr500(w, err)
+		return
+	}
 	if err := s.St.DeleteLibrary(id); err != nil {
 		writeErr(w, 500, err.Error())
 		return
+	}
+	// A library nested in (or around) this one gets the files it held.
+	if libs, err := s.St.Libraries(); err == nil && overlapsOther(old.Paths, libs, id) {
+		s.Scanner.Trigger(0)
 	}
 	writeJSON(w, map[string]bool{"ok": true})
 }

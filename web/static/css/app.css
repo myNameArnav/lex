@@ -602,7 +602,11 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   .tbl.history .h-title .small { display: inline; margin-left: 8px; font-weight: 400; }
   .tbl.history .h-when, .tbl.history .h-user, .tbl.history .h-num { order: 2; font-size: 12px; color: var(--text2); }
   .tbl.history .h-num::before { content: attr(data-label) ' '; color: var(--text3); }
-  .tbl.history .h-reasons, .tbl.history .h-output, .tbl.history .h-client, .tbl.history .h-num:not([data-label='Watched']) { display: none; }
+  /* Third line: why it converted, output and client (no hover on touch). */
+  .tbl.history tr::before { content: ''; order: 3; flex-basis: 100%; }
+  .tbl.history .h-method { display: contents; }
+  .tbl.history .h-reasons, .tbl.history .h-output, .tbl.history .h-client { order: 4; font-size: 12px; color: var(--text2); }
+  .tbl.history .h-client .mono { display: inline; margin-left: 6px; }
   .panel.table-wrap:has(> .tbl.history) { padding: 2px 14px; }
 }
 @media (max-width: 520px) {

@@ -109,6 +109,8 @@ func TestLibraryFolderValidation(t *testing.T) {
 		{"bad kind", "POST", "/api/admin/libraries", body("X", "music", sub), "type must be"},
 		{"edit onto another library's folder", "PUT", "/api/admin/libraries/" + itoa(other.ID), body("Shows", "shows", shows, movies), "already in library \"Movies\""},
 		{"edit adds a sub-folder", "PUT", "/api/admin/libraries/" + itoa(lib.ID), body("Movies", "movies", movies, sub), "is inside"},
+		{"name already used", "POST", "/api/admin/libraries", body(" movies ", "movies", sub), "already a library called \"Movies\""},
+		{"edit to another library's name", "PUT", "/api/admin/libraries/" + itoa(other.ID), body("MOVIES", "shows", shows), "already a library called"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := adminRequest(t, h, token, tc.method, tc.path, tc.body)
@@ -148,6 +150,24 @@ func TestCheckLibraryPathsAllows(t *testing.T) {
 	}
 	if err := checkLibraryPaths([]string{"/", "/media"}, nil, 0); err == nil {
 		t.Error("/ together with /media was allowed")
+	}
+}
+
+func TestOverlapsOther(t *testing.T) {
+	libs := []store.Library{{ID: 1, Paths: []string{"/media/movies"}}, {ID: 2, Paths: []string{"/media/movies/Kids"}}, {ID: 3, Paths: []string{"/media/shows"}}}
+	for _, tc := range []struct {
+		paths []string
+		self  int64
+		want  bool
+	}{
+		{[]string{"/media/movies"}, 1, true},       // encloses Kids
+		{[]string{"/media/movies/Kids/"}, 2, true}, // inside Movies
+		{[]string{"/media/shows"}, 3, false},
+		{[]string{"/media/movies-old"}, 0, false}, // a shared prefix isn't nesting
+	} {
+		if got := overlapsOther(tc.paths, libs, tc.self); got != tc.want {
+			t.Errorf("%v (self %d) = %v, want %v", tc.paths, tc.self, got, tc.want)
+		}
 	}
 }
 
