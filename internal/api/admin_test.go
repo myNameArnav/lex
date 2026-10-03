@@ -175,3 +175,33 @@ func TestBrowseFSErrorsAreReadable(t *testing.T) {
 }
 
 func itoa(id int64) string { return strconv.FormatInt(id, 10) }
+
+func TestDevicesMarkCurrentSession(t *testing.T) {
+	s, h := securityServer(t)
+	admin, err := s.St.CreateInitialAdmin("admin", "test-password-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mine, _ := s.St.CreateToken(admin.ID, "Firefox on macOS", "127.0.0.1")
+	other, _ := s.St.CreateToken(admin.ID, "Safari on iPhone", "127.0.0.2")
+
+	w := adminRequest(t, h, mine, "GET", "/api/admin/devices", "")
+	if w.Code != 200 {
+		t.Fatalf("list: %d %s", w.Code, w.Body.String())
+	}
+	var devs []store.TokenInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &devs); err != nil {
+		t.Fatal(err)
+	}
+	if len(devs) != 2 {
+		t.Fatalf("got %d devices", len(devs))
+	}
+	for _, d := range devs {
+		if want := d.Prefix == mine[:8]; d.Current != want {
+			t.Fatalf("%s (%s): current=%v, want %v", d.Client, d.Prefix, d.Current, want)
+		}
+		if d.Prefix == other[:8] && d.Current {
+			t.Fatal("another session was marked current")
+		}
+	}
+}
