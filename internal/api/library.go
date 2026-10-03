@@ -16,14 +16,15 @@ func (s *Server) libraries(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	if libs == nil {
-		libs = []store.Library{}
-	}
-	libs = libraryViews(libs, userOf(r).IsAdmin)
-	writeJSON(w, libs)
+	writeJSON(w, libraryViews(libs, userOf(r).IsAdmin))
 }
 
+// libraryViews hides folder paths from non-admins and never returns nil, so
+// clients always get a JSON array.
 func libraryViews(libs []store.Library, admin bool) []store.Library {
+	if libs == nil {
+		return []store.Library{}
+	}
 	if !admin {
 		libs = append([]store.Library{}, libs...)
 		for i := range libs {
@@ -87,6 +88,7 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 		Limit: qInt(r, "limit", 100), Offset: qInt(r, "offset", 0),
 	}
 	lq.LibraryID, _ = strconv.ParseInt(q.Get("library"), 10, 64)
+	lq.Seed, _ = strconv.ParseInt(q.Get("seed"), 10, 64)
 	items, total, err := s.St.ListItems(userOf(r).ID, lq)
 	if err != nil {
 		writeErr(w, 500, err.Error())

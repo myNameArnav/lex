@@ -216,6 +216,9 @@ func (s *Server) metaSearch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, []any{})
 		return
 	}
+	for i := range c {
+		c[i].Poster = metaPosterURL(c[i].Poster)
+	}
 	writeJSON(w, c)
 }
 

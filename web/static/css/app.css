@@ -231,7 +231,7 @@ main { padding: var(--top) var(--sar) 0 var(--sal); min-height: 100vh; }
 }
 .shelf-arrow.right { right: 0; background: linear-gradient(to left, rgba(12,13,16,.95), rgba(12,13,16,0)); }
 .shelf-arrow.left { left: 0; }
-.shelf-scroll:hover .shelf-arrow { opacity: 1; }
+.shelf-arrow[hidden] { display: none; }
 .shelf-arrow svg { width: 30px; height: 30px; }
 
 .card { width: var(--poster-w); flex: none; cursor: pointer; position: relative; }
@@ -244,12 +244,17 @@ main { padding: var(--top) var(--sar) 0 var(--sal); min-height: 100vh; }
 .card .art img { position: relative; z-index: 1; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .3s; }
 .card .art img.loaded { opacity: 1; }
 .card .art .ph { position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; text-align: center; color: var(--text3); font-weight: 700; font-size: 15px; background: linear-gradient(135deg, #1d2129, #15171c); }
-.card:hover .art { transform: translateY(-3px); box-shadow: 0 10px 24px rgba(0,0,0,.5); outline: 2px solid rgba(242,179,61,.8); outline-offset: 0; }
 .card .play-hover { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; background: rgba(0,0,0,.35); opacity: 0; transition: opacity .2s; }
 .card .play-hover span { width: 52px; height: 52px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; }
 .card .play-hover svg { width: 26px; height: 26px; margin-left: 3px; }
-.card:hover .play-hover { opacity: 1; }
+.card.land .art { display: block; width: 100%; border: 0; padding: 0; color: inherit; cursor: pointer; }
+.card.land .art:focus-visible { outline-offset: 0; }
+.card .art:focus-visible .play-hover { opacity: 1; }
 .card .meta { padding: 8px 2px 0; }
+/* Continue Watching / Next Up: the title block shares the row with a ⋯ button. */
+.card.land .meta { display: flex; align-items: flex-start; gap: 4px; }
+.card.land .meta > div { flex: 1; min-width: 0; }
+.card-more { flex: none; margin: 2px -6px 0 0; color: var(--text2); }
 .card .t { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card .s { color: var(--text3); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .progress { position: absolute; z-index: 2; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(0,0,0,.6); }
@@ -263,8 +268,40 @@ main { padding: var(--top) var(--sar) 0 var(--sal); min-height: 100vh; }
 .grid.land { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
 
 .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 16px 0 24px; }
-.toolbar select { height: 34px; }
+.toolbar select, .toolbar .btn.sm { height: 34px; }
 .count { color: var(--text3); font-weight: 600; }
+
+/* Hover effects only where there is hover: on touch they stick after a tap. */
+@media (hover: hover) {
+  .shelf-scroll:hover .shelf-arrow { opacity: 1; }
+  .card:hover .art { transform: translateY(-3px); box-shadow: 0 10px 24px rgba(0,0,0,.5); outline: 2px solid rgba(242,179,61,.8); outline-offset: 0; }
+  .card:hover .play-hover { opacity: 1; }
+}
+/* Touch: swipe instead of arrows, and a small always-on play badge marks
+   artwork that plays when tapped. */
+@media (hover: none) {
+  .shelf-arrow { display: none; }
+  .card.land .play-hover { opacity: 1; background: none; place-items: end start; padding: 8px; }
+  .card.land .play-hover span { width: 36px; height: 36px; box-shadow: 0 1px 6px rgba(0,0,0,.5); }
+  .card.land .play-hover svg { width: 18px; height: 18px; margin-left: 2px; }
+}
+@media (pointer: coarse) {
+  .toolbar select, .toolbar .btn.sm { height: 40px; }
+}
+@media (max-width: 900px) {
+  .grid { gap: 18px 12px; }
+}
+/* Phones: three smaller posters a row in library and search grids (shelves
+   keep their size), with room for two-line titles. */
+@media (max-width: 520px) {
+  /* Two rows: sort and its direction, then the filters and Random. */
+  .toolbar { gap: 8px; }
+  .toolbar .spacer { display: none; }
+  .toolbar select { flex: 1 1 96px; min-width: 0; padding: 0 24px 0 10px; background-position: right 8px center; }
+  .toolbar .sort-select { flex: 1 0 calc(100% - 130px); }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 16px 10px; }
+  .grid .card:not(.land) .t { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
+}
 
 /* ---------- detail ---------- */
 .hero { position: relative; min-height: 560px; margin-top: calc(-1 * var(--top)); padding-top: var(--top); }
@@ -272,7 +309,7 @@ main { padding: var(--top) var(--sar) 0 var(--sal); min-height: 100vh; }
 .hero-bg img { width: 100%; height: 100%; object-fit: cover; object-position: center 20%; opacity: 0; transition: opacity .5s; }
 .hero-bg img.loaded { opacity: .55; }
 .hero-bg img.blur { filter: blur(40px) saturate(1.3); transform: scale(1.2); }
-.hero-bg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to right, rgba(12,13,16,.97) 0%, rgba(12,13,16,.75) 45%, rgba(12,13,16,.2) 100%), linear-gradient(to top, var(--bg) 0%, rgba(12,13,16,0) 45%); }
+.hero-bg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to right, rgba(12,13,16,.97) 0%, rgba(12,13,16,.88) 45%, rgba(12,13,16,.35) 100%), linear-gradient(to top, var(--bg) 0%, rgba(12,13,16,0) 45%); }
 .hero-inner { position: relative; display: flex; gap: 36px; padding: 48px 34px 30px; align-items: flex-start; }
 .hero-poster { width: 260px; flex: none; border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); aspect-ratio: 2/3; background: var(--bg3); }
 .hero-poster.land { width: 420px; aspect-ratio: 16/9; }
@@ -289,6 +326,8 @@ main { padding: var(--top) var(--sar) 0 var(--sal); min-height: 100vh; }
 .genres span { background: rgba(255,255,255,.08); border-radius: 20px; padding: 3px 12px; font-size: 12.5px; color: var(--text2); }
 .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0 10px; }
 .people { display: flex; gap: 14px; overflow-x: auto; padding: 4px 34px 14px; scrollbar-width: none; }
+.people::-webkit-scrollbar { display: none; }
+.people:focus-visible { outline-offset: -2px; border-radius: 8px; }
 .person { width: 110px; flex: none; text-align: center; }
 .person .ph { width: 110px; height: 110px; border-radius: 50%; overflow: hidden; background: var(--bg3); margin-bottom: 8px; display: grid; place-items: center; font-size: 30px; font-weight: 700; color: var(--text3); }
 .person img { width: 100%; height: 100%; object-fit: cover; }
@@ -299,15 +338,18 @@ main { padding: var(--top) var(--sar) 0 var(--sal); min-height: 100vh; }
 .tabs button, .tabs a { background: none; border: none; padding: 10px 14px; cursor: pointer; font-weight: 700; color: var(--text2); border-bottom: 2px solid transparent; white-space: nowrap; }
 .tabs button.active, .tabs a.active { color: var(--text); border-color: var(--accent); }
 .tabs button:hover, .tabs a:hover { color: var(--text); }
+/* Inside the button: the tab row scrolls, which would clip an outer ring. */
+.tabs button:focus-visible, .tabs a:focus-visible { outline-offset: -3px; border-radius: 6px; }
 
-.episodes { display: grid; gap: 6px; }
+.episodes { display: grid; gap: 6px; max-width: 1200px; }
 .episode { display: grid; grid-template-columns: 240px minmax(0, 1fr) auto; gap: 18px; padding: 10px; border-radius: 12px; align-items: center; }
 .episode:hover, .episode:focus-within { background: rgba(255,255,255,.04); }
 .episode .art { position: relative; aspect-ratio: 16/9; border: 0; padding: 0; border-radius: 8px; overflow: hidden; background: var(--bg3); cursor: pointer; }
 .episode-info { display: block; border-radius: 4px; }
 .episode .art img { position: relative; width: 100%; height: 100%; object-fit: cover; }
 .episode .art .ep-play { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.35); opacity: 0; transition: .2s; }
-.episode:hover .ep-play, .episode .art:focus-visible .ep-play { opacity: 1; }
+.episode .art:focus-visible .ep-play { opacity: 1; }
+@media (hover: hover) { .episode:hover .ep-play { opacity: 1; } }
 .episode .ep-play svg { width: 40px; height: 40px; }
 .episode h3 { margin: 0 0 4px; font-size: 15.5px; }
 .episode .num { color: var(--text3); font-weight: 700; margin-right: 6px; }
@@ -326,6 +368,51 @@ main { padding: var(--top) var(--sar) 0 var(--sal); min-height: 100vh; }
 .selects { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
 .selects label { display: grid; gap: 4px; font-size: 11px; color: var(--text3); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
 .selects select { min-width: 200px; max-width: 320px; }
+/* A button label that truncates (e.g. the next episode's title). */
+.btn > .ellipsis { display: block; min-width: 0; }
+
+/* Fix match results: one button per candidate. */
+.match-list { display: grid; gap: 8px; }
+.match { display: flex; gap: 12px; width: 100%; padding: 8px; border-radius: 10px; cursor: pointer; border: 1px solid var(--line); background: none; color: inherit; font: inherit; text-align: left; }
+.match:hover, .match:focus-visible { border-color: var(--accent); }
+.match > span { min-width: 0; }
+.match b, .match .dim, .match .ov { display: block; }
+.match .noimg { width: 60px; height: 90px; border-radius: 6px; overflow: hidden; background: var(--bg3); flex: none; }
+.match .noimg img { width: 100%; height: 100%; object-fit: cover; }
+.match .ov { margin: 4px 0 0; font-size: 12.5px; color: var(--text2); display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* Wide screens: a dimmer backdrop keeps title art in it from echoing the h1. */
+@media (min-width: 901px) {
+  .hero-bg img.loaded { opacity: .45; }
+}
+@media (max-width: 900px) {
+  .hero { min-height: 0; }
+  .hero-inner { flex-direction: column; padding: 24px 16px; gap: 20px; }
+  .hero-poster { width: 160px; }
+  .hero-poster.land { width: 100%; max-width: 560px; }
+  .hero-info h1 { font-size: 28px; }
+  /* Full width, so a long line can't size the column past the screen. */
+  .hero-info { align-self: stretch; min-width: 0; }
+  .episode { grid-template-columns: 140px minmax(0, 1fr) auto; gap: 12px; }
+  .episode .side { align-self: start; }
+}
+/* Landscape phones: art beside the title, so the title and Play are on the first screen. */
+@media (max-width: 900px) and (max-height: 500px) and (orientation: landscape) {
+  .hero-inner { flex-direction: row; gap: 18px; }
+  .hero-poster { width: 120px; }
+  .hero-poster.land { width: 240px; }
+}
+@media (max-width: 520px) {
+  .episode { grid-template-columns: 112px minmax(0, 1fr) auto; gap: 10px; }
+}
+@media (pointer: coarse) {
+  .watched-btn { width: 44px; height: 44px; }
+}
+/* Touch: a small play badge marks thumbnails that play when tapped. */
+@media (hover: none) {
+  .episode .art .ep-play { opacity: 1; background: none; place-items: end start; padding: 6px; }
+  .episode .ep-play svg { width: 28px; height: 28px; padding: 7px 6px 7px 8px; border-radius: 50%; background: rgba(0,0,0,.65); }
+}
 
 /* ---------- auth ---------- */
 .auth { min-height: 100vh; display: grid; place-items: center; padding: 20px; background: radial-gradient(1200px 600px at 20% 0%, rgba(242,179,61,.10), transparent 60%), var(--bg); }
@@ -369,12 +456,6 @@ body:has(.save-bar) > .toasts { bottom: calc(80px + var(--sab)); }
 .empty h2 { color: var(--text); margin-bottom: 6px; }
 .empty h1 { color: var(--text); font-size: 1.5em; margin: .83em 0 6px; }
 .empty-actions { justify-content: center; margin-top: 14px; }
-
-.match-list { display: grid; gap: 8px; }
-.match { display: flex; gap: 12px; padding: 8px; border-radius: 10px; cursor: pointer; border: 1px solid var(--line); }
-.match:hover { border-color: var(--accent); }
-.match img, .match .noimg { width: 60px; height: 90px; object-fit: cover; border-radius: 6px; background: var(--bg3); flex: none; }
-.match p { margin: 4px 0 0; font-size: 12.5px; color: var(--text2); display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* ---------- settings / dashboard ---------- */
 .side-layout { display: grid; grid-template-columns: 220px 1fr; gap: 30px; align-items: start; }
@@ -634,18 +715,10 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   .page { padding: 20px 16px 50px; }
   .shelf-head { margin: 0 16px 10px; }
   .shelf-track { padding: 4px 16px 12px; gap: 12px; scroll-padding: 0 16px; }
-  .hero-inner { flex-direction: column; padding: 24px 16px; gap: 20px; }
-  .hero-poster { width: 160px; }
-  .hero-poster.land { width: 100%; }
-  .hero-info h1 { font-size: 28px; }
-  .hero { min-height: 0; }
   .people { padding: 4px 16px 14px; }
-  .episode { grid-template-columns: 140px 1fr; gap: 12px; }
-  .episode .side { display: none; }
   .side-layout { grid-template-columns: 1fr; }
   .side-nav { position: static; display: flex; overflow-x: auto; }
   .side-nav .grp { display: none; }
-  .grid { gap: 18px 12px; }
   .session { grid-template-columns: 60px 1fr; }
   .session .poster { width: 60px; }
   .session .kv { grid-template-columns: max-content 1fr; }
