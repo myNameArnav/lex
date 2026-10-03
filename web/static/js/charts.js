@@ -193,14 +193,15 @@ export function lineChart(box, opts) {
 }
 
 // columnChart: labels + values, one series. opts: { title, labels, values,
-// fmt, height, tipLabel, fullLabels? }. Its accessible name sums it up.
+// fmt, height, tipLabel, fullLabels?, floor? (smallest axis top) }. Its
+// accessible name sums it up.
 export function columnChart(box, opts) {
   const n = opts.values.length;
   const full = opts.fullLabels || opts.labels;
   const ticks = 3;
   const counts = opts.values.every(Number.isInteger);
   const top = Math.max(0, ...opts.values);
-  const max = ticks * niceStep(top, ticks, counts);
+  const max = ticks * niceStep(Math.max(top, opts.floor || 0), ticks, counts);
   const sum = opts.values.reduce((a, b) => a + b, 0);
   const peak = opts.values.indexOf(top);
   const label = sum ? `${opts.title}. Total ${opts.fmt(sum)}; highest ${opts.fmt(top)} (${full[peak]}).` : `${opts.title}. No data.`;

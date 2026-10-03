@@ -776,7 +776,7 @@ async function playbackTab(ctx) {
   const hoursBox = h('div'), hourBox = h('div');
   const hod = Array.from({ length: 24 }, (_, i) => (st.hoursOfDay || []).find((b) => +b.key === i)?.count || 0);
   const hourName = (i) => new Date(2000, 0, 1, i).toLocaleTimeString([], { hour: 'numeric' });
-  const fmtH = (v) => (v > 0 && v < 1 ? `${Math.round(v * 60)}m` : `${+v.toFixed(1)}h`);
+  const fmtH = (v) => (v > 0 && Math.round(v * 60) < 60 ? `${Math.round(v * 60) || '<1'}m` : `${+v.toFixed(1)}h`);
   const page = h('div', null, range,
     h('div', { class: 'stats-grid' },
       stat('Plays', st.plays.toLocaleString(), `${st.uniqueItems} titles · ${Math.round((st.remotePlays / st.plays) * 100)}% remote`),
@@ -799,7 +799,7 @@ async function playbackTab(ctx) {
     history);
   requestAnimationFrame(() => {
     const day = (i) => new Date(Date.now() - i * 86400000).toLocaleDateString(undefined, { dateStyle: 'medium' });
-    columnChart(hoursBox, { title: `${hoursTitle}, ${day(days - 1)} to ${day(0)}`, labels, fullLabels: full, values: hours, fmt: fmtH, tipLabel: 'watched' });
+    columnChart(hoursBox, { title: `${hoursTitle}, ${day(days - 1)} to ${day(0)}`, labels, fullLabels: full, values: hours, fmt: fmtH, tipLabel: 'watched', floor: 0.25 });
     columnChart(hourBox, { title: 'Plays by hour of day', labels: hod.map((_, i) => `${i}h`), fullLabels: hod.map((_, i) => hourName(i)), values: hod, fmt: (v) => `${Math.round(v)}`, tipLabel: 'plays' });
   });
   return page;
@@ -816,7 +816,11 @@ function dataTable(head, rows, note) {
       rows.map((r) => h('tr', null, r.map((v) => h('td', null, `${v}`))))));
 }
 
-const fmtHours = (v) => (v > 0 && v < 1 ? `${Math.round(v * 60)} min` : v < 100 ? `${v.toFixed(1)} h` : `${Math.round(v).toLocaleString()} h`);
+// A few seconds read "<1 min", not "0 min"; nothing at all reads "0 h".
+const fmtHours = (v) => {
+  const min = Math.round(v * 60);
+  return !(v > 0) ? '0 h' : min < 1 ? '<1 min' : min < 60 ? `${min} min` : v < 100 ? `${v.toFixed(1)} h` : `${Math.round(v).toLocaleString()} h`;
+};
 
 // Plays, share and stall time per playback method, in one table.
 function methodsTable(st) {

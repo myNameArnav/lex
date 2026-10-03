@@ -21,6 +21,7 @@ test('chart gridlines land on round steps', async () => {
   assert.equal(niceStep(10), 5);       // 0 / 5 / 10 / 15 h
   assert.equal(niceStep(6), 2);        // 0 / 2 / 4 / 6
   assert.equal(niceStep(0.5), 0.2);    // 0 / 12m / 24m / 36m
+  assert.equal(niceStep(0.25), 0.1);   // the hours chart's floor: 0 / 6m / 12m / 18m
   assert.equal(niceStep(1.5e6), 5e5);  // 0 / 500 kbps / 1 Mbps / 1.5 Mbps
   assert.equal(niceStep(700e6), 2.5e8);
   // An all-zero series still gets a usable scale.
