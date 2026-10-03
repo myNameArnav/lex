@@ -110,3 +110,32 @@ func TestListItemsSeededRandomIsStableAcrossPages(t *testing.T) {
 		}
 	}
 }
+
+func TestListItemsSearchMatchesWildcardsLiterally(t *testing.T) {
+	st := testStore(t)
+	db := st.DB()
+	if _, err := db.Exec(`INSERT INTO libraries(id,name,kind,paths,created_at) VALUES(1,'Movies','movies','[]',0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO items(id,library_id,kind,show_id,title,sort_title,added_at,updated_at) VALUES
+		(1,1,'movie',0,'Plain Title','plain title',0,0),
+		(2,1,'movie',0,'100% Cotton','100% cotton',0,0),
+		(3,1,'movie',0,'snake_case','snake_case',0,0),
+		(4,1,'movie',0,'Back\slash','back\slash',0,0)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		q    string
+		want []int64
+	}{
+		{"%", []int64{2}},
+		{"_", []int64{3}},
+		{`\`, []int64{4}},
+		{"0% c", []int64{2}},
+		{"TITLE", []int64{1}},
+	} {
+		if got := listIDs(t, st, 1, ListQuery{Search: tc.q}); !slices.Equal(got, tc.want) {
+			t.Errorf("search %q = %v, want %v", tc.q, got, tc.want)
+		}
+	}
+}

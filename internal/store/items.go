@@ -426,6 +426,8 @@ type ListQuery struct {
 	Seed      int64 // sort=random: a non-zero seed gives a stable order across pages
 }
 
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
 func (s *Store) ListItems(uid int64, q ListQuery) ([]*Item, int, error) {
 	var conds []string
 	args := []any{sql.Named("uid", uid)}
@@ -445,8 +447,9 @@ func (s *Store) ListItems(uid int64, q ListQuery) ([]*Item, int, error) {
 		args = append(args, sql.Named("genre", `%"`+q.Genre+`"%`))
 	}
 	if q.Search != "" {
-		conds = append(conds, "(i.title LIKE :q OR i.original_title LIKE :q)")
-		args = append(args, sql.Named("q", "%"+q.Search+"%"))
+		// The term is matched literally: % and _ in it are not wildcards.
+		conds = append(conds, `(i.title LIKE :q ESCAPE '\' OR i.original_title LIKE :q ESCAPE '\')`)
+		args = append(args, sql.Named("q", "%"+likeEscaper.Replace(q.Search)+"%"))
 	}
 	switch q.Filter {
 	case "unplayed":
