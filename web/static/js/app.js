@@ -438,63 +438,91 @@ function subtitleFor(it) {
 }
 
 function placeholder(it) {
-  return h('div', { class: 'ph' }, it.title);
+  return h('div', { class: 'ph', 'aria-hidden': 'true' }, it.title);
 }
+
+const progressBar = (pos, dur) => h('div', { class: 'progress', 'aria-hidden': 'true' }, h('i', { style: { width: `${Math.min(100, (pos / dur) * 100)}%` } }));
 
 export function posterCard(it) {
-  const art = h('div', { class: 'art' });
-  art.appendChild(placeholder(it));
-  art.appendChild(lazyImg(img(it, 'poster', 320), it.title));
   const ud = it.userData || {};
-  if (it.kind === 'show' || it.kind === 'season') {
-    if (it.unplayedCount > 0) art.appendChild(h('div', { class: 'badge' }, it.unplayedCount));
-    else if (it.childCount > 0) art.appendChild(h('div', { class: 'badge check', html: icons.check }));
-  } else if (ud.played) art.appendChild(h('div', { class: 'badge check', html: icons.check }));
-  if (ud.position > 0 && it.duration) art.appendChild(h('div', { class: 'progress' }, h('i', { style: { width: `${Math.min(100, (ud.position / it.duration) * 100)}%` } })));
-  return h('a', { class: 'card', href: `#/item/${it.id}`, title: it.title },
-    art, h('div', { class: 'meta' }, h('div', { class: 't' }, it.title), h('div', { class: 's' }, subtitleFor(it))));
+  const art = h('div', { class: 'art' }, placeholder(it), lazyImg(img(it, 'poster', 320), ''));
+  const parent = it.kind === 'show' || it.kind === 'season';
+  const watched = parent ? !it.unplayedCount && it.childCount > 0 : !!ud.played;
+  if (parent && it.unplayedCount > 0) art.appendChild(h('div', { class: 'badge', 'aria-hidden': 'true', title: `${it.unplayedCount} unwatched episode${it.unplayedCount === 1 ? '' : 's'}` }, it.unplayedCount));
+  else if (watched) art.appendChild(h('div', { class: 'badge check', 'aria-hidden': 'true', title: 'Watched', html: icons.check }));
+  const left = ud.position > 0 && it.duration ? `${fmtDuration(it.duration - ud.position)} left` : '';
+  if (left) art.appendChild(progressBar(ud.position, it.duration));
+  const label = [it.title, subtitleFor(it), parent && it.unplayedCount > 0 ? `${it.unplayedCount} unwatched` : watched ? 'watched' : '', left].filter(Boolean).join(', ');
+  return h('a', { class: 'card', href: `#/item/${it.id}`, 'aria-label': label },
+    art, h('div', { class: 'meta' }, h('div', { class: 't', title: it.title }, it.title), h('div', { class: 's' }, subtitleFor(it))));
 }
 
+// landCard: Continue Watching / Next Up (the artwork plays) and episode
+// search results (the card opens the episode).
 export function landCard(it, { playOnClick = true } = {}) {
-  const art = h('div', { class: 'art' });
-  art.appendChild(placeholder(it));
-  art.appendChild(lazyImg(img(it, 'thumb', 480), it.title));
-  art.appendChild(h('div', { class: 'play-hover' }, h('span', { html: icons.play })));
   const ud = it.userData || {};
-  if (ud.position > 0 && it.duration) art.appendChild(h('div', { class: 'progress' }, h('i', { style: { width: `${Math.min(100, (ud.position / it.duration) * 100)}%` } })));
   const title = it.kind === 'episode' ? (it.showTitle || it.title) : it.title;
   const sub = it.kind === 'episode' ? `${fmtEpisode(it)} — ${it.title}` : [it.year, ud.position && it.duration ? `${fmtDuration(it.duration - ud.position)} left` : ''].filter(Boolean).join(' · ');
+  const kids = [placeholder(it), lazyImg(img(it, 'thumb', 480), ''), h('div', { class: 'play-hover', 'aria-hidden': 'true' }, h('span', { html: icons.play })),
+    ud.position > 0 && it.duration ? progressBar(ud.position, it.duration) : null];
+  // The card's own click handler covers taps beside the art, so the button
+  // stops its click there to play only once.
+  const art = playOnClick
+    ? h('button', { type: 'button', class: 'art', 'aria-label': `${ud.position > 0 ? 'Resume' : 'Play'} ${title}, ${sub}`, dataset: { focusKey: `land-${it.id}` }, onclick: (e) => { e.stopPropagation(); play(it.id); } }, kids)
+    : h('div', { class: 'art' }, kids);
   return h('div', { class: 'card land', title: `${title} — ${sub}`, onclick: (e) => {
     if (e.target.closest('.meta a')) return;
     if (playOnClick) play(it.id); else location.hash = `#/item/${it.id}`;
-  } }, art, h('div', { class: 'meta' }, h('a', { class: 't', href: `#/item/${it.id}`, style: { display: 'block' } }, title), h('div', { class: 's' }, sub)));
+  } }, art, h('div', { class: 'meta' }, h('a', { class: 't', href: `#/item/${it.id}`, 'aria-label': `${title}, ${sub}`, style: { display: 'block' } }, title), h('div', { class: 's' }, sub)));
+}
+
+// scroller wraps a horizontal track with scroll arrows for mouse users. The
+// arrows aren't tab stops (focusing a card scrolls it into view) and show
+// only while there is more to scroll that way; touch screens swipe instead.
+function scroller(track) {
+  const go = (dir) => track.scrollBy({ left: dir * track.clientWidth * 0.85, behavior: motionOK() ? 'smooth' : 'auto' });
+  const left = h('button', { class: 'shelf-arrow left', type: 'button', tabindex: '-1', hidden: true, html: icons.chevL, onclick: () => go(-1), 'aria-label': 'Scroll left' });
+  const right = h('button', { class: 'shelf-arrow right', type: 'button', tabindex: '-1', hidden: true, html: icons.chevR, onclick: () => go(1), 'aria-label': 'Scroll right' });
+  const sync = () => {
+    left.hidden = track.scrollLeft <= 0;
+    right.hidden = track.scrollLeft >= track.scrollWidth - track.clientWidth - 1;
+  };
+  track.addEventListener('scroll', sync, { passive: true });
+  // Window resizes and the view being swapped out (the observer then lets go).
+  const ro = new ResizeObserver(() => { if (track.isConnected) sync(); else ro.disconnect(); });
+  ro.observe(track);
+  requestAnimationFrame(sync);
+  return h('div', { class: 'shelf-scroll' }, left, track, right);
 }
 
 function shelf(title, items, kind, moreHref) {
   const track = h('div', { class: 'shelf-track' }, items.map((it) => kind === 'landscape' ? landCard(it) : posterCard(it)));
-  const scroll = (dir) => track.scrollBy({ left: dir * track.clientWidth * 0.85, behavior: motionOK() ? 'smooth' : 'auto' });
   return h('section', { class: 'shelf' },
     h('div', { class: 'shelf-head' }, h('h2', { class: 'section-title' }, title), moreHref ? h('a', { class: 'more', href: moreHref, 'aria-label': `See all: ${title}` }, 'See all') : null),
-    h('div', { class: 'shelf-scroll' },
-      h('button', { class: 'shelf-arrow left hide-mobile', html: icons.chevL, onclick: () => scroll(-1), 'aria-label': 'Scroll left' }),
-      track,
-      h('button', { class: 'shelf-arrow right hide-mobile', html: icons.chevR, onclick: () => scroll(1), 'aria-label': 'Scroll right' })));
+    scroller(track));
 }
 
 // ---------- home ----------
-async function homeView() {
+async function homeView(ctx) {
   const data = await api('/api/home');
   const wrap = h('div', { style: { paddingTop: '26px', paddingBottom: '40px' } }, h('h1', { class: 'sr-only' }, 'Home'));
-  if (!data.libraries.length) {
-    wrap.appendChild(h('div', { class: 'empty' },
-      h('h2', null, 'No libraries yet'),
-      state.me.isAdmin
-        ? [h('p', null, 'Add a folder with your movies or shows to get started.'), h('a', { class: 'btn primary', href: '#/settings/libraries' }, 'Add a library')]
-        : h('p', null, 'Ask your server admin to add a library.')));
+  const admin = state.me.isAdmin;
+  if (!data.libraries?.length) {
+    wrap.appendChild(emptyState({ level: 'h2', title: 'No libraries yet',
+      text: admin ? 'Add a folder with your movies or shows to get started.' : 'Ask your server admin to add a library.',
+      actions: admin ? [h('a', { class: 'btn primary', href: '#/settings/libraries' }, 'Add a library')] : [] }));
     return wrap;
   }
   if (!data.rows.length) {
-    wrap.appendChild(h('div', { class: 'empty' }, h('h2', null, 'Scanning your libraries…'), h('p', null, 'New items will show up here shortly.'), h('button', { class: 'btn', onclick: () => route() }, 'Refresh')));
+    // A library that has never finished a scan may still fill up: check again shortly.
+    if (data.libraries.some((l) => !l.lastScan)) {
+      wrap.appendChild(emptyState({ level: 'h2', title: 'Scanning your libraries…', text: 'New titles will show up here as they are found.' }));
+      setTimeout(() => { if (ctx.isCurrent()) refreshSoft(); }, 5000);
+    } else {
+      wrap.appendChild(emptyState({ level: 'h2', title: 'No media found',
+        text: admin ? 'Check that your library folders contain files, e.g. Movies/Title (Year)/Title (Year).mkv.' : 'Ask your server admin to check the library folders.',
+        actions: admin ? [h('a', { class: 'btn primary', href: '#/settings/libraries' }, 'Check library folders')] : [] }));
+    }
   }
   for (const row of data.rows) {
     wrap.appendChild(shelf(row.title, row.items, row.kind, row.libraryId ? `#/library/${row.libraryId}?sort=latest&desc=1` : null));
@@ -507,17 +535,27 @@ async function libraryView(ctx, id) {
   const lib = state.libraries.find((l) => l.id === id) || (await loadLibraries(), state.libraries.find((l) => l.id === id));
   if (!lib) return emptyState({ title: 'Library not found', text: 'It may have been removed.', actions: [h('a', { class: 'btn primary', href: '#/' }, 'Go home')] });
   const q = ctx.query;
-  const opts = { sort: q.get('sort') || 'title', desc: q.get('desc') === '1', filter: q.get('filter') || '', genre: q.get('genre') || '' };
-  // key: the control to focus once the re-rendered view is in.
-  const setQ = (patch, key) => {
-    const n = { ...opts, ...patch };
+  const opts = { sort: q.get('sort') || 'title', desc: q.get('desc') === '1', filter: q.get('filter') || '', genre: q.get('genre') || '', seed: +q.get('seed') || 0 };
+  // Random order is seeded (and the seed kept in the address), so paging and
+  // Back show the same shuffle.
+  const newSeed = () => 1 + Math.floor(Math.random() * 1e9);
+  const hashFor = (n) => {
     const p = new URLSearchParams();
     if (n.sort !== 'title') p.set('sort', n.sort);
-    if (n.desc) p.set('desc', '1');
+    if (n.desc && n.sort !== 'random') p.set('desc', '1');
     if (n.filter) p.set('filter', n.filter);
     if (n.genre) p.set('genre', n.genre);
+    if (n.sort === 'random' && n.seed) p.set('seed', n.seed);
+    return `#/library/${id}${p.toString() ? '?' + p : ''}`;
+  };
+  if (opts.sort === 'random' && !opts.seed) {
+    opts.seed = newSeed();
+    replaceHash(hashFor(opts));
+  }
+  // key: the control to focus once the re-rendered view is in.
+  const setQ = (patch, key) => {
     focusAfterRoute(key);
-    location.hash = `#/library/${id}${p.toString() ? '?' + p : ''}`;
+    location.hash = hashFor({ ...opts, ...patch });
   };
   const genres = await api(`/api/genres?library=${id}`).catch(() => []);
   const sel = (label, key, value, options, on) => h('select', { 'aria-label': label, dataset: { focusKey: key }, onchange: (e) => on(e.target.value) }, options.map(([v, l]) => h('option', { value: v, selected: v === value }, l)));
@@ -534,8 +572,8 @@ async function libraryView(ctx, id) {
   const page = h('div', { class: 'page' },
     h('div', { class: 'row' }, h('h1', { class: 'page-title' }, lib.name), count),
     h('div', { class: 'toolbar' },
-      sel('Sort titles', 'sort-select', opts.sort, [['title', 'Title'], ['year', 'Year'], ['added', 'Date added'], ['latest', 'Latest episode/added'], ['rating', 'Rating'], ['played', 'Recently watched'], ['random', 'Random']], (v) => setQ({ sort: v, desc: ['added', 'latest', 'rating', 'played', 'year'].includes(v) }, 'sort-select')),
-      h('button', { class: 'btn sm', title: 'Reverse order', dataset: { focusKey: 'sort-dir' }, onclick: () => setQ({ desc: !opts.desc }, 'sort-dir') }, opts.desc ? '↓ Desc' : '↑ Asc'),
+      sel('Sort titles', 'sort-select', opts.sort, [['title', 'Title'], ['year', 'Year'], ['added', 'Date added'], ['latest', 'Latest episode/added'], ['rating', 'Rating'], ['played', 'Recently watched'], ['random', 'Random']], (v) => setQ({ sort: v, desc: ['added', 'latest', 'rating', 'played', 'year'].includes(v), seed: v === 'random' ? newSeed() : 0 }, 'sort-select')),
+      opts.sort !== 'random' ? h('button', { class: 'btn sm', title: 'Reverse order', dataset: { focusKey: 'sort-dir' }, onclick: () => setQ({ desc: !opts.desc }, 'sort-dir') }, opts.desc ? '↓ Desc' : '↑ Asc') : null,
       sel('Filter titles', 'filter-select', opts.filter, [['', 'All'], ['unplayed', 'Unwatched'], ['played', 'Watched'], ['inprogress', 'In progress'], ['favorite', 'Favorites']], (v) => setQ({ filter: v }, 'filter-select')),
       genres.length ? sel('Filter by genre', 'genre-select', opts.genre, [['', 'All genres'], ...genres.map((g) => [g, g])], (v) => setQ({ genre: v }, 'genre-select')) : null,
       h('div', { class: 'spacer' }),
@@ -548,6 +586,7 @@ async function libraryView(ctx, id) {
     loading = true;
     const p = new URLSearchParams({ library: id, sort: opts.sort, limit: PAGE, offset });
     if (opts.desc) p.set('desc', '1');
+    if (opts.sort === 'random') p.set('seed', opts.seed);
     if (opts.filter) p.set('filter', opts.filter);
     if (opts.genre) p.set('genre', opts.genre);
     try {
@@ -559,10 +598,16 @@ async function libraryView(ctx, id) {
       r.items.forEach((it) => grid.appendChild(posterCard(it)));
       offset += r.items.length;
       if (!r.items.length) total = offset;
-      if (total === 0) grid.replaceWith(h('div', { class: 'empty' },
-        h('h2', null, opts.filter === 'favorite' && !opts.genre ? 'No favorites yet' : 'Nothing here'),
-        h('p', null, opts.filter === 'favorite' && !opts.genre ? 'Open a title and select the heart to add it to your favorites.' : opts.filter || opts.genre ? 'No titles match these filters.' : 'The library is empty or still scanning.'),
-        opts.filter || opts.genre ? h('button', { class: 'btn', onclick: () => setQ({ filter: '', genre: '' }, 'filter-select') }, 'Clear filters') : null));
+      if (total === 0) {
+        const favs = opts.filter === 'favorite' && !opts.genre, filtered = opts.filter || opts.genre;
+        // The list loaded at startup may predate the first scan finishing.
+        let scanned = lib.lastScan;
+        if (!filtered && !scanned) { await loadLibraries(); scanned = state.libraries.find((l) => l.id === id)?.lastScan; }
+        grid.replaceWith(emptyState({ level: 'h2',
+          title: favs ? 'No favorites yet' : filtered ? 'Nothing here' : scanned ? 'No titles found' : 'Still scanning',
+          text: favs ? 'Open a title and select the heart to add it to your favorites.' : filtered ? 'No titles match these filters.' : scanned ? 'No titles found in this library.' : 'This library is still being scanned.',
+          actions: filtered ? [h('button', { class: 'btn', onclick: () => setQ({ filter: '', genre: '' }, 'filter-select') }, 'Clear filters')] : [] }));
+      }
     } finally {
       loading = false;
     }
@@ -614,7 +659,7 @@ function hero(it, posterNode, info, backdropItem = it) {
 }
 
 function heroPoster(it, kind, land) {
-  const box = h('div', { class: `hero-poster ${land ? 'land' : ''}`, style: { position: 'relative' } }, h('div', { class: 'ph', style: { position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', padding: '16px', textAlign: 'center', color: 'var(--text3)', fontWeight: 700, fontSize: '18px' } }, it.title));
+  const box = h('div', { class: `hero-poster ${land ? 'land' : ''}`, style: { position: 'relative' } }, h('div', { class: 'ph', style: { position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', padding: '16px', textAlign: 'center', color: 'var(--text2)', fontWeight: 700, fontSize: '18px' } }, it.title));
   const im = lazyImg(img(it, kind, land ? 640 : 480), it.title);
   im.style.position = 'relative';
   box.appendChild(im);
@@ -644,20 +689,25 @@ function playButtons(it, playId = it.id, label = 'Play') {
   return btns;
 }
 
-function watchedButton(it, onDone) {
-  const played = it.kind === 'show' ? it.unplayedCount === 0 && it.childCount > 0 : it.userData?.played;
-  return h('button', { class: 'btn lg icon', title: played ? 'Mark unwatched' : 'Mark watched', style: played ? { color: 'var(--good)' } : null, html: icons.check, onclick: async (e) => {
-    if (await run(e.currentTarget, () => api(`/api/items/${it.id}/played`, { method: 'POST', body: { played: !played } }), played ? 'Marked unwatched' : 'Marked watched')) onDone();
+// watchedButton marks a title (a show: every episode) watched or unwatched.
+// Shows ask first: that clears every resume point at once.
+function watchedButton(it) {
+  const show = it.kind === 'show';
+  // unplayedCount is left out of the JSON when it is 0.
+  const played = show ? !it.unplayedCount && it.childCount > 0 : !!it.userData?.played;
+  const label = played ? 'Mark as unwatched' : 'Mark as watched';
+  return h('button', { class: 'btn lg icon', title: label, 'aria-label': label, 'aria-pressed': String(played), dataset: { focusKey: `watched-${it.id}` }, style: played ? { color: 'var(--good)' } : null, html: icons.check, onclick: async (e) => {
+    const b = e.currentTarget;
+    if (show && !(await confirmDialog(`Mark all ${it.childCount} episodes of “${it.title}” as ${played ? 'unwatched' : 'watched'}? This clears resume points${played ? ' and watch history' : ''}.`,
+      played ? 'Mark unwatched' : 'Mark watched', played, played ? 'Mark show unwatched?' : 'Mark show watched?'))) return;
+    if (await run(b, () => api(`/api/items/${it.id}/played`, { method: 'POST', body: { played: !played } }), played ? 'Marked unwatched' : 'Marked watched')) refreshSoft();
   } });
 }
 
+// favButton toggles in place (no toast: it is undone with the same button).
 function favButton(it) {
   let fav = !!it.userData?.favorite, busy = false;
-  const show = () => {
-    b.innerHTML = fav ? icons.heartFill : icons.heart;
-    b.style.color = fav ? 'var(--bad)' : '';
-  };
-  const b = h('button', { class: 'btn lg icon', title: 'Favorite', html: fav ? icons.heartFill : icons.heart, style: fav ? { color: 'var(--bad)' } : null, onclick: async () => {
+  const b = h('button', { class: 'btn lg icon', dataset: { focusKey: `fav-${it.id}` }, onclick: async () => {
     if (busy) return;
     busy = true;
     fav = !fav;
@@ -672,35 +722,57 @@ function favButton(it) {
       busy = false;
     }
   } });
+  const show = () => {
+    const label = fav ? 'Remove from favorites' : 'Add to favorites';
+    b.innerHTML = fav ? icons.heartFill : icons.heart;
+    b.style.color = fav ? 'var(--bad)' : '';
+    b.setAttribute('aria-pressed', String(fav));
+    b.setAttribute('aria-label', label);
+    b.title = label;
+  };
+  show();
   return b;
 }
 
-function moreButton(it, d) {
-  return h('button', { class: 'btn lg icon', title: 'More', html: icons.more, onclick: (e) => {
-    const items = [];
-    if (d.files?.length) items.push({ label: 'Media info', icon: 'info', onClick: () => mediaInfoModal(d.files) });
-    if (state.me.isAdmin) {
-      if (it.kind === 'movie' || it.kind === 'show') items.push({ label: 'Fix match…', icon: 'edit', onClick: () => fixMatch(it) });
-      items.push({ label: 'Refresh metadata', icon: 'refresh', onClick: async () => {
-        toast('Refreshing metadata…');
-        if (await run(null, () => api(`/api/items/${it.id}/refresh`, { method: 'POST' }), 'Metadata refreshed')) route();
-      } });
-      if (it.metaLocked) items.push({ label: 'Unmatch (auto-match again)', icon: 'refresh', onClick: () => run(null, () => api(`/api/items/${it.id}/unmatch`, { method: 'POST' }), 'Unmatched; re-matching in background') });
-      const cached = d.files?.length && d.files.every((f) => f.cached);
-      items.push('-');
-      if (cached) {
-        items.push({ label: 'Remove from SSD cache', icon: 'trash', onClick: async () => { if (await run(null, () => api(`/api/admin/cache/items/${it.id}`, { method: 'DELETE' }), 'Removed from cache')) route(); } });
-      } else {
-        items.push({ label: it.kind === 'show' ? 'Cache all episodes on SSD' : 'Cache on SSD', icon: 'devices', onClick: async () => {
-          await run(null, () => api(`/api/admin/cache/items/${it.id}`, { method: 'POST' }), (r) => `Queued ${r.queued} file${r.queued === 1 ? '' : 's'} for the SSD cache`);
-        } });
-      }
-      if (it.kind === 'show' || it.kind === 'episode') {
-        items.push({ label: 'Re-detect intro', icon: 'refresh', onClick: () => run(null, () => api(`/api/items/${it.id}/intro/reset`, { method: 'POST' }), 'Intro detection queued') });
-      }
+// moreItems lists the ⋯ menu's actions. They depend only on the item, its
+// files and the user, so the button is left out when there are none.
+function moreItems(it, d) {
+  const items = [];
+  if (d.files?.length) items.push({ label: 'Media info', icon: 'info', onClick: () => mediaInfoModal(d.files) });
+  if (!state.me.isAdmin) return items;
+  if (it.kind === 'movie' || it.kind === 'show') items.push({ label: 'Fix match…', icon: 'edit', onClick: () => fixMatch(it) });
+  items.push({ label: 'Refresh metadata', icon: 'refresh', onClick: async () => {
+    const key = `refresh-${it.id}`;
+    toast('Refreshing metadata…', '', { key, ms: 130000 });
+    try {
+      await api(`/api/items/${it.id}/refresh`, { method: 'POST' });
+    } catch (ex) {
+      toast(ex.message, 'error', { key });
+      return;
     }
-    if (items.length) popupMenu(e.currentTarget, items);
+    toast('Metadata refreshed', 'ok', { key });
+    refreshSoft();
   } });
+  if (it.metaLocked) items.push({ label: 'Unmatch (auto-match again)', icon: 'refresh', onClick: async () => { if (await run(null, () => api(`/api/items/${it.id}/unmatch`, { method: 'POST' }), 'Unmatched; re-matching in background')) refreshSoft(); } });
+  const cached = d.files?.length && d.files.every((f) => f.cached);
+  items.push('-');
+  if (cached) {
+    items.push({ label: 'Remove from SSD cache', icon: 'trash', onClick: async () => { if (await run(null, () => api(`/api/admin/cache/items/${it.id}`, { method: 'DELETE' }), 'Removed from cache')) refreshSoft(); } });
+  } else {
+    items.push({ label: it.kind === 'show' ? 'Cache all episodes on SSD' : 'Cache on SSD', icon: 'devices', onClick: async () => {
+      await run(null, () => api(`/api/admin/cache/items/${it.id}`, { method: 'POST' }), (r) => `Queued ${r.queued} file${r.queued === 1 ? '' : 's'} for the SSD cache`);
+    } });
+  }
+  if (it.kind === 'show' || it.kind === 'episode') {
+    items.push({ label: 'Re-detect intro', icon: 'refresh', onClick: () => run(null, () => api(`/api/items/${it.id}/intro/reset`, { method: 'POST' }), 'Intro detection queued') });
+  }
+  return items;
+}
+
+function moreButton(it, d) {
+  const items = moreItems(it, d);
+  if (!items.length) return null;
+  return h('button', { class: 'btn lg icon', title: 'More actions', 'aria-label': 'More actions', dataset: { focusKey: `more-${it.id}` }, html: icons.more, onclick: (e) => popupMenu(e.currentTarget, items) });
 }
 
 function castRow(it, excludeDirectors = false) {
@@ -708,11 +780,11 @@ function castRow(it, excludeDirectors = false) {
   if (!people.length) return null;
   return h('section', { class: 'shelf' },
     h('div', { class: 'shelf-head' }, h('h2', { class: 'section-title' }, 'Cast & crew')),
-    h('div', { class: 'people' }, people.map(({ person: p, index }) => {
+    scroller(h('div', { class: 'people', tabindex: '0', role: 'region', 'aria-label': 'Cast & crew' }, people.map(({ person: p, index }) => {
       const portrait = h('div', { class: 'ph' }, p.name.slice(0, 1));
       if (p.image) portrait.replaceChildren(lazyImg(castImg(it, index), p.name, () => { portrait.textContent = p.name.slice(0, 1); }));
       return h('div', { class: 'person' }, portrait, h('div', { class: 'n' }, p.name), h('div', { class: 'r' }, p.role || ''));
-    })));
+    }))));
 }
 
 function mediaView(ctx, d) {
@@ -735,20 +807,25 @@ function mediaView(ctx, d) {
   if (!file) info.push(h('p', { class: 'bad' }, 'No media file found for this item.'));
   info.push(h('div', { class: 'actions' },
     file ? playButtons(it) : null,
-    watchedButton(it, () => route()),
+    watchedButton(it),
     it.kind === 'movie' ? favButton(it) : null,
     moreButton(it, d)));
   if (it.tagline) info.push(h('div', { class: 'tagline' }, it.tagline));
   info.push(h('p', { class: 'overview' }, it.overview || (it.metaStatus === 0 ? 'Fetching details…' : 'No description available.')));
   if (file) info.push(fileSummary(file));
   if (isEp) {
-    info.push(h('div', { class: 'row', style: { marginTop: '18px' } },
-      d.prev ? h('a', { class: 'btn sm', href: `#/item/${d.prev.id}` }, h('span', { html: icons.chevL }), fmtEpisode(d.prev)) : null,
-      d.next ? h('a', { class: 'btn sm', href: `#/item/${d.next.id}` }, `Next: ${fmtEpisode(d.next)} ${d.next.title}`, h('span', { html: icons.chevR })) : null));
+    // Long titles truncate inside the button rather than widen the page.
+    const epLink = (e, dir) => {
+      const label = `${dir}: ${fmtEpisode(e)} ${e.title}`;
+      const text = h('span', { class: 'ellipsis' }, label);
+      return h('a', { class: 'btn sm', href: `#/item/${e.id}`, title: label, style: { maxWidth: '100%', minWidth: 0 } },
+        dir === 'Previous' ? [h('span', { html: icons.chevL }), text] : [text, h('span', { html: icons.chevR })]);
+    };
+    info.push(h('div', { class: 'row wrap', style: { marginTop: '18px' } }, d.prev ? epLink(d.prev, 'Previous') : null, d.next ? epLink(d.next, 'Next') : null));
   }
   const director = (it.cast || []).filter((p) => p.role === 'Director');
   if (director.length) info.push(h('p', { class: 'muted small' }, `Directed by ${director.map((p) => p.name).join(', ')}`));
-  if (it.studios?.length) info.push(h('p', { class: 'dim small', style: { marginTop: '4px' } }, it.studios.slice(0, 4).join(' · ')));
+  if (it.studios?.length) info.push(h('p', { class: 'muted small', style: { marginTop: '4px' } }, it.studios.slice(0, 4).join(' · ')));
   return h('div', null, hero(it, poster, info, isEp && d.show ? d.show : it), castRow(it, true));
 }
 
@@ -762,7 +839,7 @@ function fileSummary(f) {
   if (f.subtitles?.length) bits.push(`${f.subtitles.length} subtitle${f.subtitles.length > 1 ? 's' : ''}`);
   bits.push(fmtBytes(f.size));
   if (f.bitrate) bits.push(fmtBitrate(f.bitrate));
-  return h('p', { class: 'dim small', style: { marginTop: '10px' } }, bits.join(' · '));
+  return h('p', { class: 'muted small', style: { marginTop: '10px' } }, bits.join(' · '));
 }
 
 function mediaInfoModal(files) {
@@ -797,9 +874,23 @@ function mediaInfoModal(files) {
 }
 
 async function fixMatch(it) {
-  const q = h('input', { type: 'text', value: it.title, style: { flex: 1 } });
-  const y = h('input', { type: 'number', value: it.year || '', placeholder: 'Year', style: { width: '90px' } });
+  const q = h('input', { type: 'text', value: it.title, 'aria-label': 'Title to search', style: { flex: '1 1 120px' } });
+  const y = h('input', { type: 'number', value: it.year || '', placeholder: 'Year', 'aria-label': 'Year', style: { width: '84px' } });
   const list = h('div', { class: 'match-list' });
+  const apply = async (c) => {
+    clear(list).appendChild(h('div', { class: 'row' }, h('div', { class: 'spinner sm' }), h('p', { class: 'muted', role: 'status', style: { margin: 0 } }, `Applying ${c.title}…`)));
+    try {
+      await api(`/api/items/${it.id}/match`, { method: 'POST', body: { provider: c.provider, id: c.id } });
+    } catch (ex) {
+      toast(ex.message, 'error');
+      await search();
+      q.focus();
+      return;
+    }
+    m.close();
+    toast('Match updated', 'ok');
+    refreshSoft();
+  };
   const search = async () => {
     clear(list).appendChild(spinner());
     try {
@@ -807,45 +898,78 @@ async function fixMatch(it) {
       clear(list);
       if (!r.length) list.appendChild(h('p', { class: 'muted' }, 'No results. Adding a TMDB API key in Settings → Metadata gives the best matches.'));
       for (const c of r) {
-        list.appendChild(h('div', { class: 'match', onclick: async () => {
-          clear(list).appendChild(spinner());
-          try {
-            await api(`/api/items/${it.id}/match`, { method: 'POST', body: { provider: c.provider, id: c.id } });
-            m.close(); toast('Match updated', 'ok'); route();
-          } catch (ex) { toast(ex.message, 'error'); search(); }
-        } }, c.poster ? h('img', { src: c.poster, alt: '' }) : h('div', { class: 'noimg' }),
-        h('div', null, h('b', null, `${c.title} ${c.year ? `(${c.year})` : ''}`), h('div', { class: 'dim small' }, `${c.provider} #${c.id}`), h('p', null, c.overview || ''))));
+        // Posters come through the server (the page only loads its own images);
+        // a failed one leaves the empty frame.
+        const art = h('span', { class: 'noimg' }, c.poster ? lazyImg(c.poster, '') : null);
+        list.appendChild(h('button', { type: 'button', class: 'match', 'aria-label': `${c.title}${c.year ? ` (${c.year})` : ''}, ${c.provider}`, onclick: () => apply(c) },
+          art, h('span', null, h('b', null, `${c.title} ${c.year ? `(${c.year})` : ''}`), h('span', { class: 'dim small' }, `${c.provider} #${c.id}`), h('span', { class: 'ov' }, c.overview || ''))));
       }
-    } catch (ex) { clear(list).appendChild(h('p', { class: 'bad' }, ex.message)); }
+    } catch (ex) { clear(list).appendChild(h('p', { class: 'bad', role: 'alert' }, ex.message)); }
   };
   const m = modal({ title: `Fix match: ${it.title}`, wide: true, body: [
-    h('form', { class: 'row', onsubmit: (e) => { e.preventDefault(); search(); } }, q, y, h('button', { class: 'btn primary' }, 'Search')),
+    h('form', { class: 'row wrap', onsubmit: (e) => { e.preventDefault(); search(); } }, q, y, h('button', { class: 'btn primary' }, 'Search')),
     list] });
   search();
 }
 
 // ---------- show ----------
-async function showView(ctx, d) {
-  const it = d.item;
-  const seasons = d.children || [];
-  const poster = heroPoster(it, 'poster', false);
-  const next = d.nextEpisode;
-  const info = [h('h1', null, it.title),
-    facts(it, [h('span', null, `${seasons.filter((s) => s.season > 0).length} season${seasons.length === 1 ? '' : 's'}`), it.studios?.length ? h('span', null, it.studios[0]) : null])];
-  if (it.genres?.length) info.push(h('div', { class: 'genres' }, it.genres.map((g) => h('span', null, g))));
+// heroActions: the show's play button, watched/favorite/more and the
+// "Up next" line, rebuilt in place when an episode is toggled in the list.
+function heroActions(d) {
+  const it = d.item, next = d.nextEpisode;
   const btns = [];
   if (next) {
     const lbl = `${next.userData?.position > 0 ? 'Resume' : 'Play'} ${fmtEpisode(next)}`;
     btns.push(h('button', { class: 'btn primary lg', dataset: { focusKey: `show-play-${it.id}` }, onclick: () => play(next.id) }, h('span', { html: icons.play }), lbl));
   }
-  btns.push(watchedButton(it, () => route()), favButton(it), moreButton(it, d));
-  info.push(h('div', { class: 'actions' }, btns));
-  if (next) info.push(h('p', { class: 'dim small' }, `Up next: ${next.title}`));
+  btns.push(watchedButton(it), favButton(it), moreButton(it, d));
+  return h('div', { class: 'hero-cta' }, h('div', { class: 'actions' }, btns), next ? h('p', { class: 'muted small' }, `Up next: ${next.title}`) : null);
+}
+
+function seasonTabLabel(tab, s) {
+  const n = s.unplayedCount || 0;
+  tab.setAttribute('aria-label', `${s.title}${n ? `, ${n} unwatched episode${n === 1 ? '' : 's'}` : ''}`);
+  tab.replaceChildren(s.title, n ? h('span', { class: 'dim', 'aria-hidden': 'true', style: { marginLeft: '6px', fontWeight: 600 } }, n) : '');
+}
+
+async function showView(ctx, d) {
+  const it = d.item;
+  const seasons = d.children || [];
+  const poster = heroPoster(it, 'poster', false);
+  const next = d.nextEpisode;
+  let cta = heroActions(d);
+  const info = [h('h1', null, it.title),
+    facts(it, [h('span', null, `${seasons.filter((s) => s.season > 0).length} season${seasons.length === 1 ? '' : 's'}`), it.studios?.length ? h('span', null, it.studios[0]) : null])];
+  if (it.genres?.length) info.push(h('div', { class: 'genres' }, it.genres.map((g) => h('span', null, g))));
+  info.push(cta);
   info.push(h('p', { class: 'overview' }, it.overview || (it.metaStatus === 0 ? 'Fetching details…' : 'No description available.')));
 
   const listId = `episodes-${it.id}`;
   const tabs = h('div', { class: 'tabs', role: 'group', 'aria-label': 'Seasons' });
   const list = h('div', { class: 'episodes', id: listId, role: 'region', 'aria-label': 'Episodes' });
+  const tabFor = (s) => [...tabs.children].find((b) => +b.dataset.id === s.id);
+  // An episode toggled in the list: adjust its season's count now, then
+  // refetch the show for the play button, Up next and every season count.
+  let refetch = 0;
+  const episodeChanged = (played) => {
+    active.unplayedCount = Math.max(0, (active.unplayedCount || 0) + (played ? -1 : 1));
+    seasonTabLabel(tabFor(active), active);
+    clearTimeout(refetch);
+    refetch = setTimeout(async () => {
+      let nd;
+      try { nd = await api(`/api/items/${it.id}`); } catch { return; }
+      if (!ctx.isCurrent()) return;
+      for (const s of nd.children || []) {
+        const old = seasons.find((x) => x.id === s.id), tab = tabFor(s);
+        if (old && tab) { old.unplayedCount = s.unplayedCount; seasonTabLabel(tab, old); }
+      }
+      const key = cta.contains(document.activeElement) ? document.activeElement.dataset.focusKey : null;
+      const n = heroActions(nd);
+      cta.replaceWith(n);
+      cta = n;
+      if (key) n.querySelector(`[data-focus-key="${key}"]`)?.focus({ preventScroll: true });
+    }, 400);
+  };
   const wanted = +ctx.query.get('season');
   let active = seasons.find((s) => s.id === wanted) || (next && seasons.find((s) => s.id === next.parentId)) || seasons.find((s) => s.season > 0) || seasons[0];
   const showSeason = async (s) => {
@@ -860,7 +984,7 @@ async function showView(ctx, d) {
     try {
       const eps = await api(`/api/items/${s.id}/children`);
       if (active !== s || !ctx.isCurrent()) return;
-      clear(list).append(...eps.map((e) => episodeRow(e)), ...(s.overview ? [h('p', { class: 'muted', style: { maxWidth: '760px' } }, s.overview)] : []));
+      clear(list).append(...eps.map((e) => episodeRow(e, episodeChanged)), ...(s.overview ? [h('p', { class: 'muted', style: { maxWidth: '760px' } }, s.overview)] : []));
       replaceHash(`#/item/${it.id}?season=${s.id}`);
     } catch (e) {
       if (active === s && ctx.isCurrent()) clear(list).append(h('p', { class: 'bad', role: 'alert' }, e.message), h('button', { class: 'btn', onclick: () => showSeason(s) }, 'Retry'));
@@ -869,7 +993,9 @@ async function showView(ctx, d) {
     }
   };
   for (const s of seasons) {
-    tabs.appendChild(h('button', { dataset: { id: s.id }, 'aria-controls': listId, 'aria-pressed': 'false', 'aria-label': `${s.title}${s.unplayedCount ? `, ${s.unplayedCount} unwatched episode${s.unplayedCount === 1 ? '' : 's'}` : ''}`, onclick: () => showSeason(s) }, s.title, s.unplayedCount ? h('span', { class: 'dim', 'aria-hidden': 'true', style: { marginLeft: '6px', fontWeight: 600 } }, s.unplayedCount) : null));
+    const tab = h('button', { dataset: { id: s.id }, 'aria-controls': listId, 'aria-pressed': 'false', onclick: () => showSeason(s) });
+    seasonTabLabel(tab, s);
+    tabs.appendChild(tab);
   }
   const page = h('div', null, hero(it, poster, info),
     h('div', { class: 'page', style: { paddingTop: 0 } }, tabs, list),
@@ -878,23 +1004,22 @@ async function showView(ctx, d) {
   return page;
 }
 
-function episodeRow(e) {
+// episodeRow: onChange(played) runs after the watched toggle succeeds.
+function episodeRow(e, onChange) {
   const ud = e.userData || {};
   let busy = false;
   const art = h('button', { class: 'art', type: 'button', dataset: { focusKey: `episode-play-${e.id}` }, 'aria-label': `${ud.position > 0 && !ud.played ? 'Resume' : 'Play'} episode ${e.episode}: ${e.title}`, onclick: () => play(e.id) }, lazyImg(img(e, 'thumb', 480), ''), h('span', { class: 'ep-play', 'aria-hidden': 'true', html: icons.play }));
-  if (ud.position > 0 && e.duration) art.appendChild(h('div', { class: 'progress' }, h('i', { style: { width: `${(ud.position / e.duration) * 100}%` } })));
-  const wbtn = h('button', { class: `watched-btn ${ud.played ? 'on' : ''}`, title: ud.played ? 'Mark unwatched' : 'Mark watched', html: icons.check, onclick: async (ev) => {
+  if (ud.position > 0 && e.duration) art.appendChild(progressBar(ud.position, e.duration));
+  const badge = h('div', { class: 'badge check', 'aria-hidden': 'true', title: 'Watched', html: icons.check });
+  const wbtn = h('button', { class: 'watched-btn', type: 'button', html: icons.check, dataset: { focusKey: `episode-watched-${e.id}` }, onclick: async (ev) => {
     ev.stopPropagation();
     if (busy) return;
     busy = true;
-    const show = () => {
-      wbtn.classList.toggle('on', ud.played);
-      wbtn.title = ud.played ? 'Mark unwatched' : 'Mark watched';
-    };
     ud.played = !ud.played;
     show();
     try {
       await api(`/api/items/${e.id}/played`, { method: 'POST', body: { played: ud.played } });
+      onChange?.(ud.played);
     } catch (ex) {
       ud.played = !ud.played;
       show();
@@ -903,6 +1028,14 @@ function episodeRow(e) {
       busy = false;
     }
   } });
+  const show = () => {
+    const action = ud.played ? 'Mark unwatched' : 'Mark watched';
+    wbtn.classList.toggle('on', !!ud.played);
+    wbtn.title = action;
+    wbtn.setAttribute('aria-label', `${action}: episode ${e.episode}, ${e.title}`);
+    if (ud.played) art.appendChild(badge); else badge.remove();
+  };
+  show();
   return h('div', { class: 'episode' },
   art,
   h('a', { class: 'episode-info', href: `#/item/${e.id}`, 'aria-label': `Episode ${e.episode}: ${e.title}` },
