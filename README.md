@@ -55,6 +55,10 @@ frames from the films.</sub>
   `The Office (US) - S06E17-E18 - ...`, `www.site.com - Title 2021 ...`) are parsed,
   plus `.plexmatch` / `.nfo` ids and local `poster.jpg` / `fanart.jpg` / `-thumb.jpg`.
   Periodic rescans only `stat` files; a Sonarr/Radarr webhook triggers instant rescans.
+  Library names must be unique. A file belongs to one library: a library nested in
+  another's folder lists only files the other doesn't already have, and Settings →
+  Libraries says where the rest are. Editing or deleting a library rescans the
+  libraries that overlap it.
 - **Metadata** – TMDB (with a free API key), TVmaze for shows (no key), and a local
   **Radarr** as a keyless TMDB source for movies (auto-detected). Artwork is fetched
   lazily, cached on disk and resized for the grid. Cast portraits use the same
@@ -101,7 +105,7 @@ frames from the films.</sub>
 - **Dashboard** – live CPU (per core), RAM/swap, SoC temperature, clock, Pi
   under-voltage/throttle flags, network & disk I/O, storage, process memory, and every
   active stream with client buffer, bandwidth, stalls and ffmpeg state, on the Live
-  tab. **Stop** ends a stream and tells the viewer it was stopped by the admin.
+  tab. **Stop** ends a stream and tells the viewer it was stopped by the admin; the player does not reconnect on its own.
   The Playback tab has analytics for 7 to 365 days (watch time per day, or per week
   for long ranges; methods, stall rate by method, top titles, users, clients,
   conversion reasons, time of day; each chart's values can be shown as a table)
@@ -164,7 +168,7 @@ are published to GitHub Container Registry:
 
 | Tag | Updated |
 |---|---|
-| `ghcr.io/mynamearnav/lex:latest`, `:<major.minor>`, `:<version>` (e.g. `:0.0.4`) | with each release |
+| `ghcr.io/mynamearnav/lex:latest`, `:<major.minor>`, `:<version>` (e.g. `:0.0.6`) | with each release |
 | `ghcr.io/mynamearnav/lex:edge` | with every change on `main` |
 
 ```sh
@@ -279,12 +283,12 @@ working; the list then opens with `Ctrl`/`⌘` + `/`.
 ## Versions and releases
 
 The version number lives in `internal/version/VERSION`; builds add the commit
-they came from (`lex -version` prints e.g. `lex 0.0.4 (0ac9413)`, and it's shown
+they came from (`lex -version` prints e.g. `lex 0.0.6 (e7d84df)`, and it's shown
 in Settings → About and the account menu). To release, bump that file, commit,
 and push a matching tag:
 
 ```sh
-git tag -a v0.0.4 -m "Lex v0.0.4" && git push origin v0.0.4
+git tag -a v0.0.7 -m "Lex v0.0.7" && git push origin v0.0.7
 ```
 
 The Release workflow checks the tag against the file, runs the tests, builds
@@ -303,7 +307,7 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
 CI checks formatting, module consistency, race tests, Go vet, JavaScript/shell
 syntax, Compose configuration, publication privacy, secrets, vulnerabilities,
-Linux builds and the generic container build. The privacy script checks working
+release builds for every platform and the generic container build. The privacy script checks working
 files and branch/tag history for private deployment addresses, home paths,
 runtime/configuration files and personal commit attribution. It complements
 manual review and secret scanning; it cannot detect every form of PII.
@@ -359,8 +363,12 @@ internal/cache     optional media disk cache
 internal/intro     optional intro detection
 internal/sysstats  host/container statistics
 internal/api       HTTP API, auth, images, static files
+internal/logx      leveled logger with a recent-lines buffer for the UI
+internal/proc      child-process helpers
+internal/version   version number and build commit
 web/static         vanilla JavaScript UI (no build step)
 web/static/vendor  prebuilt third-party browser code (JASSUB subtitle renderer)
 deploy             Linux deployment examples
-scripts            publication privacy checks
+docker             Raspberry Pi archive keys for the container build
+scripts            release builds and publication privacy checks
 ```
