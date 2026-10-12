@@ -179,7 +179,7 @@ are published to GitHub Container Registry:
 | Tag | Updated |
 |---|---|
 | `ghcr.io/mynamearnav/lex:latest`, `:<major.minor>`, `:<version>` (e.g. `:0.0.8`) | with each release |
-| `ghcr.io/mynamearnav/lex:edge` | with every change on `main` |
+| `ghcr.io/mynamearnav/lex:edge` | when a maintainer builds `main` by hand (Container image workflow, Run workflow) |
 
 ```sh
 docker run -d --name lex -p 127.0.0.1:8420:8420 --user 1000:1000 \
@@ -315,7 +315,8 @@ go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --no-banner --log
 go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 ```
 
-CI checks formatting, module consistency, race tests, Go vet, JavaScript/shell
+CI runs on pull requests (merging doesn't run it again; Release re-runs the tests
+for each tag) and checks formatting, module consistency, race tests, Go vet, JavaScript/shell
 syntax, Compose configuration, publication privacy, secrets, vulnerabilities,
 release builds for every platform and the generic container build. The privacy script checks working
 files and branch/tag history for private deployment addresses, home paths,
