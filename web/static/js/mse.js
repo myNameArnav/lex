@@ -8,6 +8,7 @@
 // ffmpeg on the server, and it costs nothing until playback catches up.
 
 import { mediaSourceClass } from './caps.js';
+import { AudioWorker, AudioConverter } from './client-audio.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -23,6 +24,8 @@ export class MseEngine {
     this.mime = plan.mime;
     this.duration = plan.duration;
     this.offset = -(plan.startTime || 0);
+    // The server copied audio the browser can't play; convert it here.
+    this.clientAudio = plan.clientAudio || null;
     this.opts = { forward: 0, back: 30, onError: () => {}, onEnded: () => {}, ...opts };
     this.gen = 0;
     this.ctrl = null;
@@ -51,6 +54,7 @@ export class MseEngine {
     this.video.src = this.objUrl;
     await opened;
     if (this.destroyed) return;
+    if (this.clientAudio) this.audioWorker = new AudioWorker();
     this.sb = this.ms.addSourceBuffer(this.mime);
     this.sb.mode = 'segments';
     try { this.ms.duration = this.duration; } catch {}
@@ -67,6 +71,8 @@ export class MseEngine {
     if (this.ctrl) this.ctrl.abort();
     clearInterval(this.timer);
     clearTimeout(this.seekTimer);
+    this.conv?.cancel();
+    this.audioWorker?.terminate();
     this.video.removeEventListener('seeking', this.onSeeking);
     try { if (this.ms && this.ms.readyState === 'open') this.ms.endOfStream(); } catch {}
     if (this.objUrl) URL.revokeObjectURL(this.objUrl);
@@ -212,6 +218,8 @@ export class MseEngine {
     this.throttled = false;
     this.lastData = performance.now();
     this.streamFrom = t;
+    this.conv?.cancel();
+    const conv = this.conv = this.clientAudio ? new AudioConverter(this.audioWorker, this.clientAudio) : null;
     if (!keep) { this.stalls = 0; this.resumeAfter = 0; }
     await this.whenIdle();
     if (gen !== this.gen) return;
@@ -246,7 +254,8 @@ export class MseEngine {
       for (const c of pending) { buf.set(c, off); off += c.byteLength; }
       pending = []; pendingBytes = 0; lastFlush = performance.now();
       const before = this.producingEnd();
-      const ok = await this.append(buf, gen);
+      let ok = true;
+      for (const seg of conv ? await conv.push(buf) : [buf]) if (!(ok = await this.append(seg, gen))) break;
       // Processing queued bytes is progress even if no new read is needed.
       if (ok) this.lastData = performance.now();
       // Accepted init headers (or duplicate frames) are not recovery.
@@ -276,7 +285,7 @@ export class MseEngine {
         const r = await reader.read();
         this.lastData = performance.now();
         if (r.done) {
-          await flush();
+          if (await flush() && conv) for (const seg of await conv.end()) if (!(await this.append(seg, gen))) break;
           if (gen === this.gen) this.streamDone(gen);
           break;
         }

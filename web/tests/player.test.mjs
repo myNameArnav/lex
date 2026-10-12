@@ -702,3 +702,18 @@ test('PgUp / PgDn move between chapters, and PgDn near a chapter start goes to t
   f.player.key(keydown('PageUp'));
   assert.equal(osds.at(-1), 'No chapters');
 });
+
+test('failed browser audio conversion lets the server convert before changing method', async () => {
+  const f = await fixture({ method: 'remux' });
+  f.player.mode = 'remux';
+  f.player.plan.clientAudio = { codec: 'eac3', channels: 2, bitrate: 192 };
+  await f.player.fallback('Browser audio decoding: Decoding audio failed (-1)');
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].mode, 'remux');
+  assert.equal(f.requests[0].caps.clientAudio.length, 0);
+  assert.equal(f.player.fallbacks, 0);
+  // Failing again is about the method itself.
+  await f.player.fallback('decode');
+  assert.equal(f.requests[1].mode, 'transcode');
+  assert.equal(f.requests[1].caps.clientAudio.length, 0);
+});

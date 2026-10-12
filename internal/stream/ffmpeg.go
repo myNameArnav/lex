@@ -322,6 +322,12 @@ func buildArgs(cfg store.Config, ff FFInfo, f *store.File, p Params) ([]string, 
 			}
 		}
 	}
+	movflags := "+frag_keyframe+empty_moov+default_base_moof+frag_discont"
+	if audio != nil && p.AudioCopy && (audio.Codec == "ac3" || audio.Codec == "eac3") {
+		// The (E-)AC-3 sample entry is built from the first packet, so the
+		// moov has to wait for it.
+		movflags = "+frag_keyframe+empty_moov+delay_moov+default_base_moof+frag_discont"
+	}
 	// A duration cutoff can split a GOP between dependent frames. Firefox's
 	// MSE parser can then discard frames until the next keyframe, leaving a
 	// permanent playback hole despite a healthy download. Use the duration
@@ -329,7 +335,7 @@ func buildArgs(cfg store.Config, ff FFInfo, f *store.File, p Params) ([]string, 
 	args = append(args,
 		"-map_metadata", "-1", "-map_chapters", "-1", "-sn", "-dn",
 		"-avoid_negative_ts", "disabled", "-max_muxing_queue_size", "4096",
-		"-f", "mp4", "-movflags", "+frag_keyframe+empty_moov+default_base_moof+frag_discont",
+		"-f", "mp4", "-movflags", movflags,
 		"-min_frag_duration", strconv.Itoa(cfg.FragmentMs*1000),
 		"pipe:1")
 	return args, nil

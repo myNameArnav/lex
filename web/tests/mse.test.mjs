@@ -37,9 +37,14 @@ async function fixture(response, { quota = false, keyframeInterval = 0 } = {}) {
   });
   const source = await readFile(new URL('../static/js/mse.js', import.meta.url), 'utf8');
   const module = new vm.SourceTextModule(source, { context });
-  await module.link(() => new vm.SyntheticModule(['mediaSourceClass'], function () {
-    this.setExport('mediaSourceClass', () => null);
-  }, { context }));
+  await module.link((specifier) => specifier === './client-audio.js'
+    ? new vm.SyntheticModule(['AudioWorker', 'AudioConverter'], function () {
+      this.setExport('AudioWorker', class {});
+      this.setExport('AudioConverter', class {});
+    }, { context })
+    : new vm.SyntheticModule(['mediaSourceClass'], function () {
+      this.setExport('mediaSourceClass', () => null);
+    }, { context }));
   await module.evaluate();
   const engine = new module.namespace.MseEngine(video, {
     url: '/stream?sid=test', mime: 'video/mp4', duration: 1200,

@@ -68,6 +68,8 @@ frames from the films.</sub>
   - **Direct Play**: the original file with HTTP range requests (zero CPU).
   - **Direct Stream (remux)**: ffmpeg repackages to fragmented MP4 without touching
     video; unsupported audio (EAC3, DTS, TrueHD…) becomes AAC. Performance depends on the file and hardware.
+    Dolby audio (AC-3/E-AC-3) that the browser can't play (Firefox, Chrome) is copied as-is
+    and converted to AAC in the browser with WebAssembly, so the server never decodes it.
   - **Transcode**: H.264 via libx264 (or `h264_v4l2m2m`), bitrate/resolution caps,
     image-subtitle (PGS/VobSub) burn-in, optional HDR→SDR tone mapping.
   - The browser reports its codecs; the server picks the cheapest method and records
@@ -383,8 +385,9 @@ internal/logx      leveled logger with a recent-lines buffer for the UI
 internal/proc      child-process helpers
 internal/version   version number and build commit
 web/static         vanilla JavaScript UI (no build step)
-web/static/vendor  prebuilt third-party browser code (JASSUB subtitle renderer)
+web/static/vendor  prebuilt third-party browser code (JASSUB subtitle renderer, FFmpeg audio converter)
+wasm/audio         source of the browser's AC-3/E-AC-3 → AAC converter (scripts/build-audio-wasm.sh)
 deploy             Linux deployment examples
 docker             Raspberry Pi archive keys for the container build
-scripts            release builds and publication privacy checks
+scripts            release, WebAssembly builds and publication privacy checks
 ```
