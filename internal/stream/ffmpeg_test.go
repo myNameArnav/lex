@@ -33,13 +33,13 @@ func TestMP4FragmentsStartWithVideoKeyframes(t *testing.T) {
 	f := file(path, store.Stream{Index: 0, Codec: "h264", Width: 320, Height: 180, FrameRate: 24},
 		store.Stream{Index: 1, Codec: "eac3", Channels: 1, SampleRate: 48000})
 	for _, tc := range []struct {
-		name              string
-		copyVideo, stage2 bool
-	}{{"copy", true, false}, {"software-encode", false, false}, {"hardware-remux-stage", false, true}} {
+		name                         string
+		copyVideo, copyAudio, stage2 bool
+	}{{"copy", true, false, false}, {"copy-eac3", true, true, false}, {"software-encode", false, false, false}, {"hardware-remux-stage", false, false, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := store.DefaultConfig()
 			cfg.VideoEncoder, cfg.TranscodeThreads, cfg.FragmentMs = "libx264", 1, 1000
-			command, err := BuildArgs(cfg, FFInfo{}, f, Params{VideoCopy: tc.copyVideo, Audio: 1, Burn: -1, Bitrate: 1000, Height: 180, Channels: 2})
+			command, err := BuildArgs(cfg, FFInfo{}, f, Params{VideoCopy: tc.copyVideo, AudioCopy: tc.copyAudio, Audio: 1, Burn: -1, Bitrate: 1000, Height: 180, Channels: 2})
 			if err != nil {
 				t.Fatal(err)
 			}

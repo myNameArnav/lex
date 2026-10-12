@@ -68,6 +68,42 @@ func TestDecide(t *testing.T) {
 	}
 }
 
+// Firefox can't decode E-AC-3 but the player can convert it: the server
+// copies it and asks for AAC from the browser.
+func TestDecideClientAudio(t *testing.T) {
+	cfg := store.DefaultConfig()
+	f := file("/m/a.mkv", store.Stream{Index: 0, Codec: "h264", BitDepth: 8, Width: 1920, Height: 1080, CodecString: "avc1.640028"},
+		store.Stream{Index: 1, Codec: "eac3", Channels: 6, Default: true, CodecString: "ec-3"})
+	caps := chrome
+	caps.ClientAudio = []string{"ac3", "eac3"}
+	p, err := Decide(cfg, f, PlanRequest{Audio: -1, Subtitle: -1, Caps: caps}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ClientAudio{Codec: "eac3", Channels: 2, Bitrate: 192}
+	if p.Method != "remux" || !p.AudioCopy || p.ClientAudio == nil || *p.ClientAudio != want {
+		t.Fatalf("got %s acopy=%v client=%+v", p.Method, p.AudioCopy, p.ClientAudio)
+	}
+	if p.Mime != `video/mp4; codecs="avc1.640028,mp4a.40.2"` {
+		t.Errorf("mime %q should name the AAC the browser produces", p.Mime)
+	}
+	if !strings.Contains(strings.Join(p.Reasons, ";"), "converted in the browser") {
+		t.Errorf("reasons %v", p.Reasons)
+	}
+
+	// Turned off, or HLS (no MSE to feed): the server converts it.
+	off := cfg
+	off.ClientAudio = false
+	p, _ = Decide(off, f, PlanRequest{Audio: -1, Subtitle: -1, Caps: caps}, false)
+	if p.AudioCopy || p.ClientAudio != nil {
+		t.Errorf("disabled: acopy=%v client=%+v", p.AudioCopy, p.ClientAudio)
+	}
+	p, _ = Decide(cfg, f, PlanRequest{Audio: -1, Subtitle: -1, Caps: caps, ForceHLS: true}, false)
+	if p.ClientAudio != nil {
+		t.Errorf("HLS: client=%+v", p.ClientAudio)
+	}
+}
+
 func TestRemoteLimit(t *testing.T) {
 	cfg := store.DefaultConfig()
 	cfg.RemoteMaxBitrate = 4000

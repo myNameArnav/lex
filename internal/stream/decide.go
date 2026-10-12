@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -20,6 +21,9 @@ type Caps struct {
 	NativeVideo map[string]bool `json:"nativeVideo"` // <video src> support
 	Audio       map[string]bool `json:"audio"`       // MSE (fMP4) audio support
 	NativeAudio map[string]bool `json:"nativeAudio"`
+	// ClientAudio lists the audio codecs the player can convert itself
+	// (WebAssembly), so the server copies them instead of transcoding.
+	ClientAudio []string `json:"clientAudio"`
 }
 
 type PlanRequest struct {
@@ -60,6 +64,15 @@ type Plan struct {
 	Remote    bool     `json:"remote"`
 	LimitKbps int      `json:"limitKbps"`
 	HLS       bool     `json:"hls"`
+	// ClientAudio is set when the stream carries audio the player must
+	// convert to AAC itself; it describes the AAC it should produce.
+	ClientAudio *ClientAudio `json:"clientAudio,omitempty"`
+}
+
+type ClientAudio struct {
+	Codec    string `json:"codec"`
+	Channels int    `json:"channels"`
+	Bitrate  int    `json:"bitrate"` // kbps
 }
 
 // Params are the ffmpeg job parameters, carried in the stream URL.
@@ -340,13 +353,17 @@ func Decide(cfg store.Config, f *store.File, req PlanRequest, remote bool) (*Pla
 	}
 
 	// ---- audio: copy or transcode ----
-	audioCopy := false
+	audioCopy, clientAudio := false, false
 	channels := cfg.AudioChannels
 	if a != nil {
 		audioCopy = audioCaps[a.Codec] && a.CodecString != ""
 		// MPEG-TS segments (HLS transcodes) can't carry FLAC/ALAC/Vorbis/Opus.
 		if hls && audioCopy && (a.Codec == "flac" || a.Codec == "alac" || a.Codec == "vorbis" || a.Codec == "opus") {
 			audioCopy = false
+		}
+		if !audioCopy && !hls && cfg.ClientAudio && slices.Contains(req.Caps.ClientAudio, a.Codec) {
+			audioCopy, clientAudio = true, true
+			reasons = append(reasons, fmt.Sprintf("audio codec %s converted in the browser", a.Codec))
 		}
 		if !audioCopy {
 			reasons = append(reasons, fmt.Sprintf("audio codec %s not supported", a.Codec))
@@ -404,10 +421,15 @@ func Decide(cfg store.Config, f *store.File, req PlanRequest, remote bool) (*Pla
 	}
 	acodec := ""
 	if a != nil {
-		if audioCopy {
+		switch {
+		case clientAudio:
+			acodec = "mp4a.40.2"
+			plan.ClientAudio = &ClientAudio{Codec: a.Codec, Channels: channels, Bitrate: AudioBitrate(cfg, channels)}
+			plan.AudioOut = fmt.Sprintf("AAC %s %d kbps (browser)", chStr(channels), AudioBitrate(cfg, channels))
+		case audioCopy:
 			acodec = a.CodecString
 			plan.AudioOut = describeAudio(a, true, 0)
-		} else {
+		default:
 			acodec = "mp4a.40.2"
 			plan.AudioOut = fmt.Sprintf("AAC %s %d kbps", chStr(channels), AudioBitrate(cfg, channels))
 		}

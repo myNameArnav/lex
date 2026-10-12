@@ -476,7 +476,9 @@ class Player {
     this.startupWatch = null;
     this.hideError();
     this.showSpinner(true);
-    const caps = detectCaps();
+    let caps = detectCaps();
+    // Browser audio conversion failed for this file: the server converts.
+    if (this.noClientAudio) caps = { ...caps, clientAudio: [] };
     let mode = overrides.mode || this.mode;
     // "HLS" isn't a server mode: it asks for HLS delivery with automatic
     // direct/remux/transcode choice. Only browsers with native HLS can use it.
@@ -717,6 +719,14 @@ class Player {
     this.failedPlan = this.plan;
     this.startupWatch = null;
     if (this.plan.hls && this.mode === 'hls') { this.showError(`HLS playback failed: ${reason}`, { transcode: true }); return; }
+    // The player was converting the audio: let the server do it instead,
+    // with the same method, before giving up on the method.
+    if (this.plan.clientAudio && !this.noClientAudio) {
+      this.noClientAudio = true;
+      toast("Couldn't convert the audio in this browser — the server will convert it");
+      await this.replan({ mode: this.mode, resume: true });
+      return;
+    }
     const order = ['direct', 'remux', 'transcode'];
     const idx = order.indexOf(this.plan.method);
     // A hardware-encoded transcode the browser can't parse: retry once with
@@ -1751,7 +1761,7 @@ class Player {
           on: () => { this.quality = k; prefs.set('quality', k); this.closeMenu(); this.replan(); },
         })));
       case 'method':
-        return page('Playback method', modes.map(([k, l, d]) => ({ label: l, sub: d, active: this.mode === k, on: () => { this.mode = k; prefs.set('mode', k); this.fallbacks = 0; this.swEncode = false; this.closeMenu(); this.replan(); } })));
+        return page('Playback method', modes.map(([k, l, d]) => ({ label: l, sub: d, active: this.mode === k, on: () => { this.mode = k; prefs.set('mode', k); this.fallbacks = 0; this.swEncode = false; this.noClientAudio = false; this.closeMenu(); this.replan(); } })));
       case 'speed':
         // The default rate survives load(), so the speed outlasts track,
         // quality and method changes, fallbacks and the next episode.
@@ -1916,11 +1926,12 @@ class Player {
     this.introSkipped = false;
     if (this.skipBtn) { this.skipBtn.remove(); this.skipBtn = null; }
     for (const c of [...this.rail.querySelectorAll('.chap, .seg')]) c.remove();
-    // Fallbacks (remux/transcode, software encoder) were for the last file;
+    // Fallbacks (remux/transcode, software encoder, server audio) were for the last file;
     // the next one starts from the user's chosen method again.
     this.fallbacks = 0;
     this.mode = prefs.get('mode');
     this.swEncode = false;
+    this.noClientAudio = false;
     this.stalls = { count: 0, secs: 0, since: 0 };
     this.teardown();
   }
