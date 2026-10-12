@@ -47,37 +47,60 @@ type Guide struct {
 	days        map[string][]Program // channel id + filter + date
 	channels    []Channel
 	channelsAt  time.Time
-	channelsFor string // the admin's channels the list was made from
+	channelsFor string // the admin's channels (and hidden ones) the list was made from
 }
 
 func New(st *store.Store) *Guide { return &Guide{St: st, days: map[string][]Program{}} }
 
-// Channels lists the admin's channels (Settings › Server), then every channel
-// the library could fill: All (with more than one library), one per library,
-// then the most common genres. A channel with nothing to air (e.g. a library
-// still scanning) still appears, with no programs. The list is kept for a
-// minute, or until the admin's channels change: the guide and every tune ask.
+// Channels lists the admin's channels (Settings › Server), then the
+// automatic ones the admin hasn't turned off. A channel with nothing to air
+// (e.g. a library still scanning) is still listed here, with no programs, so
+// numbers don't shift. The list is kept for a minute, or until the admin's
+// channels change: the guide and every tune ask.
 func (g *Guide) Channels() ([]Channel, error) {
-	custom := g.St.Config().TVChannels
-	sig := fmt.Sprint(custom)
+	cfg := g.St.Config()
+	sig := fmt.Sprint(cfg.TVChannels, cfg.TVHidden)
 	g.mu.Lock()
 	if time.Since(g.channelsAt) < time.Minute && g.channelsFor == sig {
 		defer g.mu.Unlock()
 		return g.channels, nil
 	}
 	g.mu.Unlock()
+	var out []Channel
+	for _, c := range cfg.TVChannels {
+		f := store.AirFilter{Libraries: c.Libraries, Genres: c.Genres, Kind: c.Kind, Exclude: c.Exclude}
+		if c.Kind == "picked" {
+			f = store.AirFilter{Kind: c.Kind, Titles: c.Titles}
+		}
+		out = append(out, Channel{ID: "custom-" + c.ID, Name: c.Name, filter: f})
+	}
+	auto, err := g.Automatic()
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range auto {
+		if !slices.Contains(cfg.TVHidden, c.ID) {
+			out = append(out, c)
+		}
+	}
+	for i := range out {
+		out[i].Number = i + 1
+	}
+	g.mu.Lock()
+	g.channels, g.channelsAt, g.channelsFor = out, time.Now(), sig
+	g.mu.Unlock()
+	return out, nil
+}
+
+// Automatic lists every channel the library could fill, hidden or not, and
+// unnumbered: All (with more than one library), one per library, then the
+// most common genres.
+func (g *Guide) Automatic() ([]Channel, error) {
 	libs, err := g.St.Libraries()
 	if err != nil {
 		return nil, err
 	}
 	var out []Channel
-	for _, c := range custom {
-		f := store.AirFilter{Libraries: c.Libraries, Genres: c.Genres, Kind: c.Kind, Exclude: c.Exclude}
-		if c.Kind == "picked" {
-			f = store.AirFilter{Kind: c.Kind, Titles: c.Titles, Exclude: c.Exclude}
-		}
-		out = append(out, Channel{ID: "custom-" + c.ID, Name: c.Name, filter: f})
-	}
 	if len(libs) > 1 {
 		out = append(out, Channel{ID: "all", Name: "All"})
 	}
@@ -91,12 +114,6 @@ func (g *Guide) Channels() ([]Channel, error) {
 	for _, name := range genres {
 		out = append(out, Channel{ID: "genre-" + name, Name: name, filter: store.AirFilter{Genres: []string{name}}})
 	}
-	for i := range out {
-		out[i].Number = i + 1
-	}
-	g.mu.Lock()
-	g.channels, g.channelsAt, g.channelsFor = out, time.Now(), sig
-	g.mu.Unlock()
 	return out, nil
 }
 

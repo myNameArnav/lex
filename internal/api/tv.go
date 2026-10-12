@@ -67,6 +67,26 @@ func (s *Server) tvGuide(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"channels": out, "serverTime": now.UnixMilli()})
 }
 
+// tvAutomatic lists the automatic channels for Settings › Server, including
+// the ones turned off, and answers while Live TV is off so it can be set up
+// first.
+func (s *Server) tvAutomatic(w http.ResponseWriter, r *http.Request) {
+	chs, err := s.TV.Automatic()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	type auto struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	out := []auto{}
+	for _, c := range chs {
+		out = append(out, auto{c.ID, c.Name})
+	}
+	writeJSON(w, out)
+}
+
 // tvChannel answers what's on a channel: at ?at= (Unix ms; the end of the
 // program that just finished, so the player doesn't tune back into it when
 // its own clock runs ahead, or a file ended before its slot), or now. A time
