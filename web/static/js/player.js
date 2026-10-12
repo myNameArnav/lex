@@ -719,16 +719,20 @@ class Player {
     this.failedPlan = this.plan;
     this.startupWatch = null;
     if (this.plan.hls && this.mode === 'hls') { this.showError(`HLS playback failed: ${reason}`, { transcode: true }); return; }
-    // The player was converting the audio: let the server do it instead,
-    // with the same method, before giving up on the method.
-    if (this.plan.clientAudio && !this.noClientAudio) {
-      this.noClientAudio = true;
-      toast("Couldn't convert the audio in this browser — the server will convert it");
-      await this.replan({ mode: this.mode, resume: true });
-      return;
-    }
     const order = ['direct', 'remux', 'transcode'];
     const idx = order.indexOf(this.plan.method);
+    // Converting the audio in the browser: when the converter itself failed
+    // (client-audio.js errors say so), or nothing is left to fall back to,
+    // let the server convert it with the same method. Other failures are
+    // usually the video (e.g. 10-bit HEVC the browser claims but can't
+    // decode); the next method still converts the audio here.
+    const serverAudio = () => {
+      this.noClientAudio = true;
+      toast("Couldn't convert the audio in this browser — the server will convert it");
+      return this.replan({ mode: this.mode, resume: true });
+    };
+    const clientAudio = this.plan.clientAudio && !this.noClientAudio;
+    if (clientAudio && reason.includes('Browser audio decoding')) return serverAudio();
     // A hardware-encoded transcode the browser can't parse: retry once with
     // the server's software encoder before giving up.
     if (idx === 2 && /hardware/.test(this.plan.videoOut || '') && !this.swEncode) {
@@ -737,7 +741,11 @@ class Player {
       await this.replan({ mode: 'transcode', resume: true });
       return;
     }
-    if (this.fallbacks >= 2 || idx >= 2) { this.showError(`Playback failed: ${reason}`, { transcode: true }); return; }
+    if (this.fallbacks >= 2 || idx >= 2) {
+      if (clientAudio) return serverAudio();
+      this.showError(`Playback failed: ${reason}`, { transcode: true });
+      return;
+    }
     this.fallbacks++;
     const next = order[idx + 1];
     toast(`${METHOD_LABEL[this.plan.method]} didn't work in this browser — switching to ${METHOD_LABEL[next]}`);
