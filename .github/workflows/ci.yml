@@ -1,7 +1,7 @@
 name: CI
+# Pull requests only: a PR's run tests it merged into main, so the merge
+# itself needn't run again. Release runs the tests on every tag.
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:

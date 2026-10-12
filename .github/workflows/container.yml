@@ -1,25 +1,33 @@
 name: Container image
 # Multi-arch image (linux/amd64 + linux/arm64) on GitHub Container Registry:
-#   v1.2.3 tag   -> :1.2.3, :1.2, :latest
-#   main         -> :edge
-#   every build  -> :sha-<commit>
-# Pull requests build both architectures without pushing.
+#   v1.2.3 tag             -> :1.2.3, :1.2, :latest
+#   manual run on main     -> :edge (an unreleased build, e.g. to try on a Pi)
+#   every pushed build     -> :sha-<commit>
+# Pull requests that touch the image's inputs build both architectures
+# without pushing (CI already builds the amd64 image for every PR); a newer
+# push to the PR cancels the older build.
 # The arm64 runtime layer (apt under emulation) takes most of a build, so
-# layers are kept in :buildcache. main and tags write it; pull requests only
-# read it. The cache follows debian:trixie-slim: a new base image rebuilds
-# the layer and picks up package updates.
+# layers are kept in :buildcache. Tags and manual runs write it; pull
+# requests only read it. The cache follows debian:trixie-slim: a new base
+# image rebuilds the layer and picks up package updates.
 on:
   push:
-    branches: [main]
     tags: ['v*']
   pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - docker/**
+      - go.mod
+      - go.sum
+      - .github/workflows/container.yml
   workflow_dispatch:
 permissions:
   contents: read
   packages: write
 concurrency:
   group: container-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   image:
     runs-on: ubuntu-latest
