@@ -675,3 +675,30 @@ test('shuffle plays its own order: Next is the next shuffled episode, then nothi
   await player.start(7, 0);
   assert.equal(player.detail.next, null);
 });
+
+test('PgUp / PgDn move between chapters, and PgDn near a chapter start goes to the one before', async () => {
+  const f = await fixture();
+  const osds = [];
+  f.player.root.querySelector = () => null;
+  f.player.osd = text => { osds.push(text); return {}; };
+  f.player.file = { id: 2, info: { duration: 600, chapters: [
+    { start: 300, title: 'Credits' }, { start: 0, title: 'Chapter 1' }, { start: 90, title: '' }, { start: 700, title: 'Past the end' },
+  ] } };
+  assert.deepEqual(f.player.chapters().map(c => [c.start, c.label, c.named]), [[0, 'Chapter 1', false], [90, 'Chapter 2', false], [300, 'Credits', true]]);
+  f.video.currentTime = 10;
+  f.player.key(keydown('PageUp'));
+  assert.equal(f.video.currentTime, 90);
+  f.player.key(keydown('PageUp'));
+  assert.equal(f.video.currentTime, 300);
+  f.player.key(keydown('PageUp'));
+  assert.equal(f.video.currentTime, 300);
+  f.video.currentTime = 320; // well into Credits: back to its start
+  f.player.key(keydown('PageDown'));
+  assert.equal(f.video.currentTime, 300);
+  f.player.key(keydown('PageDown')); // at its start: the chapter before
+  assert.equal(f.video.currentTime, 90);
+  assert.deepEqual(osds, ['Chapter 2', 'Credits', 'Last chapter', 'Credits', 'Chapter 2']);
+  f.player.file = { id: 2, info: { duration: 600 } };
+  f.player.key(keydown('PageUp'));
+  assert.equal(osds.at(-1), 'No chapters');
+});

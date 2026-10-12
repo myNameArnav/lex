@@ -33,7 +33,7 @@ const SECTIONS = [
     [['0 – 9'], 'Jump to 0% – 90%'], [['Home', 'End'], 'Start / near the end'],
     [['f'], 'Fullscreen'], [['c'], 'Subtitles & audio'],
     [['g', 'h'], 'Subtitles earlier / later (0.1 s)'],
-    [['n'], 'Next episode (Live TV: next channel)'], [['PgUp', 'PgDn'], 'Live TV: channel up / down'],
+    [['n'], 'Next episode (Live TV: next channel)'], [['PgUp', 'PgDn'], 'Next / previous chapter (Live TV: channel up / down)'],
     [['s'], 'Skip intro'], [['i'], 'Stats for nerds'],
     [['Esc'], 'Close the menu, then the player'],
   ]],
