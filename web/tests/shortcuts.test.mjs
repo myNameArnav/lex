@@ -4,7 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 
 // Load shortcuts.js against stub modules and capture its keydown handler.
-async function fixture({ shortcuts = true, playerOpen = false, playing = false } = {}) {
+async function fixture({ shortcuts = true, playerOpen = false, playing = false, liveTv = false } = {}) {
   const calls = { search: 0, go: [], modals: [], paused: 0, resumed: 0, clicks: 0 };
   let keydown = null;
   const document = {
@@ -36,7 +36,7 @@ async function fixture({ shortcuts = true, playerOpen = false, playing = false }
     }, { context });
   });
   await module.evaluate();
-  module.namespace.installShortcuts({ focusSearch: () => calls.search++, go: (hash) => calls.go.push(hash), libraries: () => [{ id: 1 }, { id: 2 }] });
+  module.namespace.installShortcuts({ focusSearch: () => calls.search++, go: (hash) => calls.go.push(hash), libraries: () => [{ id: 1 }, { id: 2 }], liveTv: () => liveTv });
   const press = (key, mods = {}) => {
     const e = { key, target: { tagName: 'BODY' }, metaKey: false, ctrlKey: false, altKey: false, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }, ...mods };
     keydown(e);
@@ -94,4 +94,13 @@ test('the in-player sheet lists only player keys and pauses playback', async () 
   assert.equal(calls.resumed, 0);
   calls.modals.at(-1).close();
   assert.equal(calls.resumed, 1);
+});
+
+test('g then t opens Live TV only while it is turned on', async () => {
+  const off = await fixture();
+  off.press('g'); off.press('t');
+  assert.deepEqual(off.calls.go, []);
+  const on = await fixture({ liveTv: true });
+  on.press('g'); on.press('t');
+  assert.deepEqual(on.calls.go, ['#/tv']);
 });

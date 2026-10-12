@@ -1,6 +1,6 @@
 import { h, clear, icons, toast, modal, confirmDialog, spinner, toggle, fmtBytes, fmtBitrate, fmtTime, fmtDate, timeAgo, fmtUptime, fmtDuration, LANG_OPTIONS, $, run, staleBanner, motionOK, KIND_LABELS, METHOD_LABEL, reasonLabel, emptyState } from './ui.js';
 import { api, img } from './api.js';
-import { state, loadLibraries, refreshSoft, setLeaveGuard, focusAfterRoute } from './app.js';
+import { state, loadLibraries, refreshSoft, setLeaveGuard, focusAfterRoute, renderNav } from './app.js';
 import { prefs, DEFAULTS, QUALITIES } from './prefs.js';
 import { capsSummary } from './caps.js';
 import { lineChart, columnChart, barList, axisHours, axisBitrate } from './charts.js';
@@ -295,7 +295,9 @@ async function configForm(build, { check } = {}) {
         if (sent[k] !== cfg[k]) reset.push(labelOf(input) || k);
         if (draft[k] === cfg[k]) input.value = cfg[k];
       }
-      state.caps = { ...state.caps, subtitleSearch: !!cfg.openSubtitlesKey?.trim(), cacheEnabled: !!cfg.cacheEnabled };
+      // The server decides what's usable (see caps in auth.go).
+      try { state.caps = (await api('/api/me')).caps || state.caps; } catch {}
+      renderNav();
       if (cfg.serverName && cfg.serverName !== state.serverName) {
         state.serverName = cfg.serverName;
         const logo = $('.topbar .logo');
@@ -337,6 +339,9 @@ function serverSection() {
   return configForm(({ draft, num, text, list, tg, info }) => [
     h('div', { class: 'form-section' }, h('h2', null, 'General'),
       field('Server name', text('serverName'))),
+    h('div', { class: 'form-section' }, h('h2', null, 'Live TV'),
+      h('p', { class: 'help', style: { margin: 0 } }, 'Channels that play the library at random, like broadcast TV: one for everything, one per library and one per common genre. Everyone tuned to a channel sees the same program. Live TV saves no resume points or watched marks.'),
+      tg('liveTv', 'Enable Live TV', 'Adds Live TV to the menu for every user.')),
     h('div', { class: 'form-section' }, h('h2', null, 'Library scanning'),
       h('div', { class: 'form-grid' },
         field('Rescan every (minutes)', num('scanIntervalMin', { min: 0 }), '0 disables periodic scans. Scans only stat files, so they are cheap.'),

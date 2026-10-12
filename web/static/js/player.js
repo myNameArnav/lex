@@ -1903,7 +1903,10 @@ class Player {
       if (!live.channels.some((c) => c.id === r.channel.id)) live.channels = [r.channel];
       await this.start(r.now.item.id, Math.max(0, this.livePosition()));
     } catch (e) {
-      if (!this.closed && token === live.token) this.planFailed(e);
+      if (this.closed || token !== live.token) return;
+      // Live TV turned off, or nothing left to air: no point retrying.
+      if (e.status === 404) this.showError(e.message, { title: 'Live TV isn’t available', retry: false });
+      else this.planFailed(e);
     }
   }
 

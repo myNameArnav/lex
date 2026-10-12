@@ -13,6 +13,17 @@ import (
 // lets the player work out how far into a program it joins without trusting
 // the device's clock.
 
+// liveTV answers 404 while Live TV is turned off (Settings › Server).
+func (s *Server) liveTV(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.St.Config().LiveTV {
+			writeErr(w, 404, "Live TV is turned off")
+			return
+		}
+		next(w, r)
+	}
+}
+
 type programView struct {
 	Item  *store.Item `json:"item"`
 	Start int64       `json:"start"`

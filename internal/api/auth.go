@@ -37,12 +37,14 @@ func (s *Server) issueToken(w http.ResponseWriter, r *http.Request, u *store.Use
 
 // caps tells the UI which optional features are usable, so it can hide
 // actions that would only fail: subtitle search needs an OpenSubtitles key,
-// and the SSD cache actions are admin-only and need the cache enabled.
+// the SSD cache actions are admin-only and need the cache enabled, and Live
+// TV is off unless an admin turns it on.
 func (s *Server) caps(u *store.User) map[string]bool {
 	c := s.St.Config()
 	return map[string]bool{
 		"subtitleSearch": strings.TrimSpace(c.OpenSubtitlesKey) != "",
 		"cacheEnabled":   u.IsAdmin && c.CacheEnabled,
+		"liveTv":         c.LiveTV,
 	}
 }
 

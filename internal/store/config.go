@@ -67,6 +67,9 @@ type Config struct {
 
 	WebhookToken string `json:"webhookToken"`
 
+	// LiveTV turns on the Live TV channels (off by default).
+	LiveTV bool `json:"liveTv"`
+
 	// SSD cache for media files living on a slower disk.
 	CacheEnabled   bool   `json:"cacheEnabled"`
 	CacheDir       string `json:"cacheDir"` // empty = <data>/cache

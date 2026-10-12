@@ -3,8 +3,8 @@
 A lightweight, self-hosted media server in the spirit of Plex / Emby / Jellyfin,
 built for small Linux hosts, including Raspberry Pi. A Go binary with SQLite,
 `ffmpeg`/`ffprobe` for media processing, and a dependency-free web UI embedded
-in the binary, with Live TV channels that play your library at random. macOS
-can be used for local development.
+in the binary, with optional Live TV channels that play your library at random.
+macOS can be used for local development.
 
 > [!NOTE]
 > **Built by AI.** Lex was written by large language models (LLM coding
@@ -103,7 +103,8 @@ frames from the films.</sub>
   day's schedule is fixed per channel, so tuning in joins whatever is on part-way
   through, and the guide shows what's on now and next. The player moves on with
   the schedule, has Go live after a pause and channel up/down (`n`, `PgUp`/`PgDn`).
-  Live TV saves no resume points or watched marks.
+  Live TV saves no resume points or watched marks. It's off by default: an admin
+  turns it on in Settings → Server.
 - **Interface** – a two-row player toolbar on narrow screens, keyboard-accessible
   episode playback and seek controls, labeled settings, and dialogs that contain
   focus and return it when closed. Playback actions appear before long synopses;
@@ -177,7 +178,7 @@ are published to GitHub Container Registry:
 
 | Tag | Updated |
 |---|---|
-| `ghcr.io/mynamearnav/lex:latest`, `:<major.minor>`, `:<version>` (e.g. `:0.0.7`) | with each release |
+| `ghcr.io/mynamearnav/lex:latest`, `:<major.minor>`, `:<version>` (e.g. `:0.0.8`) | with each release |
 | `ghcr.io/mynamearnav/lex:edge` | with every change on `main` |
 
 ```sh
@@ -292,12 +293,12 @@ working; the list then opens with `Ctrl`/`⌘` + `/`.
 ## Versions and releases
 
 The version number lives in `internal/version/VERSION`; builds add the commit
-they came from (`lex -version` prints e.g. `lex 0.0.7 (0c32199)`, and it's shown
+they came from (`lex -version` prints e.g. `lex 0.0.8 (b14e16e)`, and it's shown
 in Settings → About and the account menu). To release, bump that file, commit,
 and push a matching tag:
 
 ```sh
-git tag -a v0.0.8 -m "Lex v0.0.8" && git push origin v0.0.8
+git tag -a v0.0.9 -m "Lex v0.0.9" && git push origin v0.0.9
 ```
 
 The Release workflow checks the tag against the file, runs the tests, builds

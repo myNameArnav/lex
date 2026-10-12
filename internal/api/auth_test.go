@@ -36,8 +36,11 @@ func TestMeReportsCaps(t *testing.T) {
 		}
 		return body.Caps
 	}
-	want := func(t *testing.T, got map[string]bool, subs, cache bool) {
+	want := func(t *testing.T, got map[string]bool, subs, cache, live bool) {
 		t.Helper()
+		if v, ok := got["liveTv"]; !ok || v != live {
+			t.Errorf("liveTv = %v (present %v), want %v", v, ok, live)
+		}
 		if v, ok := got["subtitleSearch"]; !ok || v != subs {
 			t.Errorf("subtitleSearch = %v (present %v), want %v", v, ok, subs)
 		}
@@ -46,24 +49,26 @@ func TestMeReportsCaps(t *testing.T) {
 		}
 	}
 
-	want(t, caps(t, adminToken), false, false)
-	want(t, caps(t, viewerToken), false, false)
+	want(t, caps(t, adminToken), false, false, false)
+	want(t, caps(t, viewerToken), false, false, false)
 
 	cfg := s.St.Config()
 	cfg.OpenSubtitlesKey = "  key  "
 	cfg.CacheEnabled = true
+	cfg.LiveTV = true
 	if _, err := s.St.SaveConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
-	want(t, caps(t, adminToken), true, true)
-	// The cache actions are admin-only, so viewers never see it enabled.
-	want(t, caps(t, viewerToken), true, false)
+	want(t, caps(t, adminToken), true, true, true)
+	// The cache actions are admin-only, so viewers never see it enabled;
+	// Live TV is for everyone.
+	want(t, caps(t, viewerToken), true, false, true)
 
 	cfg.OpenSubtitlesKey = "   "
 	if _, err := s.St.SaveConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
-	want(t, caps(t, adminToken), false, true)
+	want(t, caps(t, adminToken), false, true, true)
 
 	// Signing in returns the caps too, so the UI needn't ask again.
 	r := httptest.NewRequest("POST", "http://lex.test/api/auth/login", strings.NewReader(`{"name":"viewer","password":"test-password-123"}`))
@@ -78,5 +83,5 @@ func TestMeReportsCaps(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &login); err != nil {
 		t.Fatal(err)
 	}
-	want(t, login.Caps, false, false)
+	want(t, login.Caps, false, false, true)
 }
