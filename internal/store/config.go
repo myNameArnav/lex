@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"runtime"
+	"slices"
+	"strconv"
+	"strings"
 )
 
 // Config is the server-wide settings document, editable from the admin UI.
@@ -67,8 +70,10 @@ type Config struct {
 
 	WebhookToken string `json:"webhookToken"`
 
-	// LiveTV turns on the Live TV channels (off by default).
-	LiveTV bool `json:"liveTv"`
+	// LiveTV turns on the Live TV channels (off by default); TVChannels are
+	// the admin's own, aired before the automatic ones.
+	LiveTV     bool        `json:"liveTv"`
+	TVChannels []TVChannel `json:"tvChannels"`
 
 	// SSD cache for media files living on a slower disk.
 	CacheEnabled   bool   `json:"cacheEnabled"`
@@ -85,6 +90,21 @@ type Config struct {
 	IntroScanSecs int  `json:"introScanSecs"`
 	IntroMinSecs  int  `json:"introMinSecs"`
 	IntroMaxSecs  int  `json:"introMaxSecs"`
+}
+
+// TVChannel is a Live TV channel an admin made. Kind "picked" airs just
+// its Titles (movies and shows, by item id). Otherwise it airs what matches
+// every filter: any of its libraries, any of its genres, its kind ("movie",
+// "show", or "" for both), where an empty filter doesn't limit. Either way
+// it leaves out the titles in Exclude.
+type TVChannel struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Libraries []int64  `json:"libraries"`
+	Genres    []string `json:"genres"`
+	Kind      string   `json:"kind"`
+	Titles    []int64  `json:"titles"`
+	Exclude   []int64  `json:"exclude"`
 }
 
 func DefaultConfig() Config {
@@ -232,6 +252,46 @@ func (c *Config) normalize() {
 	if c.WebhookToken == "" {
 		c.WebhookToken = RandomToken(12)
 	}
+	c.normalizeTVChannels()
+}
+
+// normalizeTVChannels gives every channel a unique id (the UI makes one,
+// but a hand-edited config may not), a name and a known kind, and uses
+// empty lists rather than null so the UI can compare drafts.
+func (c *Config) normalizeTVChannels() {
+	chs := make([]TVChannel, 0, len(c.TVChannels))
+	seen := map[string]bool{}
+	for i, ch := range c.TVChannels {
+		ch.ID = strings.TrimSpace(ch.ID)
+		for ch.ID == "" || seen[ch.ID] {
+			ch.ID = RandomToken(4)
+		}
+		seen[ch.ID] = true
+		if ch.Name = strings.TrimSpace(ch.Name); ch.Name == "" {
+			ch.Name = "Channel " + strconv.Itoa(i+1)
+		}
+		if ch.Kind != "movie" && ch.Kind != "show" && ch.Kind != "picked" {
+			ch.Kind = ""
+		}
+		ch.Libraries, ch.Titles, ch.Exclude = ids(ch.Libraries), ids(ch.Titles), ids(ch.Exclude)
+		ch.Genres = slices.DeleteFunc(slices.Clone(ch.Genres), func(g string) bool { return strings.TrimSpace(g) == "" })
+		if ch.Genres == nil {
+			ch.Genres = []string{}
+		}
+		chs = append(chs, ch)
+	}
+	c.TVChannels = chs
+}
+
+// ids drops non-ids and repeats, keeping the order.
+func ids(in []int64) []int64 {
+	out := []int64{}
+	for _, id := range in {
+		if id > 0 && !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func (s *Store) loadConfig() error {

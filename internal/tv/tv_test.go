@@ -99,7 +99,7 @@ func TestGuideChannelsAndAt(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	crime, err := st.Airables(0, "Crime")
+	crime, err := st.Airables(store.AirFilter{Genres: []string{"Crime"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,8 +108,34 @@ func TestGuideChannelsAndAt(t *testing.T) {
 		t.Fatalf("Crime airables = %+v", crime)
 	}
 	// Stored genres are JSON, which escapes "&".
-	if action, err := st.Airables(0, "Action & Adventure"); err != nil || len(action) != 1 || action[0].ItemID != 6 {
+	if action, err := st.Airables(store.AirFilter{Genres: []string{"Action & Adventure"}}); err != nil || len(action) != 1 || action[0].ItemID != 6 {
 		t.Fatalf("Action & Adventure airables = %+v, %v", action, err)
+	}
+	// Filters combine: any library, any genre, and the kind.
+	for _, c := range []struct {
+		f    store.AirFilter
+		want []int64
+	}{
+		{store.AirFilter{}, []int64{1, 5, 6}},
+		{store.AirFilter{Kind: "movie"}, []int64{1, 6}},
+		{store.AirFilter{Kind: "show"}, []int64{5}},
+		{store.AirFilter{Libraries: []int64{2}}, []int64{5}},
+		{store.AirFilter{Genres: []string{"Crime", "Action & Adventure"}, Kind: "movie"}, []int64{1, 6}},
+		{store.AirFilter{Libraries: []int64{1, 2}, Genres: []string{"Family"}}, nil},
+		// Titles are movies and shows: a show brings its episodes.
+		{store.AirFilter{Kind: "picked", Titles: []int64{3, 6}}, []int64{5, 6}},
+		{store.AirFilter{Kind: "picked"}, nil},
+		{store.AirFilter{Exclude: []int64{3, 1}}, []int64{6}},
+		{store.AirFilter{Kind: "picked", Titles: []int64{1, 3}, Exclude: []int64{3}}, []int64{1}},
+	} {
+		got, err := st.Airables(c.f)
+		var ids []int64
+		for _, a := range got {
+			ids = append(ids, a.ItemID)
+		}
+		if err != nil || !slices.Equal(ids, c.want) {
+			t.Errorf("Airables(%+v) = %v, %v; want %v", c.f, ids, err, c.want)
+		}
 	}
 	g := New(st)
 	chs, err := g.Channels()
@@ -135,5 +161,84 @@ func TestGuideChannelsAndAt(t *testing.T) {
 	late := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 0, 0, now.Location())
 	if progs, _ := g.Next(chs[2], late, 2); len(progs) != 2 || !progs[0].End.Equal(nextMidnight(late)) || !progs[1].Start.Equal(nextMidnight(late)) {
 		t.Fatalf("across midnight: %+v", progs)
+	}
+}
+
+// An admin's channels come first and air only what matches; editing one
+// shows at once.
+func TestCustomChannels(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	db := st.DB()
+	for _, q := range []string{
+		`INSERT INTO libraries(id,name,kind,paths,created_at) VALUES(1,'Movies','movies','[]',0)`,
+		`INSERT INTO items(id,library_id,kind,show_id,title,sort_title,genres,added_at,updated_at) VALUES
+			(1,1,'movie',0,'Heat','heat','["Crime"]',0,0),(2,1,'movie',0,'Up','up','["Family"]',0,0)`,
+		`INSERT INTO files(id,item_id,library_id,path,size,mtime,added_at,duration) VALUES
+			(1,1,1,'/m/heat.mkv',1,0,0,6000),(2,2,1,'/m/up.mkv',1,0,0,5000)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setChannels := func(chs ...store.TVChannel) {
+		c := st.Config()
+		c.TVChannels = chs
+		if _, err := st.SaveConfig(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	airs := func(ch Channel) map[int64]bool {
+		progs, err := New(st).Programs(ch, time.Now(), time.Now().Add(24*time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[int64]bool{}
+		for _, p := range progs {
+			out[p.ItemID] = true
+		}
+		return out
+	}
+	g := New(st)
+	setChannels(store.TVChannel{ID: "crime", Name: "Crime Night", Genres: []string{"Crime"}})
+	chs, err := g.Channels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chs) != 2 || chs[0].ID != "custom-crime" || chs[0].Name != "Crime Night" || chs[0].Number != 1 || chs[1].ID != "lib-1" {
+		t.Fatalf("channels = %+v", chs)
+	}
+	progs, err := g.Next(chs[0], time.Now(), 3)
+	if err != nil || len(progs) != 3 {
+		t.Fatalf("Next: %d programs, %v", len(progs), err)
+	}
+	for _, p := range progs {
+		if p.ItemID != 1 {
+			t.Fatalf("Crime Night aired %d", p.ItemID)
+		}
+	}
+	setChannels(store.TVChannel{ID: "crime", Name: "Family", Genres: []string{"Family"}})
+	chs, _ = g.Channels()
+	if chs[0].Name != "Family" {
+		t.Fatalf("renamed channel = %+v", chs[0])
+	}
+	if progs, _ := g.Next(chs[0], time.Now(), 1); len(progs) != 1 || progs[0].ItemID != 2 {
+		t.Fatalf("after editing the filter: %+v", progs)
+	}
+	if got := airs(chs[0]); !got[2] || got[1] {
+		t.Fatalf("Family airs %v", got)
+	}
+	// Picking titles ignores the filters left from before.
+	setChannels(store.TVChannel{ID: "crime", Name: "Up", Kind: "picked", Titles: []int64{2}, Genres: []string{"Crime"}})
+	chs, _ = g.Channels()
+	if got := airs(chs[0]); len(got) != 1 || !got[2] {
+		t.Fatalf("picked channel airs %v", got)
+	}
+	setChannels()
+	if chs, _ := g.Channels(); len(chs) != 1 || chs[0].ID != "lib-1" {
+		t.Fatalf("after removing it: %+v", chs)
 	}
 }

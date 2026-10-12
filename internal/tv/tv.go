@@ -5,6 +5,7 @@
 package tv
 
 import (
+	"fmt"
 	"hash/fnv"
 	"math/rand/v2"
 	"slices"
@@ -15,14 +16,14 @@ import (
 	"lex/internal/store"
 )
 
-// Channel is a source of programs: a whole server, a library or a genre.
+// Channel is a source of programs: one an admin made, the whole server, a
+// library or a genre.
 type Channel struct {
 	ID     string `json:"id"`
 	Number int    `json:"number"`
 	Name   string `json:"name"`
 
-	libraryID int64
-	genre     string
+	filter store.AirFilter
 }
 
 // Program is one slot in a schedule. A program that would run past midnight
@@ -42,21 +43,25 @@ const (
 type Guide struct {
 	St *store.Store
 
-	mu         sync.Mutex
-	days       map[string][]Program // channel id + date
-	channels   []Channel
-	channelsAt time.Time
+	mu          sync.Mutex
+	days        map[string][]Program // channel id + filter + date
+	channels    []Channel
+	channelsAt  time.Time
+	channelsFor string // the admin's channels the list was made from
 }
 
 func New(st *store.Store) *Guide { return &Guide{St: st, days: map[string][]Program{}} }
 
-// Channels lists every channel the library could fill: All (with more than
-// one library), one per library, then the most common genres. A channel with
-// nothing to air (e.g. a library still scanning) still appears, with no
-// programs. The list is kept for a minute: the guide and every tune ask.
+// Channels lists the admin's channels (Settings › Server), then every channel
+// the library could fill: All (with more than one library), one per library,
+// then the most common genres. A channel with nothing to air (e.g. a library
+// still scanning) still appears, with no programs. The list is kept for a
+// minute, or until the admin's channels change: the guide and every tune ask.
 func (g *Guide) Channels() ([]Channel, error) {
+	custom := g.St.Config().TVChannels
+	sig := fmt.Sprint(custom)
 	g.mu.Lock()
-	if time.Since(g.channelsAt) < time.Minute {
+	if time.Since(g.channelsAt) < time.Minute && g.channelsFor == sig {
 		defer g.mu.Unlock()
 		return g.channels, nil
 	}
@@ -66,24 +71,31 @@ func (g *Guide) Channels() ([]Channel, error) {
 		return nil, err
 	}
 	var out []Channel
+	for _, c := range custom {
+		f := store.AirFilter{Libraries: c.Libraries, Genres: c.Genres, Kind: c.Kind, Exclude: c.Exclude}
+		if c.Kind == "picked" {
+			f = store.AirFilter{Kind: c.Kind, Titles: c.Titles, Exclude: c.Exclude}
+		}
+		out = append(out, Channel{ID: "custom-" + c.ID, Name: c.Name, filter: f})
+	}
 	if len(libs) > 1 {
 		out = append(out, Channel{ID: "all", Name: "All"})
 	}
 	for _, l := range libs {
-		out = append(out, Channel{ID: "lib-" + strconv.FormatInt(l.ID, 10), Name: l.Name, libraryID: l.ID})
+		out = append(out, Channel{ID: "lib-" + strconv.FormatInt(l.ID, 10), Name: l.Name, filter: store.AirFilter{Libraries: []int64{l.ID}}})
 	}
 	genres, err := g.St.TopGenres(maxGenreChannels, minGenreTitles)
 	if err != nil {
 		return nil, err
 	}
 	for _, name := range genres {
-		out = append(out, Channel{ID: "genre-" + name, Name: name, genre: name})
+		out = append(out, Channel{ID: "genre-" + name, Name: name, filter: store.AirFilter{Genres: []string{name}}})
 	}
 	for i := range out {
 		out[i].Number = i + 1
 	}
 	g.mu.Lock()
-	g.channels, g.channelsAt = out, time.Now()
+	g.channels, g.channelsAt, g.channelsFor = out, time.Now(), sig
 	g.mu.Unlock()
 	return out, nil
 }
@@ -141,17 +153,19 @@ func (g *Guide) Next(ch Channel, t time.Time, n int) ([]Program, error) {
 
 // day returns a channel's schedule for the day starting at midnight start.
 // It is kept for the day, so a library scan doesn't reshuffle what's on (a
-// title removed meanwhile leaves its slot empty).
+// title removed meanwhile leaves its slot empty). Editing a channel makes a
+// new one.
 func (g *Guide) day(ch Channel, start time.Time) ([]Program, error) {
 	date := start.Format("2006-01-02")
 	key := ch.ID + "|" + date
+	cacheKey := ch.ID + "|" + fmt.Sprint(ch.filter) + "|" + date
 	g.mu.Lock()
-	progs, ok := g.days[key]
+	progs, ok := g.days[cacheKey]
 	g.mu.Unlock()
 	if ok {
 		return progs, nil
 	}
-	pool, err := g.St.Airables(ch.libraryID, ch.genre)
+	pool, err := g.St.Airables(ch.filter)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +178,7 @@ func (g *Guide) day(ch Channel, start time.Time) ([]Program, error) {
 			delete(g.days, k)
 		}
 	}
-	g.days[key] = progs
+	g.days[cacheKey] = progs
 	return progs, nil
 }
 

@@ -104,7 +104,9 @@ frames from the films.</sub>
   through, and the guide shows what's on now and next. The player moves on with
   the schedule, has Go live after a pause and channel up/down (`n`, `PgUp`/`PgDn`).
   Live TV saves no resume points or watched marks. It's off by default: an admin
-  turns it on in Settings → Server.
+  turns it on in Settings → Server, where they can also make channels of their
+  own, listed first: either hand-picked movies and shows, or any libraries,
+  genres and movies/shows, minus titles to leave out.
 - **Interface** – a two-row player toolbar on narrow screens, keyboard-accessible
   episode playback and seek controls, labeled settings, and dialogs that contain
   focus and return it when closed. Playback actions appear before long synopses;
@@ -178,7 +180,7 @@ are published to GitHub Container Registry:
 
 | Tag | Updated |
 |---|---|
-| `ghcr.io/mynamearnav/lex:latest`, `:<major.minor>`, `:<version>` (e.g. `:0.0.8`) | with each release |
+| `ghcr.io/mynamearnav/lex:latest`, `:<major.minor>`, `:<version>` (e.g. `:0.0.9`) | with each release |
 | `ghcr.io/mynamearnav/lex:edge` | when a maintainer builds `main` by hand (Container image workflow, Run workflow) |
 
 ```sh
@@ -293,7 +295,7 @@ working; the list then opens with `Ctrl`/`⌘` + `/`.
 ## Versions and releases
 
 The version number lives in `internal/version/VERSION`; builds add the commit
-they came from (`lex -version` prints e.g. `lex 0.0.8 (b14e16e)`, and it's shown
+they came from (`lex -version` prints e.g. `lex 0.0.9 (b14e16e)`, and it's shown
 in Settings → About and the account menu). To release, bump that file, commit,
 and push a matching tag:
 

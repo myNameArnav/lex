@@ -641,6 +641,22 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 }
 .task { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text2); }
 /* An empty inline error line takes no room (it stays in the page as a live region). */
+.tv-channels-editor { display: grid; gap: 12px; }
+.tv-channels-editor h3 { margin: 0; font-size: 14px; }
+.tv-channels { display: grid; gap: 12px; }
+.tv-channels:empty { display: none; }
+.tv-channel-edit { border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 14px; }
+.tv-filters { display: grid; gap: 14px; }
+.tv-filters[hidden], .title-picker[hidden] { display: none; }
+.title-picker .chips:empty { display: none; }
+.title-results { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.title-results:empty { display: none; }
+.title-results button { display: flex; justify-content: space-between; gap: 12px; width: 100%; padding: 8px 12px; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.title-results button:hover, .title-results button:focus-visible { background: var(--bg3); }
+.check-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.check-chips label { display: inline-flex; align-items: center; gap: 6px; background: var(--bg3); border: 1px solid var(--line); border-radius: 20px; padding: 4px 12px 4px 8px; font-size: 12.5px; cursor: pointer; }
+.check-chips label:has(input:checked) { border-color: var(--accent); }
+.check-chips input { width: auto; margin: 0; accent-color: var(--accent); }
 .form-section > .err:empty { min-height: 0; margin-top: -16px; }
 .chip.this-device { padding: 1px 8px; font-size: 11.5px; color: var(--accent); vertical-align: 1px; }
 /* Settings on tablets and phones: the section nav is a one-line strip; on
