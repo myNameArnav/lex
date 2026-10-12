@@ -71,9 +71,11 @@ type Config struct {
 	WebhookToken string `json:"webhookToken"`
 
 	// LiveTV turns on the Live TV channels (off by default); TVChannels are
-	// the admin's own, aired before the automatic ones.
+	// the admin's own, aired before the automatic ones, and TVHidden the
+	// automatic channels (by id: "all", "lib-1", "genre-Drama") turned off.
 	LiveTV     bool        `json:"liveTv"`
 	TVChannels []TVChannel `json:"tvChannels"`
+	TVHidden   []string    `json:"tvHidden"`
 
 	// SSD cache for media files living on a slower disk.
 	CacheEnabled   bool   `json:"cacheEnabled"`
@@ -95,8 +97,10 @@ type Config struct {
 // TVChannel is a Live TV channel an admin made. Kind "picked" airs just
 // its Titles (movies and shows, by item id). Otherwise it airs what matches
 // every filter: any of its libraries, any of its genres, its kind ("movie",
-// "show", or "" for both), where an empty filter doesn't limit. Either way
-// it leaves out the titles in Exclude.
+// "show", or "" for both), where an empty filter doesn't limit, and leaves
+// out the titles in Exclude. A picked channel keeps Exclude (and the
+// filters) for when it's switched back, but doesn't apply it: picking a
+// title is explicit.
 type TVChannel struct {
 	ID        string   `json:"id"`
 	Name      string   `json:"name"`
@@ -281,6 +285,13 @@ func (c *Config) normalizeTVChannels() {
 		chs = append(chs, ch)
 	}
 	c.TVChannels = chs
+	hidden := []string{}
+	for _, id := range c.TVHidden {
+		if id = strings.TrimSpace(id); id != "" && !slices.Contains(hidden, id) {
+			hidden = append(hidden, id)
+		}
+	}
+	c.TVHidden = hidden
 }
 
 // ids drops non-ids and repeats, keeping the order.

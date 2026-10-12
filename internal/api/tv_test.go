@@ -165,6 +165,40 @@ func TestLiveTVIsOffByDefault(t *testing.T) {
 }
 
 // An admin's channel leads the guide and tunes like any other.
+// An admin can turn automatic channels off; the list of them (for Settings)
+// is admin-only and includes the hidden ones.
+func TestTVHiddenChannels(t *testing.T) {
+	s, h := securityServer(t)
+	token := tvLibrary(t, s)
+	c := s.St.Config()
+	c.TVChannels = []store.TVChannel{{ID: "eps", Name: "Episodes", Kind: "show"}}
+	c.TVHidden = []string{"lib-1"}
+	if _, err := s.St.SaveConfig(c); err != nil {
+		t.Fatal(err)
+	}
+	var guide struct {
+		Channels []channelView `json:"channels"`
+	}
+	if code := getJSON(t, h, token, "/api/tv", &guide); code != 200 || len(guide.Channels) != 1 || guide.Channels[0].ID != "custom-eps" {
+		t.Fatalf("guide: %d %+v", code, guide)
+	}
+	if code := getJSON(t, h, token, "/api/tv/lib-1", nil); code != 404 {
+		t.Fatalf("tuning a hidden channel: %d", code)
+	}
+	if code := getJSON(t, h, token, "/api/admin/tv/automatic", nil); code != 403 {
+		t.Fatalf("automatic channels for a viewer: %d", code)
+	}
+	admin, err := s.St.CreateUser("boss", "test-password-123", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminToken, _ := s.St.CreateToken(admin.ID, "Test", "127.0.0.1")
+	var auto []struct{ ID, Name string }
+	if code := getJSON(t, h, adminToken, "/api/admin/tv/automatic", &auto); code != 200 || len(auto) != 1 || auto[0].ID != "lib-1" || auto[0].Name != "Everything" {
+		t.Fatalf("automatic: %d %+v", code, auto)
+	}
+}
+
 func TestTVCustomChannel(t *testing.T) {
 	s, h := securityServer(t)
 	token := tvLibrary(t, s)

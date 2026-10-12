@@ -436,9 +436,22 @@ function tvChannelsEditor(draft, genres) {
     wrap, h('div', null, add));
 }
 
+// tvAutomaticEditor turns automatic Live TV channels on and off; ticked ones
+// air. draft.tvHidden keeps the ids of the ones turned off, including any the
+// library no longer fills, so they stay off if they come back.
+function tvAutomaticEditor(draft, auto) {
+  if (!auto.length) return null;
+  const id = `checks-${++checksId}`;
+  return h('div', { class: 'field' }, h('span', { id }, 'Automatic channels'),
+    h('div', { class: 'help' }, 'Untick a channel to take it off Live TV.'),
+    h('div', { class: 'check-chips', role: 'group', 'aria-labelledby': id },
+      auto.map((c) => h('label', null, h('input', { type: 'checkbox', checked: !(draft.tvHidden || []).includes(c.id),
+        onchange: (e) => { const rest = (draft.tvHidden || []).filter((x) => x !== c.id); draft.tvHidden = e.target.checked ? rest : [...rest, c.id]; } }), c.name))));
+}
+
 async function serverSection() {
-  // Genres to offer custom Live TV channels.
-  const genres = await api('/api/genres').catch(() => []);
+  // Genres to offer custom Live TV channels, and the automatic channels.
+  const [genres, auto] = await Promise.all([api('/api/genres').catch(() => []), api('/api/admin/tv/automatic').catch(() => [])]);
   const check = (d) => {
     const chs = d.tvChannels || [];
     const cards = document.querySelectorAll('.tv-channel-edit');
@@ -452,8 +465,9 @@ async function serverSection() {
     h('div', { class: 'form-section' }, h('h2', null, 'General'),
       field('Server name', text('serverName'))),
     h('div', { class: 'form-section' }, h('h2', null, 'Live TV'),
-      h('p', { class: 'help', style: { margin: 0 } }, 'Channels that play the library at random, like broadcast TV: one for everything, one per library and one per common genre, plus any you make below. Everyone tuned to a channel sees the same program. Live TV saves no resume points or watched marks.'),
+      h('p', { class: 'help', style: { margin: 0 } }, 'Channels that play the library at random, like broadcast TV: one for everything, one per library and one per common genre (turn off the ones you don’t want), plus any you make below. Everyone tuned to a channel sees the same program. Live TV saves no resume points or watched marks.'),
       tg('liveTv', 'Enable Live TV', 'Adds Live TV to the menu for every user.'),
+      tvAutomaticEditor(draft, auto),
       tvChannelsEditor(draft, genres)),
     h('div', { class: 'form-section' }, h('h2', null, 'Library scanning'),
       h('div', { class: 'form-grid' },

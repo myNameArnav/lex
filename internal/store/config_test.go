@@ -33,7 +33,12 @@ func TestNormalizeTVChannels(t *testing.T) {
 	}
 	d := DefaultConfig()
 	d.normalize()
-	if d.TVChannels == nil {
+	if d.TVChannels == nil || d.TVHidden == nil {
 		t.Fatal("no channels encode as null")
+	}
+	d.TVHidden = []string{"lib-1", " ", "lib-1", " genre-Drama "}
+	d.normalize()
+	if !slices.Equal(d.TVHidden, []string{"lib-1", "genre-Drama"}) {
+		t.Fatalf("hidden = %q", d.TVHidden)
 	}
 }

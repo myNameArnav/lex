@@ -716,7 +716,7 @@ type Airable struct {
 // AirFilter picks what a Live TV channel airs: titles in any of Libraries,
 // with any of Genres, of Kind ("movie", "show" or "" for both), where an
 // empty filter doesn't limit; or, with Kind "picked", just Titles. Exclude
-// leaves titles out either way. Titles are movies and shows (item ids).
+// leaves titles out (a picked channel passes none). Titles are movies and shows (item ids).
 type AirFilter struct {
 	Libraries []int64
 	Genres    []string

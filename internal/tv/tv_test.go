@@ -237,6 +237,30 @@ func TestCustomChannels(t *testing.T) {
 	if got := airs(chs[0]); len(got) != 1 || !got[2] {
 		t.Fatalf("picked channel airs %v", got)
 	}
+	// ...and the titles left out before: a title picked and left out (the
+	// Leave out list is hidden while picking) still airs.
+	setChannels(store.TVChannel{ID: "crime", Name: "Up", Kind: "picked", Titles: []int64{2}, Exclude: []int64{2}})
+	chs, _ = g.Channels()
+	if got := airs(chs[0]); len(got) != 1 || !got[2] {
+		t.Fatalf("picked and left out airs %v", got)
+	}
+	// Hiding an automatic channel takes it off the list, and the numbers
+	// close up; Automatic still offers it.
+	c := st.Config()
+	c.TVHidden = []string{"lib-1"}
+	if _, err := st.SaveConfig(c); err != nil {
+		t.Fatal(err)
+	}
+	if chs, _ := g.Channels(); len(chs) != 1 || chs[0].ID != "custom-crime" || chs[0].Number != 1 {
+		t.Fatalf("with lib-1 hidden: %+v", chs)
+	}
+	if auto, err := g.Automatic(); err != nil || len(auto) != 1 || auto[0].ID != "lib-1" {
+		t.Fatalf("Automatic = %+v, %v", auto, err)
+	}
+	c.TVHidden = nil
+	if _, err := st.SaveConfig(c); err != nil {
+		t.Fatal(err)
+	}
 	setChannels()
 	if chs, _ := g.Channels(); len(chs) != 1 || chs[0].ID != "lib-1" {
 		t.Fatalf("after removing it: %+v", chs)
