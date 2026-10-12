@@ -59,6 +59,11 @@ type Session struct {
 	Restarts   int         `json:"restarts"`
 	Cached     bool        `json:"cached"`
 	HLS        bool        `json:"hls"`
+	// Live is Live TV: tuning in mid-program says nothing about what the
+	// viewer has watched, so it saves no resume position or watched mark.
+	// Set from the id (LivePrefix), so a session re-opened after a server
+	// restart stays live.
+	Live bool `json:"live"`
 	// AuthToken is the login token that opened (or last re-planned) the
 	// session; the HLS stream key is only valid while it is.
 	AuthToken string `json:"-"`
@@ -120,10 +125,14 @@ func NewManager(st *store.Store, log *logx.Logger) *Manager {
 }
 
 // Open registers (or refreshes) a session when a plan is created.
+// LivePrefix starts the id of every Live TV session.
+const LivePrefix = "live-"
+
 func (m *Manager) Open(s *Session) (*Session, error) {
 	if s.ID == "" || len(s.ID) > 128 {
 		return nil, errors.New("session ID must be between 1 and 128 bytes")
 	}
+	s.Live = strings.HasPrefix(s.ID, LivePrefix)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.killed[s.ID]; ok {
@@ -287,17 +296,19 @@ func (m *Manager) Heartbeat(id string, uid int64, pos float64, paused bool, cs C
 	}
 	s.lastPos, s.lastBeat = pos, now
 	s.Position, s.Paused, s.Client_, s.LastSeen = pos, paused, cs, now.Unix()
-	itemID, dur, playedSet := s.ItemID, s.Duration, s.playedSet
+	itemID, dur, playedSet, live := s.ItemID, s.Duration, s.playedSet, s.Live
 	m.mu.Unlock()
 
-	if dur > 0 && pos/dur >= 0.92 || (dur > 1200 && dur-pos < 120 && pos > 0) {
+	switch {
+	case live:
+	case dur > 0 && pos/dur >= 0.92 || (dur > 1200 && dur-pos < 120 && pos > 0):
 		if !playedSet {
 			m.st.MarkPlayed(uid, itemID, true)
 			m.mu.Lock()
 			s.playedSet = true
 			m.mu.Unlock()
 		}
-	} else if !playedSet && pos >= 30 {
+	case !playedSet && pos >= 30:
 		m.st.SaveProgress(uid, itemID, pos)
 	}
 	m.mu.Lock()
@@ -359,7 +370,7 @@ func (m *Manager) Snapshot() []Session {
 			Method: s.Method, Reasons: s.Reasons, VideoIn: s.VideoIn, AudioIn: s.AudioIn, VideoOut: s.VideoOut, AudioOut: s.AudioOut,
 			Container: s.Container, SrcBitrate: s.SrcBitrate, OutBitrate: s.OutBitrate, Client: s.Client, IP: s.IP, Remote: s.Remote,
 			StartedAt: s.StartedAt, LastSeen: s.LastSeen, Position: s.Position, Duration: s.Duration, Paused: s.Paused,
-			Bytes: s.bytes, Rate: s.Rate, Watched: s.Watched, Client_: s.Client_, Restarts: s.Restarts, Cached: s.Cached, HLS: s.HLS,
+			Bytes: s.bytes, Rate: s.Rate, Watched: s.Watched, Client_: s.Client_, Restarts: s.Restarts, Cached: s.Cached, HLS: s.HLS, Live: s.Live,
 		}
 		if s.job != nil {
 			p := s.job.Progress()

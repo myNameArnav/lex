@@ -704,3 +704,78 @@ func (s *Store) SetFavorite(uid, itemID int64, fav bool) error {
 		ON CONFLICT(user_id,item_id) DO UPDATE SET favorite=excluded.favorite`, uid, itemID, fav)
 	return err
 }
+
+// Airable is a movie or episode with a known duration, for Live TV.
+type Airable struct {
+	ItemID   int64
+	ShowID   int64 // 0 for movies
+	Season   int
+	Duration float64
+}
+
+// Airables lists the movies and episodes with a probed duration of at least
+// a minute (no samples or trailers), in a library (libID > 0) and with a
+// genre (an episode has its show's genres), in id order. The duration is
+// the one of the file players pick first (ItemFiles' order).
+func (s *Store) Airables(libID int64, genre string) ([]Airable, error) {
+	// Genres are matched decoded: stored JSON escapes e.g. "&".
+	q := `SELECT id, show_id, season, dur FROM (SELECT i.id, i.show_id, i.season,
+			(SELECT f.duration FROM files f WHERE f.item_id=i.id ORDER BY f.height DESC, f.size DESC LIMIT 1) dur
+		FROM items i LEFT JOIN items sh ON sh.id=i.show_id AND i.kind='episode'
+		WHERE i.kind IN ('movie','episode') AND (:lib=0 OR i.library_id=:lib)
+		AND (:genre='' OR EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(COALESCE(sh.genres,i.genres)) THEN COALESCE(sh.genres,i.genres) ELSE '[]' END) j WHERE j.value=:genre)))
+		WHERE dur>=60 ORDER BY id`
+	rows, err := s.db.Query(q, sql.Named("lib", libID), sql.Named("genre", genre))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Airable
+	for rows.Next() {
+		var a Airable
+		if err := rows.Scan(&a.ItemID, &a.ShowID, &a.Season, &a.Duration); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// ItemsForUser is ItemForUser for several items at once, keyed by id;
+// missing ids are left out.
+func (s *Store) ItemsForUser(ids []int64, uid int64) (map[int64]*Item, error) {
+	out := map[int64]*Item{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := []any{sql.Named("uid", uid)}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	items, err := s.queryItemsUD(udSelect(`WHERE i.id IN (`+ph+`)`), args...)
+	for _, it := range items {
+		out[it.ID] = it
+	}
+	return out, err
+}
+
+// TopGenres returns up to limit genres that at least min top-level titles
+// have, most common first.
+func (s *Store) TopGenres(limit, min int) ([]string, error) {
+	rows, err := s.db.Query(`SELECT j.value FROM items i, json_each(i.genres) j WHERE i.parent_id IS NULL
+		GROUP BY 1 HAVING COUNT(*)>=? ORDER BY COUNT(*) DESC, 1 LIMIT ?`, min, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var g string
+		if err := rows.Scan(&g); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}

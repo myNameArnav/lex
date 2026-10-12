@@ -1142,7 +1142,7 @@ function sessionCard(s0, refresh) {
     const c = s.clientStats || {};
     const j = s.job;
     setText(title, s.title);
-    setText(sub, [s.subtitle, s.userName, s.client, s.remote ? 'remote' : 'local'].filter(Boolean).join(' · '));
+    setText(sub, [s.subtitle, s.live ? 'Live TV' : '', s.userName, s.client, s.remote ? 'remote' : 'local'].filter(Boolean).join(' · '));
     method.className = `method ${s.method}`;
     method.title = s.reasons?.map(reasonLabel).join('; ') || '';
     setText(method, METHOD_LABEL[s.method] || s.method);

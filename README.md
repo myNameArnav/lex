@@ -3,7 +3,8 @@
 A lightweight, self-hosted media server in the spirit of Plex / Emby / Jellyfin,
 built for small Linux hosts, including Raspberry Pi. A Go binary with SQLite,
 `ffmpeg`/`ffprobe` for media processing, and a dependency-free web UI embedded
-in the binary. macOS can be used for local development.
+in the binary, with Live TV channels that play your library at random. macOS
+can be used for local development.
 
 > [!NOTE]
 > **Built by AI.** Lex was written by large language models (LLM coding
@@ -95,6 +96,14 @@ frames from the films.</sub>
   a reconnecting notice when the server drops out, and a **stats for nerds**
   overlay (codecs in/out, reasons, buffer health graph, download speed, dropped
   frames, stalls, server ffmpeg speed/fps/CPU/throttling).
+- **Shuffle** – play a show's episodes in random order from its page; Next and
+  Up next follow the shuffled order.
+- **Live TV** – channels that play the library at random like broadcast TV: All
+  (with more than one library), one per library and one per common genre. Each
+  day's schedule is fixed per channel, so tuning in joins whatever is on part-way
+  through, and the guide shows what's on now and next. The player moves on with
+  the schedule, has Go live after a pause and channel up/down (`n`, `PgUp`/`PgDn`).
+  Live TV saves no resume points or watched marks.
 - **Interface** – a two-row player toolbar on narrow screens, keyboard-accessible
   episode playback and seek controls, labeled settings, and dialogs that contain
   focus and return it when closed. Playback actions appear before long synopses;
@@ -134,7 +143,7 @@ arm64 and armv7; macOS; Windows), unpack it, install FFmpeg and FFprobe, and run
 ./lex -addr 127.0.0.1:8420 -data ./data
 ```
 
-Or build it yourself with Go **1.26.8 or newer**, from the repository root:
+Or build it yourself with Go **1.26.9 or newer**, from the repository root:
 
 ```sh
 go build -trimpath -o lex ./cmd/lex
@@ -168,7 +177,7 @@ are published to GitHub Container Registry:
 
 | Tag | Updated |
 |---|---|
-| `ghcr.io/mynamearnav/lex:latest`, `:<major.minor>`, `:<version>` (e.g. `:0.0.6`) | with each release |
+| `ghcr.io/mynamearnav/lex:latest`, `:<major.minor>`, `:<version>` (e.g. `:0.0.7`) | with each release |
 | `ghcr.io/mynamearnav/lex:edge` | with every change on `main` |
 
 ```sh
@@ -271,8 +280,8 @@ unsupported.
 ## Keyboard shortcuts
 
 Press `?` (or `Ctrl`/`⌘` + `/`) anywhere for the full list. The main ones:
-`Ctrl`/`⌘` + `K` or `/` to search, `g` then `h` / `1`–`9` / `s` / `d` to go to
-home, a library, settings or the dashboard, `p` to play the title you're
+`Ctrl`/`⌘` + `K` or `/` to search, `g` then `h` / `t` / `1`–`9` / `s` / `d` to go to
+home, Live TV, a library, settings or the dashboard, `p` to play the title you're
 viewing, and in the player `space`, `←`/`→`, `f`, `m`, `c` and `i`. The list is
 also in the account menu on devices with a mouse.
 
@@ -283,12 +292,12 @@ working; the list then opens with `Ctrl`/`⌘` + `/`.
 ## Versions and releases
 
 The version number lives in `internal/version/VERSION`; builds add the commit
-they came from (`lex -version` prints e.g. `lex 0.0.6 (e7d84df)`, and it's shown
+they came from (`lex -version` prints e.g. `lex 0.0.7 (0c32199)`, and it's shown
 in Settings → About and the account menu). To release, bump that file, commit,
 and push a matching tag:
 
 ```sh
-git tag -a v0.0.7 -m "Lex v0.0.7" && git push origin v0.0.7
+git tag -a v0.0.8 -m "Lex v0.0.8" && git push origin v0.0.8
 ```
 
 The Release workflow checks the tag against the file, runs the tests, builds
@@ -361,6 +370,7 @@ internal/subsearch OpenSubtitles.com search and download
 internal/trickplay seek-bar preview thumbnails
 internal/cache     optional media disk cache
 internal/intro     optional intro detection
+internal/tv        Live TV channels and their daily schedules
 internal/sysstats  host/container statistics
 internal/api       HTTP API, auth, images, static files
 internal/logx      leveled logger with a recent-lines buffer for the UI

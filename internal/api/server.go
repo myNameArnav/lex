@@ -30,6 +30,7 @@ import (
 	"lex/internal/subsearch"
 	"lex/internal/sysstats"
 	"lex/internal/trickplay"
+	"lex/internal/tv"
 )
 
 type Server struct {
@@ -50,6 +51,7 @@ type Server struct {
 	Intro      *intro.Detector
 	Trick      *trickplay.Generator
 	HLS        *stream.HLS
+	TV         *tv.Guide // Live TV; New(St) if nil
 	Web        fs.FS
 
 	static    map[string]*asset
@@ -79,6 +81,9 @@ func (s *Server) Handler() (http.Handler, error) {
 	s.loginFail = map[string]*failWindow{}
 	s.thumbSem = make(chan struct{}, 1)
 	s.resizeSem = make(chan struct{}, 2)
+	if s.TV == nil {
+		s.TV = tv.New(s.St)
+	}
 	if err := s.loadStatic(); err != nil {
 		return nil, err
 	}
@@ -103,10 +108,13 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("GET /api/search", u(s.search))
 	mux.Handle("GET /api/items/{id}", u(s.itemDetail))
 	mux.Handle("GET /api/items/{id}/children", u(s.itemChildren))
+	mux.Handle("GET /api/items/{id}/shuffle", u(s.shuffle))
 	mux.Handle("GET /api/items/{id}/image/{kind}", u(s.itemImage))
 	mux.Handle("GET /api/items/{id}/cast/{index}/image", u(s.castImage))
 	mux.Handle("POST /api/items/{id}/played", u(s.setPlayed))
 	mux.Handle("POST /api/items/{id}/favorite", u(s.setFavorite))
+	mux.Handle("GET /api/tv", u(s.tvGuide))
+	mux.Handle("GET /api/tv/{id}", u(s.tvChannel))
 	mux.Handle("POST /api/playback/plan", u(s.plan))
 	mux.Handle("POST /api/playback/progress", u(s.progress))
 	mux.Handle("POST /api/playback/stop", u(s.stopPlayback))

@@ -1,6 +1,6 @@
 # Contributing
 
-Use Go 1.26.8 or newer and format changes with `gofmt`. FFmpeg and FFprobe are
+Use Go 1.26.9 or newer and format changes with `gofmt`. FFmpeg and FFprobe are
 needed to exercise actual playback. The UI consists of native JavaScript modules
 with no package installation or build step.
 

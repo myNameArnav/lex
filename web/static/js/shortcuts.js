@@ -19,6 +19,7 @@ const SECTIONS = [
   ['Go to', [
     [['g', 'h'], 'Home', 'then'],
     [['g', '1 – 9'], 'Library 1 to 9 (in menu order)', 'then'],
+    [['g', 't'], 'Live TV', 'then'],
     [['g', 's'], 'Settings', 'then'],
     [['g', 'd'], 'Dashboard (admins)', 'then'],
   ]],
@@ -32,7 +33,8 @@ const SECTIONS = [
     [['0 – 9'], 'Jump to 0% – 90%'], [['Home', 'End'], 'Start / near the end'],
     [['f'], 'Fullscreen'], [['c'], 'Subtitles & audio'],
     [['g', 'h'], 'Subtitles earlier / later (0.1 s)'],
-    [['n'], 'Next episode'], [['s'], 'Skip intro'], [['i'], 'Stats for nerds'],
+    [['n'], 'Next episode (Live TV: next channel)'], [['PgUp', 'PgDn'], 'Live TV: channel up / down'],
+    [['s'], 'Skip intro'], [['i'], 'Stats for nerds'],
     [['Esc'], 'Close the menu, then the player'],
   ]],
 ];
@@ -77,7 +79,7 @@ export function installShortcuts(nav) {
     if (Date.now() - gAt < 1200) {
       gAt = 0;
       const libs = nav.libraries();
-      const target = k === 'h' ? '#/' : k === 's' ? '#/settings' : k === 'd' ? '#/dashboard'
+      const target = k === 'h' ? '#/' : k === 't' ? '#/tv' : k === 's' ? '#/settings' : k === 'd' ? '#/dashboard'
         : /^[1-9]$/.test(k) && libs[+k - 1] ? `#/library/${libs[+k - 1].id}` : null;
       if (target) { e.preventDefault(); nav.go(target); }
       return;

@@ -94,6 +94,8 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
   deps['./ui.js'].METHOD_LABEL = { direct: 'Direct Play', remux: 'Direct Stream', transcode: 'Transcode' };
   deps['./ui.js'].reasonLabel = value => value;
   deps['./ui.js'].fmtEpisode = it => `S${it.season} E${it.episode}`;
+  deps['./ui.js'].fmtProgram = it => it.title;
+  deps['./ui.js'].fmtClock = ms => String(ms);
   const source = await readFile(new URL('../static/js/player.js', import.meta.url), 'utf8');
   const module = new vm.SourceTextModule(source + '\nexport { Player };', { context });
   await module.link(specifier => {
@@ -606,4 +608,70 @@ test('a tap toggles the controls from how they looked when it began', async () =
   assert.deepEqual(shown, [true]);
   f.player.toggleUI(false);
   assert.deepEqual(shown, [true, false]);
+});
+
+function liveFixture(player, { start, end, channels = [{ id: 'a', number: 1, name: 'A' }, { id: 'b', number: 2, name: 'B' }] }) {
+  const tuned = [];
+  Object.assign(player, {
+    live: { channelId: channels[0].id, channels, now: { start, end, item: { id: 1 } }, skew: 0 },
+    liveBtn: { classList: classes(), textContent: 'LIVE', title: '' },
+    started: true, resetForNext() {}, tune: async (id, at = 0) => { tuned.push([id, at]); },
+  });
+  return tuned;
+}
+
+test('Live TV moves on once at the end of the program slot, from that end', async () => {
+  const { player, video } = await fixture();
+  const start = Date.now() - 50_000;
+  const tuned = liveFixture(player, { start, end: start + 60_000 });
+  video.currentTime = 50;
+  player.checkLive();
+  assert.deepEqual(tuned, []);
+  // The file runs past its slot (cut at midnight): the schedule wins.
+  video.currentTime = 59.8;
+  player.checkLive();
+  player.checkLive();
+  assert.deepEqual(tuned, [['a', start + 60_000]]);
+});
+
+test('Live TV offers Go live when behind, which seeks to the live point', async () => {
+  const { player, video } = await fixture();
+  const start = Date.now() - 100_000;
+  liveFixture(player, { start, end: start + 3_600_000 });
+  const seeks = [];
+  player.seekTo = (t) => seeks.push(t);
+  video.currentTime = 95;
+  player.checkLive();
+  assert.equal(player.liveBtn.textContent, 'LIVE');
+  video.currentTime = 30;
+  player.checkLive();
+  assert.equal(player.liveBtn.textContent, 'Go live');
+  player.goLive();
+  assert.equal(seeks.length, 1);
+  assert.ok(Math.abs(seeks[0] - 100) < 2, `seeked to ${seeks[0]}`);
+});
+
+test('Live TV channel switching wraps around and Next means next channel', async () => {
+  const { player } = await fixture();
+  const start = Date.now();
+  const channels = [{ id: 'a', number: 1, name: 'A' }, { id: 'b', number: 2, name: 'B' }, { id: 'c', number: 3, name: 'C' }];
+  const tuned = liveFixture(player, { start, end: start + 60_000, channels });
+  await player.switchChannel(-1);
+  player.live.channelId = 'c';
+  await player.playNext();
+  assert.deepEqual(tuned, [['c', 0], ['a', 0]]);
+});
+
+test('shuffle plays its own order: Next is the next shuffled episode, then nothing', async () => {
+  const { player } = await fixture();
+  Object.assign(player, {
+    shuffle: { items: [{ id: 1 }, { id: 7 }], pos: 0 },
+    titleEl: { append() {} }, nextBtn: { classList: classes() },
+    loadPlan: async () => {}, setupMediaSession() {},
+  });
+  await player.start(1, 0);
+  assert.equal(player.detail.next.id, 7);
+  player.shuffle.pos = 1;
+  await player.start(7, 0);
+  assert.equal(player.detail.next, null);
 });
