@@ -6,7 +6,7 @@
 # hardware HEVC decoder (-hwaccel drm). Build with --build-arg RPI_FFMPEG=no
 # to use Debian's ffmpeg instead.
 
-FROM --platform=$BUILDPLATFORM golang:1.26.8-trixie AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.9-trixie AS build
 # COMMIT labels the build (the .git directory isn't part of the build context);
 # the version number itself comes from internal/version/VERSION.
 ARG TARGETOS TARGETARCH COMMIT=
