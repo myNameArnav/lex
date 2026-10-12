@@ -30,6 +30,11 @@ func tvLibrary(t *testing.T, s *Server) string {
 			t.Fatal(err)
 		}
 	}
+	c := s.St.Config()
+	c.LiveTV = true
+	if _, err := s.St.SaveConfig(c); err != nil {
+		t.Fatal(err)
+	}
 	u, err := s.St.CreateUser("viewer", "test-password-123", false)
 	if err != nil {
 		t.Fatal(err)
@@ -119,5 +124,42 @@ func TestTVGuideAndTuning(t *testing.T) {
 	}
 	if code := getJSON(t, h, token, "/api/tv/lib-1", &tuned); code != 200 || tuned.Now.Item.ID == gone {
 		t.Fatalf("after removing %d: %d, now %d", gone, code, tuned.Now.Item.ID)
+	}
+}
+
+// Live TV is off until an admin turns it on: its API answers 404 and the
+// UI's caps say so.
+func TestLiveTVIsOffByDefault(t *testing.T) {
+	s, h := securityServer(t)
+	if s.St.Config().LiveTV {
+		t.Fatal("Live TV is on by default")
+	}
+	u, err := s.St.CreateUser("viewer", "test-password-123", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _ := s.St.CreateToken(u.ID, "Test", "127.0.0.1")
+	for _, path := range []string{"/api/tv", "/api/tv/all"} {
+		if code := getJSON(t, h, token, path, nil); code != 404 {
+			t.Fatalf("%s: %d, want 404", path, code)
+		}
+	}
+	var me struct {
+		Caps map[string]bool `json:"caps"`
+	}
+	if code := getJSON(t, h, token, "/api/me", &me); code != 200 || me.Caps["liveTv"] {
+		t.Fatalf("/api/me: %d, caps %v", code, me.Caps)
+	}
+	c := s.St.Config()
+	c.LiveTV = true
+	if _, err := s.St.SaveConfig(c); err != nil {
+		t.Fatal(err)
+	}
+	if code := getJSON(t, h, token, "/api/tv", nil); code != 200 {
+		t.Fatalf("turned on: %d", code)
+	}
+	me.Caps = nil
+	if code := getJSON(t, h, token, "/api/me", &me); code != 200 || !me.Caps["liveTv"] {
+		t.Fatalf("turned on: %d, caps %v", code, me.Caps)
 	}
 }

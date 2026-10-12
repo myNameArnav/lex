@@ -19,7 +19,7 @@ const SECTIONS = [
   ['Go to', [
     [['g', 'h'], 'Home', 'then'],
     [['g', '1 – 9'], 'Library 1 to 9 (in menu order)', 'then'],
-    [['g', 't'], 'Live TV', 'then'],
+    [['g', 't'], 'Live TV (when it is on)', 'then'],
     [['g', 's'], 'Settings', 'then'],
     [['g', 'd'], 'Dashboard (admins)', 'then'],
   ]],
@@ -63,7 +63,7 @@ export function showShortcuts() {
 
 const typing = (el) => el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) && el.type !== 'range' && el.type !== 'checkbox';
 
-// install wires the global handler. nav: { focusSearch, go(hash), libraries() }.
+// install wires the global handler. nav: { focusSearch, go(hash), libraries(), liveTv() }.
 export function installShortcuts(nav) {
   let gAt = 0;
   document.addEventListener('keydown', (e) => {
@@ -79,7 +79,7 @@ export function installShortcuts(nav) {
     if (Date.now() - gAt < 1200) {
       gAt = 0;
       const libs = nav.libraries();
-      const target = k === 'h' ? '#/' : k === 't' ? '#/tv' : k === 's' ? '#/settings' : k === 'd' ? '#/dashboard'
+      const target = k === 'h' ? '#/' : k === 't' && nav.liveTv?.() ? '#/tv' : k === 's' ? '#/settings' : k === 'd' ? '#/dashboard'
         : /^[1-9]$/.test(k) && libs[+k - 1] ? `#/library/${libs[+k - 1].id}` : null;
       if (target) { e.preventDefault(); nav.go(target); }
       return;

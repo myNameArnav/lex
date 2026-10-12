@@ -3,7 +3,7 @@ import { api, img, castImg } from './api.js';
 import { openPlayer, isPlayerOpen, closePlayer } from './player.js';
 import { installShortcuts, showShortcuts, MOD } from './shortcuts.js';
 
-// caps: { subtitleSearch, cacheEnabled } from the server (see /api/me).
+// caps: { subtitleSearch, cacheEnabled, liveTv } from the server (see /api/me).
 export const state = { me: null, caps: {}, serverName: 'Lex', libraries: [], version: '' };
 const app = document.getElementById('app');
 let mainEl = null, navEl = null, searchInput = null;
@@ -14,6 +14,7 @@ installShortcuts({
   focusSearch: () => { if (searchInput?.isConnected) { searchInput.focus(); searchInput.select(); } },
   go: (hash) => { location.hash = hash; },
   libraries: () => state.libraries,
+  liveTv: () => !!state.caps.liveTv,
 });
 
 // Session expiry (any 401): close whatever is open over the app and ask to
@@ -178,15 +179,16 @@ function renderShell() {
   renderNav();
 }
 
-// Nav links are built once per library list and updated in place, so focus
-// and the nav's own scroll position survive navigation.
+// Nav links are built once per library list (and Live TV setting) and
+// updated in place, so focus and the nav's own scroll position survive
+// navigation. Settings calls it when Live TV is turned on or off.
 let navLinks = new Map(), navSig = '';
-function renderNav() {
+export function renderNav() {
   if (!navEl) return;
-  const sig = state.libraries.map((l) => `${l.id}\t${l.name}`).join('\n');
+  const sig = [state.caps.liveTv ? 'tv' : '', ...state.libraries.map((l) => `${l.id}\t${l.name}`)].join('\n');
   if (!navLinks.size || sig !== navSig) {
     navSig = sig;
-    navLinks = new Map([['home', h('a', { href: '#/' }, 'Home')], ['tv', h('a', { href: '#/tv' }, 'Live TV')], ...state.libraries.map((l) => [l.id, h('a', { href: `#/library/${l.id}` }, l.name)])]);
+    navLinks = new Map([['home', h('a', { href: '#/' }, 'Home')], ...(state.caps.liveTv ? [['tv', h('a', { href: '#/tv' }, 'Live TV')]] : []), ...state.libraries.map((l) => [l.id, h('a', { href: `#/library/${l.id}` }, l.name)])]);
     navEl.replaceChildren(...navLinks.values());
   }
   const cur = location.hash;
@@ -1242,7 +1244,17 @@ function programSub(it) {
 // The guide: each channel's program now (the art tunes in) and what's next.
 // It refreshes every minute; the time left is relative to the server clock.
 async function tvView(ctx) {
-  const data = await api('/api/tv');
+  const off = () => emptyState({ title: 'Live TV is off', text: state.me.isAdmin ? 'Turn it on in Settings › Server.' : 'Ask your server admin to turn it on.',
+      actions: [state.me.isAdmin ? h('a', { class: 'btn primary', href: '#/settings/server' }, 'Open settings') : h('a', { class: 'btn primary', href: '#/' }, 'Go home')] });
+  if (!state.caps.liveTv) return off();
+  let data;
+  try { data = await api('/api/tv'); } catch (e) {
+    if (e.status !== 404) throw e;
+    // Turned off since this page loaded: drop it from the menu too.
+    state.caps = { ...state.caps, liveTv: false };
+    renderNav();
+    return off();
+  }
   const skew = Date.now() - data.serverTime;
   const wrap = h('div', { class: 'page' }, h('h1', { class: 'page-title' }, 'Live TV'),
     h('p', { class: 'muted', style: { margin: 0 } }, 'Channels that play your library at random, like TV. Tune in to join whatever is on.'));
