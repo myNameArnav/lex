@@ -804,7 +804,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .p-stats col.k { width: 112px; }
 .p-stats td:first-child { color: rgba(255,255,255,.6); padding-right: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .p-stats td.hd { color: var(--accent); font-weight: 700; padding-top: 10px; }
-.p-stats td .sub { color: rgba(255,255,255,.55); }
+.p-stats td .sub { display: inline-block; max-width: 100%; color: rgba(255,255,255,.55); }
 .p-stats td.warn { color: var(--accent); } .p-stats td.bad { color: var(--bad-ink); }
 .upnext { position: absolute; right: max(24px, var(--sar)); bottom: calc(110px + var(--sab)); width: 340px; background: rgba(20,21,26,.96); border: 1px solid rgba(255,255,255,.12); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); z-index: 4; }
 .upnext img { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #111; }

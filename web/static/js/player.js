@@ -1510,7 +1510,7 @@ class Player {
       for (const row of s.rows) {
         const text = row.sub ? `${row.v} · ${row.sub}` : row.v;
         rows.push(h('tr', null, h('td', null, row.k),
-          h('td', { class: row.lvl || null, title: row.full || text }, row.v, row.sub ? h('span', { class: 'sub' }, ` ${row.sub}`) : null)));
+          h('td', { class: row.lvl || null, title: row.full || text }, row.v, row.sub ? ' ' : null, row.sub ? h('span', { class: 'sub' }, row.sub) : null)));
       }
     }
     clear(this.statsBody).appendChild(h('table', null, h('colgroup', null, h('col', { class: 'k' }), h('col')), rows));
