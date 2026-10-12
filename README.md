@@ -90,8 +90,10 @@ frames from the films.</sub>
 - **Player** – resume, an Up next card that plays the next episode after a
   countdown (Cancel stops it for that episode), an end card for movies (Back to
   details / Play from start), subtitle/audio switching, quality & method menus,
-  speed (kept until the player closes), PiP, Media Session keys, keyboard
-  shortcuts (`space/k`, `←/→` or `j/l`, `↑/↓`, `f`, `m`, `c`, `i`, `n`, `s`, `g/h`, `0-9`),
+  speed (kept until the player closes), PiP, Media Session keys, **chapters**
+  (marks on the seek bar, the current chapter's name next to the time, a
+  Chapters list in Settings, `PgUp`/`PgDn` for the next or previous one), keyboard
+  shortcuts (`space/k`, `←/→` or `j/l`, `↑/↓`, `f`, `m`, `c`, `i`, `n`, `s`, `g/h`, `0-9`, `PgUp/PgDn`),
   touch controls (tap to show or hide the controls, double-tap the sides to seek),
   a reconnecting notice when the server drops out, and a **stats for nerds**
   overlay (codecs in/out, reasons, buffer health graph, download speed, dropped

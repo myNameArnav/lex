@@ -197,6 +197,7 @@ class Player {
     this.rail.appendChild(this.fill);
     this.timeEl = h('span', { class: 'p-time' }, '0:00 / 0:00');
     this.endsEl = h('span', { class: 'p-ends', title: 'When playback will finish at the current speed' });
+    this.chapEl = h('button', { class: 'p-chap hide-mobile', type: 'button', title: 'Chapters (PgUp / PgDn)', onclick: (e) => { e.stopPropagation(); this.toggleChapters(); } });
     this.methodEl = h('button', { class: 'p-method hide-mobile', type: 'button', title: 'Playback method (click for stats)', 'aria-pressed': 'false', onclick: (e) => { e.stopPropagation(); this.toggleStats(); } });
     this.playBtn = b('play', 'Play (k)', () => this.togglePlay(), 'big');
     this.volBtn = b('volume', 'Mute (m)', () => this.toggleMute());
@@ -224,7 +225,7 @@ class Player {
         h('div', { class: 'p-controls' },
           h('div', { class: 'p-transport' }, this.playBtn,
             b(skipIcon(-1, prefs.get('skipBack')), `Back ${prefs.get('skipBack')}s (←)`, () => this.skip(-prefs.get('skipBack'))),
-            b(skipIcon(1, prefs.get('skipFwd')), `Forward ${prefs.get('skipFwd')}s (→)`, () => this.skip(prefs.get('skipFwd'))), this.timeEl, this.endsEl),
+            b(skipIcon(1, prefs.get('skipFwd')), `Forward ${prefs.get('skipFwd')}s (→)`, () => this.skip(prefs.get('skipFwd'))), this.timeEl, this.endsEl, this.chapEl),
           h('div', { class: 'spacer' }),
           h('div', { class: 'p-tools' }, h('div', { class: 'vol' }, this.volBtn, this.volRange), this.methodEl,
             this.nextBtn, this.ccBtn, this.gearBtn, this.pipBtn, this.fsBtn))));
@@ -359,8 +360,8 @@ class Player {
         this.seek.appendChild(this.tip);
         if (!this.trick && Date.now() - (this.trickTried || 0) > 60000) this.loadTrickplay();
       }
-      const chap = [...(this.file?.info?.chapters || [])].reverse().find((c) => c.start <= t && c.title && !/^chapter \d+$/i.test(c.title));
-      this.tipTime.textContent = chap ? `${fmtTime(t)} · ${chap.title}` : fmtTime(t);
+      const chaps = this.chapters(), chap = chaps[this.chapterAt(t, chaps)];
+      this.tipTime.textContent = chap?.named ? `${fmtTime(t)} · ${chap.title}` : fmtTime(t);
       const w = this.renderThumb(t);
       // Keep the preview inside the player.
       const half = Math.max(w, this.tip.offsetWidth) / 2;
@@ -1166,6 +1167,34 @@ class Player {
 
   osdVolume() { this.osd(this.video.muted ? 'Muted' : `Volume ${this.volumeText()}`); }
 
+  // ---------- chapters ----------
+  // The file's chapters in order, each with a title to show ('Chapter 3'
+  // when untitled) and named: false when that title is only a number.
+  chapters() {
+    const d = this.duration();
+    return (this.file?.info?.chapters || [])
+      .filter((c) => !d || c.start < d)
+      .sort((a, b) => a.start - b.start)
+      .map((c, i) => ({ ...c, label: c.title || `Chapter ${i + 1}`, named: !!c.title && !/^chapter \d+$/i.test(c.title) }));
+  }
+
+  // The index of the chapter playing at t, or -1 before the first one.
+  chapterAt(t, list = this.chapters()) {
+    return list.findLastIndex((c) => c.start <= t + 0.25);
+  }
+
+  // dir 1: the next chapter. dir -1: back to the start of this one, or to
+  // the one before when already near its start (like a CD player).
+  jumpChapter(dir) {
+    const list = this.chapters();
+    if (list.length < 2) { this.osd('No chapters'); return; }
+    const t = this.video.currentTime, i = this.chapterAt(t, list);
+    const to = dir > 0 ? list[i + 1] : i >= 0 && t - list[i].start > 3 ? list[i] : list[i - 1];
+    if (!to) { this.osd(dir > 0 ? 'Last chapter' : 'First chapter'); return; }
+    this.seekTo(to.start);
+    this.osd(to.label);
+  }
+
   showSpinner(on) {
     if (on && !this.spin) { this.spin = h('div', { class: 'spinner' }); this.center.appendChild(this.spin); }
     if (!on && this.spin) { this.spin.remove(); this.spin = null; }
@@ -1241,7 +1270,7 @@ class Player {
       f: () => this.toggleFullscreen(), m: () => { this.toggleMute(); this.osdVolume(); },
       i: () => this.toggleStats(), c: () => this.toggleMenu('tracks'),
       n: () => this.playNext(), s: () => this.skipBtn?.click(),
-      pageup: () => this.live && this.switchChannel(1), pagedown: () => this.live && this.switchChannel(-1),
+      pageup: () => (this.live ? this.switchChannel(1) : this.jumpChapter(1)), pagedown: () => (this.live ? this.switchChannel(-1) : this.jumpChapter(-1)),
       g: () => this.nudgeSubs(-0.1), h: () => this.nudgeSubs(0.1),
       escape: () => { if (this.menu) this.closeMenu(); else if (!document.fullscreenElement) this.close(); },
       home: () => this.seekTo(0), end: () => this.seekTo(this.duration() - 5),
@@ -1297,6 +1326,9 @@ class Player {
     this.fill.style.width = `${pct}%`;
     this.knob.style.left = `${pct}%`;
     this.timeEl.textContent = `${fmtTime(t)} / ${fmtTime(d)}`;
+    const chaps = this.chapters(), chap = chaps[this.chapterAt(t, chaps)];
+    const chapText = chap?.named ? chap.title : '';
+    if (this.chapEl && this.chapEl.textContent !== chapText) this.chapEl.textContent = chapText;
     this.renderEnds();
     this.seek.setAttribute('aria-valuemax', String(Math.max(0, Math.floor(d || 0))));
     this.seek.setAttribute('aria-valuenow', String(Math.max(0, Math.min(Math.floor(t || 0), Math.floor(d || 0)))));
@@ -1314,7 +1346,7 @@ class Player {
     bufs.slice(ranges.length).forEach((el) => el.remove());
     if (!this.chaptersDrawn && d) {
       this.chaptersDrawn = true;
-      for (const c of (this.file?.info?.chapters || []).slice(1)) this.rail.appendChild(h('div', { class: 'chap', style: { left: `${(c.start / d) * 100}%` }, title: c.title }));
+      for (const c of this.chapters().slice(1)) this.rail.appendChild(h('div', { class: 'chap', style: { left: `${(c.start / d) * 100}%` }, title: c.title }));
       const seg = this.intro();
       if (seg) this.rail.insertBefore(h('div', { class: 'seg', style: { left: `${(seg.start / d) * 100}%`, width: `${((seg.end - seg.start) / d) * 100}%` }, title: 'Intro' }), this.fill);
     }
@@ -1597,6 +1629,13 @@ class Player {
     this.showUI(true);
   }
 
+  // The chapter list opens as a Settings page, so Back leads to Settings.
+  toggleChapters() {
+    if (this.menuName === 'settings' && this.menuPage === 'chapters') { this.closeMenu(); return; }
+    if (this.menuName !== 'settings') this.toggleMenu('settings');
+    this.openPage('chapters');
+  }
+
   openPage(page) {
     const from = this.menuPage;
     this.menuPage = page;
@@ -1717,6 +1756,10 @@ class Player {
         // The default rate survives load(), so the speed outlasts track,
         // quality and method changes, fallbacks and the next episode.
         return page('Speed', SPEEDS.map((sp) => ({ label: sp === 1 ? 'Normal' : `${sp}x`, active: this.video.playbackRate === sp, on: () => { this.video.defaultPlaybackRate = this.video.playbackRate = sp; this.openPage(null); } })));
+      case 'chapters': {
+        const list = this.chapters(), cur = this.chapterAt(this.video.currentTime, list);
+        return page('Chapters', list.map((c, i) => ({ label: c.label, right: fmtTime(c.start), active: i === cur, on: () => { this.seekTo(c.start); this.closeMenu(); } })));
+      }
       case 'version':
         return page('Version', this.files.map((f) => ({ label: `${resLabel(f.width, f.height)} ${(f.vcodec || '').toUpperCase()}`, right: fmtBytes(f.size), active: this.file.id === f.id, on: () => { this.file = { ...f, subtitles: f.subtitles }; this.chaptersDrawn = false; this.closeMenu(); this.replan(); } })));
     }
@@ -1724,6 +1767,8 @@ class Player {
     m.append(row('Quality', this.qualityLabel(this.quality), 'quality'));
     m.append(row('Playback method', (modes.find(([k]) => k === this.mode) || modes[0])[1], 'method'));
     m.append(row('Speed', this.video.playbackRate === 1 ? 'Normal' : `${this.video.playbackRate}x`, 'speed'));
+    const chaps = this.chapters();
+    if (chaps.length > 1) m.append(row('Chapters', chaps[this.chapterAt(this.video.currentTime, chaps)]?.label || chaps[0].label, 'chapters'));
     if (this.files.length > 1) m.append(row('Version', `${resLabel(this.file.width, this.file.height)} ${(this.file.vcodec || '').toUpperCase()}`, 'version'));
     m.append(h('div', { class: 'pm-sep' }));
     m.append(sw('Stats for nerds', !!this.statsEl, () => this.toggleStats(), 'Shortcut: I'));

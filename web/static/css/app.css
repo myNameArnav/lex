@@ -700,6 +700,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .p-transport, .p-tools { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .p-time { font-variant-numeric: tabular-nums; font-size: 13.5px; margin: 0 10px; white-space: nowrap; color: rgba(255,255,255,.9); }
 .p-ends { font-size: 12.5px; white-space: nowrap; color: rgba(255,255,255,.6); }
+.p-chap { font: inherit; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 28ch; margin-left: 8px; padding: 2px 6px; border: 0; border-radius: 4px; background: none; color: rgba(255,255,255,.85); cursor: pointer; text-shadow: 0 1px 2px rgba(0,0,0,.8); }
+.p-chap:empty { display: none; }
+@media (hover: hover) { .p-chap:hover { background: rgba(255,255,255,.12); } }
 .p-method { font: inherit; font-size: 10.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; padding: 3px 7px; border: 0; border-radius: 4px; background: rgba(255,255,255,.12); color: inherit; cursor: pointer; margin-right: 6px; }
 .p-method:empty { display: none; }
 .p-method.direct { color: var(--method-direct); } .p-method.remux { color: var(--method-remux); } .p-method.transcode { color: var(--method-transcode); }
