@@ -122,6 +122,11 @@ func TestGuideChannelsAndAt(t *testing.T) {
 		{store.AirFilter{Libraries: []int64{2}}, []int64{5}},
 		{store.AirFilter{Genres: []string{"Crime", "Action & Adventure"}, Kind: "movie"}, []int64{1, 6}},
 		{store.AirFilter{Libraries: []int64{1, 2}, Genres: []string{"Family"}}, nil},
+		// Titles are movies and shows: a show brings its episodes.
+		{store.AirFilter{Kind: "picked", Titles: []int64{3, 6}}, []int64{5, 6}},
+		{store.AirFilter{Kind: "picked"}, nil},
+		{store.AirFilter{Exclude: []int64{3, 1}}, []int64{6}},
+		{store.AirFilter{Kind: "picked", Titles: []int64{1, 3}, Exclude: []int64{3}}, []int64{1}},
 	} {
 		got, err := st.Airables(c.f)
 		var ids []int64
@@ -225,6 +230,12 @@ func TestCustomChannels(t *testing.T) {
 	}
 	if got := airs(chs[0]); !got[2] || got[1] {
 		t.Fatalf("Family airs %v", got)
+	}
+	// Picking titles ignores the filters left from before.
+	setChannels(store.TVChannel{ID: "crime", Name: "Up", Kind: "picked", Titles: []int64{2}, Genres: []string{"Crime"}})
+	chs, _ = g.Channels()
+	if got := airs(chs[0]); len(got) != 1 || !got[2] {
+		t.Fatalf("picked channel airs %v", got)
 	}
 	setChannels()
 	if chs, _ := g.Channels(); len(chs) != 1 || chs[0].ID != "lib-1" {

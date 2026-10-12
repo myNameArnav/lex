@@ -92,15 +92,19 @@ type Config struct {
 	IntroMaxSecs  int  `json:"introMaxSecs"`
 }
 
-// TVChannel is a Live TV channel an admin made. It airs what matches every
-// filter: any of its libraries, any of its genres, its kind ("movie",
-// "show", or "" for both). An empty filter doesn't limit.
+// TVChannel is a Live TV channel an admin made. Kind "picked" airs just
+// its Titles (movies and shows, by item id). Otherwise it airs what matches
+// every filter: any of its libraries, any of its genres, its kind ("movie",
+// "show", or "" for both), where an empty filter doesn't limit. Either way
+// it leaves out the titles in Exclude.
 type TVChannel struct {
 	ID        string   `json:"id"`
 	Name      string   `json:"name"`
 	Libraries []int64  `json:"libraries"`
 	Genres    []string `json:"genres"`
 	Kind      string   `json:"kind"`
+	Titles    []int64  `json:"titles"`
+	Exclude   []int64  `json:"exclude"`
 }
 
 func DefaultConfig() Config {
@@ -266,20 +270,28 @@ func (c *Config) normalizeTVChannels() {
 		if ch.Name = strings.TrimSpace(ch.Name); ch.Name == "" {
 			ch.Name = "Channel " + strconv.Itoa(i+1)
 		}
-		if ch.Kind != "movie" && ch.Kind != "show" {
+		if ch.Kind != "movie" && ch.Kind != "show" && ch.Kind != "picked" {
 			ch.Kind = ""
 		}
-		ch.Libraries = slices.DeleteFunc(slices.Clone(ch.Libraries), func(id int64) bool { return id <= 0 })
+		ch.Libraries, ch.Titles, ch.Exclude = ids(ch.Libraries), ids(ch.Titles), ids(ch.Exclude)
 		ch.Genres = slices.DeleteFunc(slices.Clone(ch.Genres), func(g string) bool { return strings.TrimSpace(g) == "" })
-		if ch.Libraries == nil {
-			ch.Libraries = []int64{}
-		}
 		if ch.Genres == nil {
 			ch.Genres = []string{}
 		}
 		chs = append(chs, ch)
 	}
 	c.TVChannels = chs
+}
+
+// ids drops non-ids and repeats, keeping the order.
+func ids(in []int64) []int64 {
+	out := []int64{}
+	for _, id := range in {
+		if id > 0 && !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func (s *Store) loadConfig() error {

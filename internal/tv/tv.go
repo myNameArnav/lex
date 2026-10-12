@@ -72,7 +72,11 @@ func (g *Guide) Channels() ([]Channel, error) {
 	}
 	var out []Channel
 	for _, c := range custom {
-		out = append(out, Channel{ID: "custom-" + c.ID, Name: c.Name, filter: store.AirFilter{Libraries: c.Libraries, Genres: c.Genres, Kind: c.Kind}})
+		f := store.AirFilter{Libraries: c.Libraries, Genres: c.Genres, Kind: c.Kind, Exclude: c.Exclude}
+		if c.Kind == "picked" {
+			f = store.AirFilter{Kind: c.Kind, Titles: c.Titles, Exclude: c.Exclude}
+		}
+		out = append(out, Channel{ID: "custom-" + c.ID, Name: c.Name, filter: f})
 	}
 	if len(libs) > 1 {
 		out = append(out, Channel{ID: "all", Name: "All"})
