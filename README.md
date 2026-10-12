@@ -95,6 +95,14 @@ frames from the films.</sub>
   a reconnecting notice when the server drops out, and a **stats for nerds**
   overlay (codecs in/out, reasons, buffer health graph, download speed, dropped
   frames, stalls, server ffmpeg speed/fps/CPU/throttling).
+- **Shuffle** – play a show's episodes in random order from its page; Next and
+  Up next follow the shuffled order.
+- **Live TV** – channels that play the library at random like broadcast TV: All
+  (with more than one library), one per library and one per common genre. Each
+  day's schedule is fixed per channel, so tuning in joins whatever is on part-way
+  through, and the guide shows what's on now and next. The player moves on with
+  the schedule, has Go live after a pause and channel up/down (`n`, `PgUp`/`PgDn`).
+  Live TV saves no resume points or watched marks.
 - **Interface** – a two-row player toolbar on narrow screens, keyboard-accessible
   episode playback and seek controls, labeled settings, and dialogs that contain
   focus and return it when closed. Playback actions appear before long synopses;
@@ -271,8 +279,8 @@ unsupported.
 ## Keyboard shortcuts
 
 Press `?` (or `Ctrl`/`⌘` + `/`) anywhere for the full list. The main ones:
-`Ctrl`/`⌘` + `K` or `/` to search, `g` then `h` / `1`–`9` / `s` / `d` to go to
-home, a library, settings or the dashboard, `p` to play the title you're
+`Ctrl`/`⌘` + `K` or `/` to search, `g` then `h` / `t` / `1`–`9` / `s` / `d` to go to
+home, Live TV, a library, settings or the dashboard, `p` to play the title you're
 viewing, and in the player `space`, `←`/`→`, `f`, `m`, `c` and `i`. The list is
 also in the account menu on devices with a mouse.
 

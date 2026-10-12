@@ -1,4 +1,4 @@
-import { h, $, clear, icons, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrate, toast, modal, spinner, lazyImg, popupMenu, closePopupMenu, streamLabel, langName, channelName, confirmDialog, run, fmtEpisode, motionOK, emptyState } from './ui.js';
+import { h, $, clear, icons, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrate, toast, modal, spinner, lazyImg, popupMenu, closePopupMenu, streamLabel, langName, channelName, confirmDialog, run, fmtEpisode, fmtClock, motionOK, emptyState } from './ui.js';
 import { api, img, castImg } from './api.js';
 import { openPlayer, isPlayerOpen, closePlayer } from './player.js';
 import { installShortcuts, showShortcuts, MOD } from './shortcuts.js';
@@ -186,13 +186,13 @@ function renderNav() {
   const sig = state.libraries.map((l) => `${l.id}\t${l.name}`).join('\n');
   if (!navLinks.size || sig !== navSig) {
     navSig = sig;
-    navLinks = new Map([['home', h('a', { href: '#/' }, 'Home')], ...state.libraries.map((l) => [l.id, h('a', { href: `#/library/${l.id}` }, l.name)])]);
+    navLinks = new Map([['home', h('a', { href: '#/' }, 'Home')], ['tv', h('a', { href: '#/tv' }, 'Live TV')], ...state.libraries.map((l) => [l.id, h('a', { href: `#/library/${l.id}` }, l.name)])]);
     navEl.replaceChildren(...navLinks.values());
   }
   const cur = location.hash;
   let active = null;
   for (const [id, a] of navLinks) {
-    const on = id === 'home' ? cur === '' || cur === '#/' || cur.startsWith('#/?') : cur === `#/library/${id}` || cur.startsWith(`#/library/${id}?`);
+    const on = id === 'home' ? cur === '' || cur === '#/' || cur.startsWith('#/?') : id === 'tv' ? cur === '#/tv' : cur === `#/library/${id}` || cur.startsWith(`#/library/${id}?`);
     a.classList.toggle('active', on);
     if (on) { a.setAttribute('aria-current', 'page'); active = a; } else a.removeAttribute('aria-current');
   }
@@ -393,6 +393,7 @@ export async function route({ soft = false } = {}) {
       case 'library': view = await libraryView(ctx, +id); break;
       case 'item': view = await itemView(ctx, +id); break;
       case 'search': view = await searchView(ctx, query.get('q') || ''); break;
+      case 'tv': view = await tvView(ctx); break;
       case 'settings': { const m = await loadAdmin(); view = await m.settingsView(ctx, id || 'preferences'); break; }
       case 'dashboard': { const m = await loadAdmin(); view = await m.dashboardView(ctx, id || 'live'); break; }
       default: view = notFound();
@@ -482,6 +483,21 @@ document.addEventListener('click', () => { if (scrollTimer) saveScroll(); }, tru
 
 export function play(itemId, start = null) {
   openPlayer({ itemId, start, onClose: () => { if (!isPlayerOpen()) refreshSoft(); } });
+}
+
+// playShuffle plays a show's (or a season's) episodes in random order.
+// The button stays busy while the order loads.
+async function playShuffle(it, btn) {
+  let eps = null;
+  if (!(await run(btn, async () => { eps = await api(`/api/items/${it.id}/shuffle`); }))) return;
+  if (!eps.length) { toast('Nothing to shuffle yet'); return; }
+  openPlayer({ shuffle: eps, onClose: () => { if (!isPlayerOpen()) refreshSoft(); } });
+}
+
+// playChannel tunes into a Live TV channel; channels are what Next and
+// Page Up/Down switch through.
+function playChannel(id, channels) {
+  openPlayer({ channel: id, channels, onClose: () => { if (!isPlayerOpen()) refreshSoft(); } });
 }
 
 // refreshSoft re-renders the current view in place (after playback or an
@@ -1073,6 +1089,7 @@ function heroActions(d) {
   if (next) {
     const lbl = done ? `Watch again from ${fmtEpisode(next)}` : `${next.userData?.position > 0 ? 'Resume' : 'Play'} ${fmtEpisode(next)}`;
     btns.push(h('button', { class: 'btn primary lg', dataset: { focusKey: `show-play-${it.id}` }, onclick: () => play(next.id, done ? 0 : null) }, h('span', { html: icons.play }), lbl));
+    if (it.childCount > 1) btns.push(h('button', { class: 'btn lg', title: 'Play episodes in random order', dataset: { focusKey: `show-shuffle-${it.id}` }, onclick: (e) => playShuffle(it, e.currentTarget) }, h('span', { html: icons.shuffle }), 'Shuffle'));
   }
   btns.push(watchedButton(it), favButton(it), moreButton(it, d));
   // A placeholder title ("Episode 1") would only repeat the button.
@@ -1212,6 +1229,51 @@ function episodeRow(e, onChange) {
 }
 
 // ---------- search ----------
+// ---------- live tv ----------
+// The guide's two lines for a program: the show or movie, then the episode.
+function programHead(it) {
+  return it.kind === 'episode' ? it.showTitle || it.title : it.title;
+}
+
+function programSub(it) {
+  return it.kind === 'episode' ? `${fmtEpisode(it)} — ${it.title}` : String(it.year || '');
+}
+
+// The guide: each channel's program now (the art tunes in) and what's next.
+// It refreshes every minute; the time left is relative to the server clock.
+async function tvView(ctx) {
+  const data = await api('/api/tv');
+  const skew = Date.now() - data.serverTime;
+  const wrap = h('div', { class: 'page' }, h('h1', { class: 'page-title' }, 'Live TV'),
+    h('p', { class: 'muted', style: { margin: 0 } }, 'Channels that play your library at random, like TV. Tune in to join whatever is on.'));
+  if (!data.channels.length) {
+    wrap.appendChild(emptyState({ level: 'h2', title: 'Nothing to air yet', text: 'Live TV plays movies and episodes once a library scan has read their running times.' }));
+    return wrap;
+  }
+  const channels = data.channels.map(({ id, number, name }) => ({ id, number, name }));
+  const now = Date.now() - skew;
+  const list = h('ol', { class: 'tv-guide' }, data.channels.map((ch) => {
+    const [cur, ...later] = ch.programs;
+    const it = cur.item;
+    const left = Math.max(1, Math.round((cur.end - now) / 60000));
+    const label = `Channel ${ch.number}, ${ch.name}: ${programHead(it)}${programSub(it) ? `, ${programSub(it)}` : ''}, ${left} min left`;
+    return h('li', { class: 'tv-channel' },
+      h('div', { class: 'tv-num', 'aria-hidden': 'true' }, h('b', null, ch.number), h('span', null, ch.name)),
+      h('button', { type: 'button', class: 'card tv-now', 'aria-label': `Tune in to ${label}`, dataset: { focusKey: `tv-${ch.id}` }, onclick: () => playChannel(ch.id, channels) },
+        h('div', { class: 'art' }, placeholder(it), lazyImg(img(it, 'thumb', 480), ''),
+          h('div', { class: 'play-hover', 'aria-hidden': 'true' }, h('span', { html: icons.play })),
+          progressBar(now - cur.start, cur.end - cur.start)),
+        h('div', { class: 'meta' },
+          h('div', { class: 'small tv-on' }, h('span', { class: 'tv-dot', 'aria-hidden': 'true' }), `On now · ${left} min left`),
+          h('div', { class: 't' }, programHead(it)), h('div', { class: 's' }, programSub(it)))),
+      h('ul', { class: 'tv-later', 'aria-label': `Later on ${ch.name}` }, later.map((p) => h('li', null,
+        h('span', { class: 'tv-time' }, fmtClock(p.start)), h('span', { class: 'tv-title' }, programHead(p.item), p.item.kind === 'episode' ? h('span', { class: 'muted' }, ` · ${fmtEpisode(p.item)}`) : null)))));
+  }));
+  wrap.appendChild(list);
+  refreshLater(ctx, 60000);
+  return wrap;
+}
+
 async function searchView(ctx, q) {
   // Leave the box alone while it holds this query (e.g. with a trailing space being typed).
   if (searchInput && searchInput.value.trim() !== q) searchInput.value = q;

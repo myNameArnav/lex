@@ -1,7 +1,7 @@
 // Full-screen player: picks a playback plan from the server, plays it via
 // direct <video src> or the MSE engine, and renders controls + stats.
 
-import { h, icons, resLabel, fmtTime, fmtBitrate, fmtBytes, streamLabel, toast, releaseToasts, clear, langName, channelName, modal, containTab, confirmDialog, run, METHOD_LABEL, reasonLabel, fmtEpisode } from './ui.js';
+import { h, icons, resLabel, fmtTime, fmtBitrate, fmtBytes, streamLabel, toast, releaseToasts, clear, langName, channelName, modal, containTab, confirmDialog, run, METHOD_LABEL, reasonLabel, fmtEpisode, fmtProgram, fmtClock } from './ui.js';
 import { api, img } from './api.js';
 import { state } from './app.js';
 import { detectCaps } from './caps.js';
@@ -147,8 +147,12 @@ async function retryApi(path, opts, { cancelled = () => false, retries = 6, onRe
 }
 
 class Player {
-  constructor({ itemId, start = null, onClose, reuseHistory = false }) {
+  // shuffle: episodes to play in this order, from the first. channel: a Live
+  // TV channel id to tune into, and channels the list to switch through.
+  constructor({ itemId, start = null, onClose, reuseHistory = false, shuffle = null, channel = null, channels = [] }) {
     this.onClose = onClose;
+    this.shuffle = shuffle?.length ? { items: shuffle, pos: 0 } : null;
+    this.live = channel ? { channelId: channel, channels } : null;
     this.sessionId = null;
     this.engine = null;
     this.plan = null;
@@ -168,7 +172,8 @@ class Player {
     // navigating the page behind it. Same URL, so no hashchange or route.
     if (!reuseHistory) history.pushState({ ...history.state, lexPlayer: true }, '');
     this.bind();
-    this.start(itemId, start);
+    if (this.live) this.tune(channel);
+    else this.start(this.shuffle ? this.shuffle.items[0].id : itemId, start);
   }
 
   // ---------- DOM ----------
@@ -196,7 +201,9 @@ class Player {
     this.playBtn = b('play', 'Play (k)', () => this.togglePlay(), 'big');
     this.volBtn = b('volume', 'Mute (m)', () => this.toggleMute());
     this.volRange = h('input', { type: 'range', 'aria-label': 'Volume', min: 0, max: 1, step: 0.05, value: prefs.get('volume'), oninput: (e) => { this.video.volume = +e.target.value; this.video.muted = false; }, onclick: (e) => e.stopPropagation() });
-    this.nextBtn = b('next', 'Next episode (n)', () => this.playNext(), 'hidden');
+    this.nextBtn = b('next', this.live ? 'Next channel (n)' : 'Next episode (n)', () => this.playNext(), 'hidden');
+    // Live TV: LIVE while at the live point, Go live once behind it.
+    this.liveBtn = this.live ? h('button', { class: 'p-live', type: 'button', title: 'Back to what’s on now', onclick: (e) => { e.stopPropagation(); this.goLive(); } }, 'LIVE') : null;
     this.fsBtn = b('fullscreen', 'Fullscreen (f)', () => this.toggleFullscreen());
     this.ccBtn = b('cc', 'Subtitles & audio (c)', (e) => this.toggleMenu('tracks'));
     this.gearBtn = b('gear', 'Settings', () => this.toggleMenu('settings'));
@@ -211,7 +218,7 @@ class Player {
       h('div', { class: 'shade-top' }), h('div', { class: 'shade-bot' }),
       this.subsEl,
       this.center,
-      h('div', { class: 'p-top' }, b('back', 'Close (Esc)', () => this.close()), this.titleEl),
+      h('div', { class: 'p-top' }, b('back', 'Close (Esc)', () => this.close()), this.titleEl, this.liveBtn),
       h('div', { class: 'p-bot' },
         this.seek,
         h('div', { class: 'p-controls' },
@@ -405,12 +412,19 @@ class Player {
     this.requestedStart = start;
     this.bufferRebuilds = 0;
     this.upNextDismissed = false;
+    // A newer start (e.g. switching channels again) supersedes this one.
+    const gen = this.startGen = (this.startGen || 0) + 1;
+    const stale = () => this.closed || gen !== this.startGen;
     try {
       const d = await retryApi(`/api/items/${itemId}`, undefined, {
-        cancelled: () => this.closed,
+        cancelled: stale,
         onRetry: (n) => this.setStatus(`Reconnecting to the server… (attempt ${n + 1})`),
       });
-      if (this.closed) return;
+      if (stale()) return;
+      // The queue decides what plays next: the shuffle order, or (Live TV)
+      // the schedule, which plays on by itself.
+      if (this.shuffle) d.next = this.shuffle.items[this.shuffle.pos + 1] || null;
+      if (this.live) d.next = null;
       this.detail = d;
       this.item = d.item;
       this.segments = d.segments || [];
@@ -422,7 +436,7 @@ class Player {
       this.subtitle = pickSubtitle(this.file, aud);
       this.subOffset = 0;
       this.renderTitle();
-      this.nextBtn.classList.toggle('hidden', !d.next);
+      this.nextBtn.classList.toggle('hidden', !d.next && !(this.live?.channels.length > 1));
       if (start == null) {
         const ud = this.item.userData;
         start = ud && ud.position > 0 && !ud.played ? ud.position : 0;
@@ -434,15 +448,19 @@ class Player {
       this.setupMediaSession();
       if (prefs.get('showStats') && !this.statsEl) this.toggleStats();
     } catch (e) {
-      if (!this.closed) this.planFailed(e);
+      if (!stale()) this.planFailed(e);
     }
   }
 
   renderTitle() {
     const it = this.item;
     clear(this.titleEl);
-    if (it.kind === 'episode') {
-      this.titleEl.append(h('b', null, this.detail.show?.title || it.showTitle || ''), h('span', null, `${fmtEpisode(it)} — ${it.title}`));
+    if (this.live) {
+      const { channel, next } = this.live;
+      this.titleEl.append(h('b', null, fmtProgram(it)),
+        h('span', null, [`${channel.number} · ${channel.name}`, next ? `Next at ${fmtClock(next.start)}: ${fmtProgram(next.item)}` : ''].filter(Boolean).join(' · ')));
+    } else if (it.kind === 'episode') {
+      this.titleEl.append(h('b', null, this.detail.show?.title || it.showTitle || ''), h('span', null, `${fmtEpisode(it)} — ${it.title}${this.shuffle ? ' · Shuffle' : ''}`));
     } else {
       this.titleEl.append(h('b', null, it.title), h('span', null, [it.year, resLabel(this.file?.width, this.file?.height)].filter(Boolean).join(' · ')));
     }
@@ -473,7 +491,7 @@ class Player {
     const req = {
       itemId: this.item.id, fileId: this.file.id, audio: this.audio, subtitle: this.subtitle,
       mode, forceHls: forceHls && this.mode === 'hls', maxBitrate: this.quality, audioLang: prefs.get('audioLang'), swEncode: !!this.swEncode,
-      caps, sessionId: this.sessionId, start,
+      caps, sessionId: this.sessionId, start, live: !!this.live,
     };
     // Retrying the same session's plan through a server restart is safe.
     // Closing or selecting another plan cancels the retry.
@@ -746,6 +764,8 @@ class Player {
   // the next episode) may never have loaded.
   retry() {
     this.hideError();
+    // Live TV rejoins what's on now.
+    if (this.live) { this.resetForNext(); this.tune(this.live.channelId); return; }
     if (this.item && String(this.item.id) === String(this.itemId)) this.replan({ resume: true });
     else this.start(this.itemId, this.requestedStart);
   }
@@ -1221,6 +1241,7 @@ class Player {
       f: () => this.toggleFullscreen(), m: () => { this.toggleMute(); this.osdVolume(); },
       i: () => this.toggleStats(), c: () => this.toggleMenu('tracks'),
       n: () => this.playNext(), s: () => this.skipBtn?.click(),
+      pageup: () => this.live && this.switchChannel(1), pagedown: () => this.live && this.switchChannel(-1),
       g: () => this.nudgeSubs(-0.1), h: () => this.nudgeSubs(0.1),
       escape: () => { if (this.menu) this.closeMenu(); else if (!document.fullscreenElement) this.close(); },
       home: () => this.seekTo(0), end: () => this.seekTo(this.duration() - 5),
@@ -1357,6 +1378,7 @@ class Player {
     this.renderEnds();
     this.checkWaiting();
     this.checkUpNext();
+    this.checkLive();
   }
 
   toggleStats() {
@@ -1742,7 +1764,7 @@ class Player {
   checkUpNext() {
     const next = this.detail?.next;
     const d = this.duration(), t = this.video.currentTime;
-    if (!next || !d || this.upNextShown || this.upNextDismissed || this.video.paused || this.errEl) return;
+    if (this.live || !next || !d || this.upNextShown || this.upNextDismissed || this.video.paused || this.errEl) return;
     const credits = (this.file?.info?.chapters || []).find((c) => /credit|outro|ending|ed\b/i.test(c.title || '') && c.start > d * 0.7);
     const at = credits ? credits.start : d - Math.max(20, prefs.get('countdown') + 5);
     if (t < at) return;
@@ -1788,6 +1810,7 @@ class Player {
   }
 
   onEnded() {
+    if (this.live) return this.nextProgram();
     if (this.detail?.next && prefs.get('autoplayNext') && !this.upNextDismissed) this.playNext();
     else this.onMovieEnd();
   }
@@ -1823,8 +1846,19 @@ class Player {
   }
 
   async playNext() {
+    if (this.live) return this.switchChannel(1);
     const next = this.detail?.next;
     if (!next || this.stopped) return;
+    if (this.shuffle) this.shuffle.pos++;
+    this.resetForNext();
+    const ud = next.userData;
+    await this.start(next.id, ud && ud.position > 0 && !ud.played ? ud.position : 0);
+    if (this.onClose) this.onChanged = true;
+  }
+
+  // resetForNext ends the current title's session and clears what belonged
+  // to it, before another title starts in the same player.
+  resetForNext() {
     this.closeMenu();
     this.cancelUpNext(false);
     this.removeEndCard();
@@ -1844,9 +1878,86 @@ class Player {
     this.swEncode = false;
     this.stalls = { count: 0, secs: 0, since: 0 };
     this.teardown();
-    const ud = next.userData;
-    await this.start(next.id, ud && ud.position > 0 && !ud.played ? ud.position : 0);
-    if (this.onClose) this.onChanged = true;
+  }
+
+  // ---------- Live TV ----------
+  // tune joins a channel at the program airing now (or at at, server Unix
+  // ms: the end of the program that just finished), as far into it as the
+  // server's clock says.
+  async tune(channelId, at = 0) {
+    const live = this.live;
+    live.channelId = channelId;
+    const token = live.token = (live.token || 0) + 1;
+    // Nothing of the next program has played: checkLive waits for it.
+    this.started = false;
+    this.showSpinner(true);
+    this.setStatus('');
+    try {
+      const r = await retryApi(`/api/tv/${encodeURIComponent(channelId)}${at ? `?at=${at}` : ''}`, undefined, {
+        cancelled: () => this.closed || token !== live.token,
+        onRetry: (n) => this.setStatus(`Reconnecting to the server… (attempt ${n + 1})`),
+      });
+      if (this.closed || token !== live.token) return;
+      // skew: how far this device's clock is ahead of the server's.
+      Object.assign(live, { channel: r.channel, now: r.now, next: r.next || null, skew: Date.now() - r.serverTime });
+      if (!live.channels.some((c) => c.id === r.channel.id)) live.channels = [r.channel];
+      await this.start(r.now.item.id, Math.max(0, this.livePosition()));
+    } catch (e) {
+      if (!this.closed && token === live.token) this.planFailed(e);
+    }
+  }
+
+  // livePosition: where in the current program the broadcast is now (s).
+  livePosition() {
+    const { now, skew } = this.live;
+    return (Date.now() - skew - now.start) / 1000;
+  }
+
+  // The schedule moves on when the program's slot ends (a program running
+  // past midnight is cut there), or when its file ends.
+  checkLive() {
+    const live = this.live;
+    if (!live?.now || !this.started || this.stopped || this.errEl || live.switching) return;
+    const slot = (live.now.end - live.now.start) / 1000;
+    if (this.video.currentTime >= slot - 0.5) { this.nextProgram(); return; }
+    const behind = this.livePosition() - this.video.currentTime > 15;
+    if (this.liveBtn.classList.contains('behind') !== behind) {
+      this.liveBtn.classList.toggle('behind', behind);
+      this.liveBtn.textContent = behind ? 'Go live' : 'LIVE';
+      this.liveBtn.title = behind ? 'Jump to what’s on now' : 'Playing live';
+    }
+  }
+
+  async nextProgram() {
+    const live = this.live;
+    if (live.switching || this.stopped) return;
+    live.switching = true;
+    try {
+      this.resetForNext();
+      await this.tune(live.channelId, live.now?.end || 0);
+    } finally { live.switching = false; }
+  }
+
+  // Back to the live point: a seek within this program, or tuning in again
+  // once it has finished airing.
+  goLive() {
+    const live = this.live;
+    if (!live?.now) return;
+    const pos = this.livePosition();
+    if (pos < (live.now.end - live.now.start) / 1000 - 5) {
+      this.seekTo(pos);
+      this.video.play().catch(() => {});
+    } else this.nextProgram();
+  }
+
+  async switchChannel(dir) {
+    const { channels, channelId } = this.live;
+    if (channels.length < 2 || this.stopped) return;
+    const i = channels.findIndex((c) => c.id === channelId);
+    const ch = channels[(i + dir + channels.length) % channels.length];
+    toast(`${ch.number} · ${ch.name}`);
+    this.resetForNext();
+    await this.tune(ch.id);
   }
 
   setupMediaSession() {
@@ -1864,14 +1975,15 @@ class Player {
       ms.setActionHandler('seekbackward', () => this.skip(-prefs.get('skipBack')));
       ms.setActionHandler('seekforward', () => this.skip(prefs.get('skipFwd')));
       ms.setActionHandler('seekto', (d) => this.seekTo(d.seekTime));
-      ms.setActionHandler('nexttrack', this.detail.next ? () => this.playNext() : null);
+      ms.setActionHandler('nexttrack', this.detail.next || this.live ? () => this.playNext() : null);
+      ms.setActionHandler('previoustrack', this.live ? () => this.switchChannel(-1) : null);
     } catch {}
   }
 
   clearMediaSession() {
     const ms = globalThis.navigator?.mediaSession;
     if (!ms) return;
-    for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'nexttrack']) {
+    for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'nexttrack', 'previoustrack']) {
       try { ms.setActionHandler(a, null); } catch {}
     }
   }

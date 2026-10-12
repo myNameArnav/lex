@@ -130,6 +130,14 @@ export function fmtEpisode(it) {
   return `S${it.season ?? 0} E${it.episode}${it.episodeEnd ? `–${it.episodeEnd}` : ''}`;
 }
 
+// fmtProgram: a movie or episode as one line, e.g. "Show · S1 E2 — Pilot".
+export function fmtProgram(it) {
+  return it.kind === 'episode' ? `${it.showTitle || ''} · ${fmtEpisode(it)} — ${it.title}` : it.title;
+}
+
+// fmtClock: a time of day (Unix ms) in the viewer's locale, e.g. "9:30 PM".
+export const fmtClock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
 export const KIND_LABELS = { movies: 'Movies', shows: 'TV Shows', mixed: 'Mixed' };
 
 // Playback method names, Title Case everywhere in the UI.

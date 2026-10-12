@@ -18,6 +18,8 @@ import (
 type planReq struct {
 	stream.PlanRequest
 	ItemID int64 `json:"itemId"`
+	// Live: Live TV, which doesn't touch resume positions or watched marks.
+	Live bool `json:"live"`
 }
 
 func displayTitle(it *store.Item, show *store.Item) (string, string) {
@@ -70,8 +72,14 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "media file is missing on disk (is the drive mounted?)")
 		return
 	}
+	if req.Live != strings.HasPrefix(req.SessionID, stream.LivePrefix) {
+		req.SessionID = ""
+	}
 	if req.SessionID == "" {
 		req.SessionID = store.RandomToken(12)
+		if req.Live {
+			req.SessionID = stream.LivePrefix + req.SessionID
+		}
 	}
 	ip := s.clientIP(r)
 	remote := s.isRemote(ip)

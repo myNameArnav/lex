@@ -7,6 +7,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"lex/internal/logx"
+	"lex/internal/store"
 )
 
 func TestSessionOwnership(t *testing.T) {
@@ -126,5 +129,48 @@ func TestKillDoesNotBlockAnonSessions(t *testing.T) {
 	}
 	if _, err := m.Open(&Session{ID: "anon-100-1", UserID: 1, ItemID: 10, FileID: 100}); err != nil {
 		t.Fatalf("anon session blocked after a stop: %v", err)
+	}
+}
+
+// Live TV joins programs mid-way: it saves no resume position and no
+// watched mark, whatever the position. The id decides, not the field, so a
+// session re-opened after a restart stays live.
+func TestLiveSessionSavesNoProgress(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	u, err := st.CreateUser("viewer", "test-password-123", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO libraries(id,name,kind,paths,created_at) VALUES(1,'Movies','movies','[]',0)`,
+		`INSERT INTO items(id,library_id,kind,title,sort_title,added_at,updated_at) VALUES(1,1,'movie','A','a',0,0),(2,1,'movie','B','b',0,0)`,
+	} {
+		if _, err := st.DB().Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := NewManager(st, logx.New(10, false))
+	for _, s := range []*Session{
+		{ID: LivePrefix + "1", UserID: u.ID, ItemID: 1, FileID: 1, Duration: 3000},
+		{ID: "vod", Live: true, UserID: u.ID, ItemID: 2, FileID: 2, Duration: 3000},
+	} {
+		if _, err := m.Open(s); err != nil {
+			t.Fatal(err)
+		}
+		for _, pos := range []float64{600, 2990} {
+			if _, err := m.Heartbeat(s.ID, u.ID, pos, false, ClientStats{}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if ud, _ := st.GetUserData(u.ID, 1); ud != (store.UserData{}) {
+		t.Fatalf("live session saved %+v", ud)
+	}
+	if ud, _ := st.GetUserData(u.ID, 2); !ud.Played {
+		t.Fatalf("on-demand session saved %+v, want played", ud)
 	}
 }

@@ -1,8 +1,10 @@
 package api
 
 import (
+	"math/rand/v2"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -315,4 +317,39 @@ func (s *Server) setFavorite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// shuffle returns a show's or a season's episodes in random order. A show
+// leaves out its specials, unless that's all it has.
+func (s *Server) shuffle(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeErr(w, 400, "bad id")
+		return
+	}
+	uid := userOf(r).ID
+	it, err := s.St.Item(id)
+	if err != nil {
+		notFoundOr500(w, err)
+		return
+	}
+	var eps []*store.Item
+	switch it.Kind {
+	case "show":
+		eps, err = s.St.ShowEpisodes(id, uid)
+		if regular := slices.DeleteFunc(slices.Clone(eps), func(e *store.Item) bool { return e.Season == 0 }); len(regular) > 0 {
+			eps = regular
+		}
+	case "season":
+		eps, err = s.St.Children(id, uid)
+	default:
+		writeErr(w, 400, "only shows and seasons can be shuffled")
+		return
+	}
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	rand.Shuffle(len(eps), func(i, j int) { eps[i], eps[j] = eps[j], eps[i] })
+	writeJSON(w, nonNilItems(eps))
 }
