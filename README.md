@@ -104,7 +104,8 @@ frames from the films.</sub>
   through, and the guide shows what's on now and next. The player moves on with
   the schedule, has Go live after a pause and channel up/down (`n`, `PgUp`/`PgDn`).
   Live TV saves no resume points or watched marks. It's off by default: an admin
-  turns it on in Settings → Server.
+  turns it on in Settings → Server, where they can also make channels of their
+  own (a name plus any libraries, genres and movies/shows), listed first.
 - **Interface** – a two-row player toolbar on narrow screens, keyboard-accessible
   episode playback and seek controls, labeled settings, and dialogs that contain
   focus and return it when closed. Playback actions appear before long synopses;

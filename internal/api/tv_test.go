@@ -163,3 +163,35 @@ func TestLiveTVIsOffByDefault(t *testing.T) {
 		t.Fatalf("turned on: %d, caps %v", code, me.Caps)
 	}
 }
+
+// An admin's channel leads the guide and tunes like any other.
+func TestTVCustomChannel(t *testing.T) {
+	s, h := securityServer(t)
+	token := tvLibrary(t, s)
+	c := s.St.Config()
+	c.TVChannels = []store.TVChannel{{ID: "eps", Name: "Episodes", Kind: "show"}}
+	if _, err := s.St.SaveConfig(c); err != nil {
+		t.Fatal(err)
+	}
+	var guide struct {
+		Channels []channelView `json:"channels"`
+	}
+	if code := getJSON(t, h, token, "/api/tv", &guide); code != 200 || len(guide.Channels) != 2 {
+		t.Fatalf("guide: %d %+v", code, guide)
+	}
+	if ch := guide.Channels[0]; ch.ID != "custom-eps" || ch.Name != "Episodes" || ch.Number != 1 {
+		t.Fatalf("first channel = %+v", ch)
+	}
+	var tuned struct {
+		Now  programView  `json:"now"`
+		Next *programView `json:"next"`
+	}
+	if code := getJSON(t, h, token, "/api/tv/custom-eps", &tuned); code != 200 {
+		t.Fatalf("tune: %d", code)
+	}
+	for _, p := range []*programView{&tuned.Now, tuned.Next} {
+		if p == nil || p.Item.Kind != "episode" {
+			t.Fatalf("Episodes aired %+v", p)
+		}
+	}
+}

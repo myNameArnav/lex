@@ -335,13 +335,67 @@ function webhookHelp(url) {
     h('button', { class: 'btn sm', type: 'button', onclick: copy }, 'Copy URL'));
 }
 
-function serverSection() {
+// tvChannelsEditor edits draft.tvChannels, the admin's own Live TV channels.
+// Every edit replaces the array (and the edited channel), so the form sees
+// the draft change; adding or removing one also tells the form.
+let checksId = 0;
+function tvChannelsEditor(draft, genres) {
+  const wrap = h('div', { class: 'tv-channels' });
+  const changed = () => wrap.dispatchEvent(new Event('input', { bubbles: true }));
+  const edit = (i, patch) => { draft.tvChannels = draft.tvChannels.map((c, j) => (j === i ? { ...c, ...patch } : c)); };
+  // A set of checkboxes for list k of channel i; none ticked means no limit.
+  const checks = (label, none, i, k, options) => {
+    const id = `checks-${++checksId}`;
+    return h('div', { class: 'field' }, h('span', { id }, label, ' ', h('span', { class: 'muted' }, none)),
+      h('div', { class: 'check-chips', role: 'group', 'aria-labelledby': id },
+        options.map(([v, l]) => h('label', null, h('input', { type: 'checkbox', checked: draft.tvChannels[i][k].includes(v),
+          onchange: (e) => { const cur = draft.tvChannels[i][k].filter((x) => x !== v); edit(i, { [k]: e.target.checked ? [...cur, v] : cur }); } }), l))));
+  };
+  const render = (focus) => {
+    wrap.replaceChildren(...(draft.tvChannels || []).map((ch, i) => {
+      const name = h('input', { type: 'text', value: ch.name, maxlength: 60, required: true, oninput: (e) => edit(i, { name: e.target.value }) });
+      // Genres a channel keeps but the library no longer has stay listed.
+      const gs = [...new Set([...genres, ...ch.genres])];
+      if (focus === ch.id) requestAnimationFrame(() => { name.focus(); name.select(); });
+      return h('div', { class: 'tv-channel-edit' },
+        h('div', { class: 'form-grid' },
+          field('Channel name', name),
+          field('Plays', select(ch.kind, [['', 'Movies and shows'], ['movie', 'Movies only'], ['show', 'Shows only']], (v) => edit(i, { kind: v })))),
+        state.libraries.length > 1 ? checks('Libraries', '(none ticked: all)', i, 'libraries', state.libraries.map((l) => [l.id, l.name])) : null,
+        gs.length ? checks('Genres', '(none ticked: any)', i, 'genres', gs.map((g) => [g, g])) : null,
+        h('div', null, h('button', { class: 'btn sm danger', type: 'button', onclick: () => {
+          draft.tvChannels = draft.tvChannels.filter((_, j) => j !== i);
+          render(); changed();
+          (wrap.querySelector('.tv-channel-edit:last-child input') || add).focus();
+        } }, h('span', { html: icons.trash }), 'Remove channel')));
+    }));
+  };
+  const add = h('button', { class: 'btn sm', type: 'button', onclick: () => {
+    const id = Math.random().toString(16).slice(2, 10);
+    draft.tvChannels = [...(draft.tvChannels || []), { id, name: `Channel ${(draft.tvChannels?.length || 0) + 1}`, libraries: [], genres: [], kind: '' }];
+    render(id); changed();
+  } }, h('span', { html: icons.plus }), 'Add channel');
+  render();
+  return h('div', { class: 'tv-channels-editor' },
+    h('h3', null, 'Your channels'),
+    h('p', { class: 'help', style: { margin: 0 } }, 'Channels of your own, listed before the automatic ones. Each plays what matches all of its choices.'),
+    wrap, h('div', null, add));
+}
+
+async function serverSection() {
+  // Genres to offer custom Live TV channels.
+  const genres = await api('/api/genres').catch(() => []);
+  const check = (d) => {
+    const i = (d.tvChannels || []).findIndex((c) => !c.name.trim());
+    return i < 0 ? null : ['Give every Live TV channel a name', document.querySelectorAll('.tv-channel-edit input[type=text]')[i]];
+  };
   return configForm(({ draft, num, text, list, tg, info }) => [
     h('div', { class: 'form-section' }, h('h2', null, 'General'),
       field('Server name', text('serverName'))),
     h('div', { class: 'form-section' }, h('h2', null, 'Live TV'),
-      h('p', { class: 'help', style: { margin: 0 } }, 'Channels that play the library at random, like broadcast TV: one for everything, one per library and one per common genre. Everyone tuned to a channel sees the same program. Live TV saves no resume points or watched marks.'),
-      tg('liveTv', 'Enable Live TV', 'Adds Live TV to the menu for every user.')),
+      h('p', { class: 'help', style: { margin: 0 } }, 'Channels that play the library at random, like broadcast TV: one for everything, one per library and one per common genre, plus any you make below. Everyone tuned to a channel sees the same program. Live TV saves no resume points or watched marks.'),
+      tg('liveTv', 'Enable Live TV', 'Adds Live TV to the menu for every user.'),
+      tvChannelsEditor(draft, genres)),
     h('div', { class: 'form-section' }, h('h2', null, 'Library scanning'),
       h('div', { class: 'form-grid' },
         field('Rescan every (minutes)', num('scanIntervalMin', { min: 0 }), '0 disables periodic scans. Scans only stat files, so they are cheap.'),
@@ -355,7 +409,7 @@ function serverSection() {
       field('Local networks (CIDR, comma separated)', list('localNetworks')),
       tg('trustProxy', 'Trust reverse-proxy headers', 'Enable only behind a proxy that replaces client-supplied forwarding headers.'),
       field('Trusted proxy peers (CIDR, comma separated)', list('trustedProxies'), 'Only these peers may supply client IP and HTTPS headers. Defaults to loopback; use exact proxy addresses where possible.')),
-  ]);
+  ], { check });
 }
 
 function transcodingSection() {

@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"runtime"
+	"slices"
+	"strconv"
+	"strings"
 )
 
 // Config is the server-wide settings document, editable from the admin UI.
@@ -67,8 +70,10 @@ type Config struct {
 
 	WebhookToken string `json:"webhookToken"`
 
-	// LiveTV turns on the Live TV channels (off by default).
-	LiveTV bool `json:"liveTv"`
+	// LiveTV turns on the Live TV channels (off by default); TVChannels are
+	// the admin's own, aired before the automatic ones.
+	LiveTV     bool        `json:"liveTv"`
+	TVChannels []TVChannel `json:"tvChannels"`
 
 	// SSD cache for media files living on a slower disk.
 	CacheEnabled   bool   `json:"cacheEnabled"`
@@ -85,6 +90,17 @@ type Config struct {
 	IntroScanSecs int  `json:"introScanSecs"`
 	IntroMinSecs  int  `json:"introMinSecs"`
 	IntroMaxSecs  int  `json:"introMaxSecs"`
+}
+
+// TVChannel is a Live TV channel an admin made. It airs what matches every
+// filter: any of its libraries, any of its genres, its kind ("movie",
+// "show", or "" for both). An empty filter doesn't limit.
+type TVChannel struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Libraries []int64  `json:"libraries"`
+	Genres    []string `json:"genres"`
+	Kind      string   `json:"kind"`
 }
 
 func DefaultConfig() Config {
@@ -232,6 +248,38 @@ func (c *Config) normalize() {
 	if c.WebhookToken == "" {
 		c.WebhookToken = RandomToken(12)
 	}
+	c.normalizeTVChannels()
+}
+
+// normalizeTVChannels gives every channel a unique id (the UI makes one,
+// but a hand-edited config may not), a name and a known kind, and uses
+// empty lists rather than null so the UI can compare drafts.
+func (c *Config) normalizeTVChannels() {
+	chs := make([]TVChannel, 0, len(c.TVChannels))
+	seen := map[string]bool{}
+	for i, ch := range c.TVChannels {
+		ch.ID = strings.TrimSpace(ch.ID)
+		for ch.ID == "" || seen[ch.ID] {
+			ch.ID = RandomToken(4)
+		}
+		seen[ch.ID] = true
+		if ch.Name = strings.TrimSpace(ch.Name); ch.Name == "" {
+			ch.Name = "Channel " + strconv.Itoa(i+1)
+		}
+		if ch.Kind != "movie" && ch.Kind != "show" {
+			ch.Kind = ""
+		}
+		ch.Libraries = slices.DeleteFunc(slices.Clone(ch.Libraries), func(id int64) bool { return id <= 0 })
+		ch.Genres = slices.DeleteFunc(slices.Clone(ch.Genres), func(g string) bool { return strings.TrimSpace(g) == "" })
+		if ch.Libraries == nil {
+			ch.Libraries = []int64{}
+		}
+		if ch.Genres == nil {
+			ch.Genres = []string{}
+		}
+		chs = append(chs, ch)
+	}
+	c.TVChannels = chs
 }
 
 func (s *Store) loadConfig() error {
