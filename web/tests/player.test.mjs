@@ -703,17 +703,27 @@ test('PgUp / PgDn move between chapters, and PgDn near a chapter start goes to t
   assert.equal(osds.at(-1), 'No chapters');
 });
 
-test('failed browser audio conversion lets the server convert before changing method', async () => {
+test('a failed audio converter lets the server convert the audio with the same method', async () => {
   const f = await fixture({ method: 'remux' });
   f.player.mode = 'remux';
   f.player.plan.clientAudio = { codec: 'eac3', channels: 2, bitrate: 192 };
-  await f.player.fallback('Browser audio decoding: Decoding audio failed (-1)');
+  await f.player.fallback('The browser rejected the stream (Browser audio decoding: Decoding audio failed (-1))');
   assert.equal(f.requests.length, 1);
   assert.equal(f.requests[0].mode, 'remux');
   assert.equal(f.requests[0].caps.clientAudio.length, 0);
   assert.equal(f.player.fallbacks, 0);
-  // Failing again is about the method itself.
-  await f.player.fallback('decode');
+});
+
+test('a video decode failure keeps converting audio in the browser through to transcode', async () => {
+  const f = await fixture({ method: 'remux' });
+  f.player.mode = 'remux';
+  f.player.plan.clientAudio = { codec: 'eac3', channels: 2, bitrate: 192 };
+  await f.player.fallback('remux failed (Decode failed)');
+  assert.equal(f.requests[0].mode, 'transcode');
+  assert.equal(f.requests[0].caps.clientAudio, undefined);
+  // Transcode failing too: the server converts the audio as a last resort.
+  await f.player.fallback('transcode failed (Decode failed)');
   assert.equal(f.requests[1].mode, 'transcode');
   assert.equal(f.requests[1].caps.clientAudio.length, 0);
+  assert.equal(f.errors.length, 0);
 });
