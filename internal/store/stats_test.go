@@ -103,6 +103,55 @@ func TestLibraryTitlesFindsAnyAudioTrackAndGroupsShows(t *testing.T) {
 	}
 }
 
+func TestLibraryStatsSplitsVideoCodecsByBitDepth(t *testing.T) {
+	st := testStore(t)
+	db := st.DB()
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.Exec(q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exec(`INSERT INTO libraries(id,name,kind,paths,created_at) VALUES(1,'All','mixed','[]',0)`)
+	exec(`INSERT INTO items(id,library_id,kind,show_id,title,sort_title,year,added_at,updated_at) VALUES
+		(1,1,'movie',0,'Dune','dune',2021,0,0),
+		(2,1,'movie',0,'Heat','heat',1995,0,0),
+		(3,1,'movie',0,'Alien','alien',1979,0,0),
+		(4,1,'movie',0,'Brazil','brazil',1985,0,0)`)
+	video := func(depth string) string {
+		return `{"streams":[{"type":"audio","codec":"aac"},{"type":"video","codec":"hevc"` + depth + `},{"type":"video","codec":"mjpeg","bitDepth":8}]}`
+	}
+	exec(`INSERT INTO files(item_id,library_id,path,size,mtime,vcodec,info,added_at) VALUES
+		(1,1,'/m/Dune.mkv',100,0,'hevc',?,0),
+		(2,1,'/m/Heat.mkv',200,0,'hevc',?,0),
+		(3,1,'/m/Alien.mkv',300,0,'hevc',?,0),
+		(4,1,'/m/Brazil.avi',400,0,'',?,0)`, video(`,"bitDepth":10`), video(`,"bitDepth":8`), video(""), "not json")
+	ls, err := st.LibraryStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	for _, b := range ls.VideoCodecs {
+		got[b.Key] = b.Count
+	}
+	want := map[string]int{"hevc 10-bit": 1, "hevc 8-bit": 1, "hevc": 1, "unknown": 1}
+	if len(got) != len(want) {
+		t.Fatalf("video buckets = %+v, want %v", ls.VideoCodecs, want)
+	}
+	for k, n := range want {
+		if got[k] != n {
+			t.Fatalf("video bucket %q has %d files, want %d (all: %+v)", k, got[k], n, ls.VideoCodecs)
+		}
+	}
+	ten, err := st.LibraryTitles("video", "hevc 10-bit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ten) != 1 || ten[0].Title != "Dune" {
+		t.Fatalf("10-bit titles = %+v, want Dune", ten)
+	}
+}
+
 func TestPlaybackStatsCountsEachConversionReason(t *testing.T) {
 	st := testStore(t)
 	at := time.Now().Add(-time.Hour).Unix()

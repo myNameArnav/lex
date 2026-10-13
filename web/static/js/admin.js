@@ -1450,7 +1450,7 @@ async function libraryTab() {
       panel('Libraries', bucketList('library', st.libraries)),
       panel('Resolution', bucketList('resolution', st.resolutions)),
       panel('HDR', bucketList('hdr', st.hdr)),
-      panel('Video codecs', bucketList('video', st.videoCodecs, (k) => k.toUpperCase())),
+      panel('Video codecs', bucketList('video', st.videoCodecs, (k) => k.replace(/^\S+/, (c) => c.toUpperCase()))),
       panel('Audio (any track)', bucketList('audio', st.audioCodecs, (k) => k.toUpperCase())),
       panel('Containers', bucketList('container', st.containers, (k) => k.toUpperCase()))));
 }
