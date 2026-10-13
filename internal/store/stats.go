@@ -103,7 +103,7 @@ func (s *Store) LibraryStats() (*LibraryStats, error) {
 	if err != nil {
 		return nil, err
 	}
-	if st.VideoCodecs, err = s.buckets(`SELECT CASE vcodec WHEN '' THEN 'unknown' ELSE vcodec END, COUNT(*), SUM(size) FROM files GROUP BY 1 ORDER BY 2 DESC`); err != nil {
+	if st.VideoCodecs, err = s.buckets(`SELECT ` + videoOf + ` v, COUNT(*), SUM(size) FROM files f GROUP BY v ORDER BY 2 DESC`); err != nil {
 		return nil, err
 	}
 	// Any audio track counts (a file with English AAC and a DTS track is in
@@ -129,6 +129,11 @@ func (s *Store) LibraryStats() (*LibraryStats, error) {
 	return st, nil
 }
 
+// videoOf is a file's video codec with the bit depth of its first video
+// stream, e.g. "hevc 10-bit", or just the codec when the depth is unknown.
+const videoOf = `(CASE f.vcodec WHEN '' THEN 'unknown' ELSE f.vcodec || COALESCE((SELECT ' ' || json_extract(t.value,'$.bitDepth') || '-bit'
+	FROM json_each(CASE WHEN json_valid(f.info) THEN f.info END,'$.streams') t WHERE json_extract(t.value,'$.type')='video' ORDER BY t.key LIMIT 1), '') END)`
+
 const resolutionOf = `CASE WHEN f.width>=3200 OR f.height>=2000 THEN '4K' WHEN f.width>=1800 OR f.height>=1000 THEN '1080p' WHEN f.width>=1200 OR f.height>=700 THEN '720p' WHEN f.width>0 THEN 'SD' ELSE 'unknown' END`
 
 // LibraryTitle is a movie, or a show with its matching episodes, in a
@@ -146,7 +151,7 @@ type LibraryTitle struct {
 // the files in it, using the same definitions as LibraryStats.
 var libraryDims = map[string]string{
 	"library":    `(SELECT name FROM libraries WHERE id=f.library_id) = ?`,
-	"video":      `(CASE f.vcodec WHEN '' THEN 'unknown' ELSE f.vcodec END) = ?`,
+	"video":      videoOf + ` = ?`,
 	"audio":      `EXISTS (SELECT 1 FROM json_each(f.info,'$.streams') t WHERE json_valid(f.info) AND json_extract(t.value,'$.type')='audio' AND COALESCE(NULLIF(json_extract(t.value,'$.codec'),''),'unknown') = ?)`,
 	"hdr":        `(CASE f.hdr WHEN '' THEN 'SDR' ELSE f.hdr END) = ?`,
 	"resolution": resolutionOf + ` = ?`,
