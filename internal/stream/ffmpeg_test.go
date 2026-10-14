@@ -23,20 +23,50 @@ func TestMP4FragmentsStartWithVideoKeyframes(t *testing.T) {
 	if _, err := exec.LookPath("ffprobe"); err != nil {
 		t.Skip("ffprobe not installed")
 	}
-	path := filepath.Join(t.TempDir(), "long-gop.mkv")
-	out, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=24:d=12",
-		"-f", "lavfi", "-i", "sine=f=440:d=12", "-c:v", "libx264", "-preset", "veryfast", "-bf", "3",
-		"-g", "120", "-keyint_min", "120", "-sc_threshold", "0", "-c:a", "eac3", "-shortest", path).CombinedOutput()
-	if err != nil {
-		t.Fatalf("make B-frame fixture: %v %s", err, out)
+	// The same video with audio in each codec. DTS and TrueHD only have
+	// experimental encoders.
+	dir := t.TempDir()
+	fixtures := map[string]*store.File{}
+	fixture := func(t *testing.T, codec string) *store.File {
+		if f := fixtures[codec]; f != nil {
+			return f
+		}
+		encoder, gop := codec, "120"
+		if codec == "dts" {
+			encoder = "dca"
+		}
+		if codec == "truehd" {
+			// TrueHD's 1200 samples a second overflow ffmpeg's 32 KB write
+			// buffer in a 5 s fragment, so on a pipe the moof keeps a zero
+			// size; the player repairs that (mp4.js, BoxReader.repairMoof).
+			gop = "48"
+		}
+		path := filepath.Join(dir, "long-gop-"+codec+".mkv")
+		out, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=320x180:r=24:d=12",
+			"-f", "lavfi", "-i", "sine=f=440:d=12:sample_rate=48000", "-c:v", "libx264", "-preset", "veryfast", "-bf", "3",
+			"-g", gop, "-keyint_min", gop, "-sc_threshold", "0", "-c:a", encoder, "-strict", "experimental", "-ac", "2", "-shortest", path).CombinedOutput()
+		if err != nil {
+			t.Fatalf("make B-frame fixture: %v %s", err, out)
+		}
+		fixtures[codec] = file(path, store.Stream{Index: 0, Codec: "h264", Width: 320, Height: 180, FrameRate: 24},
+			store.Stream{Index: 1, Codec: codec, Channels: 2, SampleRate: 48000})
+		return fixtures[codec]
 	}
-	f := file(path, store.Stream{Index: 0, Codec: "h264", Width: 320, Height: 180, FrameRate: 24},
-		store.Stream{Index: 1, Codec: "eac3", Channels: 1, SampleRate: 48000})
 	for _, tc := range []struct {
 		name                         string
+		audio                        string // the file's audio codec
 		copyVideo, copyAudio, stage2 bool
-	}{{"copy", true, false, false}, {"copy-eac3", true, true, false}, {"software-encode", false, false, false}, {"hardware-remux-stage", false, false, true}} {
+	}{
+		{"copy", "eac3", true, false, false},
+		{"copy-eac3", "eac3", true, true, false},
+		{"copy-dts", "dts", true, true, false},
+		{"copy-truehd", "truehd", true, true, false},
+		{"software-encode", "eac3", false, false, false},
+		{"hardware-remux-stage", "eac3", false, false, true},
+		{"hardware-remux-stage-truehd", "truehd", false, true, true},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
+			f := fixture(t, tc.audio)
 			cfg := store.DefaultConfig()
 			cfg.VideoEncoder, cfg.TranscodeThreads, cfg.FragmentMs = "libx264", 1, 1000
 			command, err := BuildArgs(cfg, FFInfo{}, f, Params{VideoCopy: tc.copyVideo, AudioCopy: tc.copyAudio, Audio: 1, Burn: -1, Bitrate: 1000, Height: 180, Channels: 2})
@@ -49,11 +79,15 @@ func TestMP4FragmentsStartWithVideoKeyframes(t *testing.T) {
 				// with CPU-generated transport stream input; no V4L2 device
 				// is needed to verify its fragment boundaries.
 				cfg.VideoEncoder = "h264_v4l2m2m"
-				hw, err := BuildArgs(cfg, FFInfo{}, f, Params{Audio: 1, Burn: -1, Bitrate: 1000, Height: 180, Channels: 2})
+				hw, err := BuildArgs(cfg, FFInfo{}, f, Params{AudioCopy: tc.copyAudio, Audio: 1, Burn: -1, Bitrate: 1000, Height: 180, Channels: 2})
 				if err != nil {
 					t.Fatal(err)
 				}
-				transport, err := exec.Command("ffmpeg", "-v", "error", "-i", path, "-c:v", "copy", "-c:a", "aac", "-f", "mpegts", "pipe:1").Output()
+				acodec := "aac"
+				if tc.copyAudio {
+					acodec = "copy"
+				}
+				transport, err := exec.Command("ffmpeg", "-v", "error", "-i", f.Path, "-c:v", "copy", "-c:a", acodec, "-f", "mpegts", "pipe:1").Output()
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -75,6 +109,14 @@ func TestMP4FragmentsStartWithVideoKeyframes(t *testing.T) {
 			mp4 := filepath.Join(t.TempDir(), "stream.mp4")
 			if err := os.WriteFile(mp4, data, 0600); err != nil {
 				t.Fatal(err)
+			}
+			want := "aac"
+			if tc.copyAudio {
+				want = f.Info.Streams[1].Codec
+			}
+			if out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name",
+				"-of", "default=nw=1:nk=1", mp4).Output(); err != nil || strings.TrimSpace(string(out)) != want {
+				t.Errorf("audio stream %q (%v), want %s", out, err, want)
 			}
 			out, err := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_packets",
 				"-show_entries", "packet=pos,flags", "-of", "json", mp4).Output()

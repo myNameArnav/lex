@@ -203,6 +203,9 @@ func BuildArgs(cfg store.Config, ff FFInfo, f *store.File, p Params) (Command, e
 	if a := f.Info.StreamByIndex(p.Audio); a != nil && (!p.AudioCopy || a.Codec == "aac") {
 		stage2 = append(stage2, "-bsf:a", "aac_adtstoasc")
 	}
+	if a := f.Info.StreamByIndex(p.Audio); a != nil && p.AudioCopy && a.Codec == "truehd" {
+		stage2 = append(stage2, "-strict", "experimental")
+	}
 	// delay_moov: the AAC AudioSpecificConfig only exists once
 	// aac_adtstoasc has seen a packet; writing the moov earlier leaves an
 	// esds without it, which Chrome's MSE parser rejects.
@@ -323,10 +326,14 @@ func buildArgs(cfg store.Config, ff FFInfo, f *store.File, p Params) ([]string, 
 		}
 	}
 	movflags := "+frag_keyframe+empty_moov+default_base_moof+frag_discont"
-	if audio != nil && p.AudioCopy && (audio.Codec == "ac3" || audio.Codec == "eac3") {
-		// The (E-)AC-3 sample entry is built from the first packet, so the
-		// moov has to wait for it.
+	if audio != nil && p.AudioCopy && (audio.Codec == "ac3" || audio.Codec == "eac3" || audio.Codec == "truehd") {
+		// The (E-)AC-3 and TrueHD sample entries are built from the first
+		// packet, so the moov has to wait for it.
 		movflags = "+frag_keyframe+empty_moov+delay_moov+default_base_moof+frag_discont"
+	}
+	if audio != nil && p.AudioCopy && audio.Codec == "truehd" {
+		// ffmpeg calls TrueHD in MP4 experimental. DTS needs neither.
+		args = append(args, "-strict", "experimental")
 	}
 	// A duration cutoff can split a GOP between dependent frames. Firefox's
 	// MSE parser can then discard frames until the next keyframe, leaving a

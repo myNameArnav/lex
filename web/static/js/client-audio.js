@@ -1,13 +1,26 @@
 // Browser-side audio conversion. When the browser can't decode a file's
-// audio (AC-3/E-AC-3 in Firefox and Chrome), the server copies it into the
-// stream untouched and AudioConverter swaps it for AAC on the way into
-// Media Source Extensions: video fragments pass through, audio samples go
-// through the WebAssembly decoder/encoder in audio-worker.js.
+// audio (AC-3/E-AC-3, DTS or TrueHD in Firefox and Chrome), the server
+// copies it into the stream untouched and AudioConverter swaps it for AAC on
+// the way into Media Source Extensions: video fragments pass through, audio
+// samples go through the WebAssembly decoder/encoder in audio-worker.js.
 
 import { BoxReader, parseInit, parseFragment, initSegment, audioTrak, audioTrex, videoFragment, audioFragment } from './mp4.js';
+import DECODERS from '../vendor/lexaudio/codecs.js';
 
-// The codecs the converter decodes, as the server names them.
-export const CLIENT_AUDIO = ['ac3', 'eac3'];
+// The codec of each audio sample entry the server's MP4 can carry.
+const SAMPLE_ENTRIES = { 'ac-3': 'ac3', 'ec-3': 'eac3', dtsc: 'dts', dtsh: 'dts', dtsl: 'dts', dtse: 'dts', mlpa: 'truehd' };
+// ffmpeg writes DTS as mp4a with one of these object types.
+const DTS_OBJECT_TYPES = [0xa9, 0xaa, 0xab, 0xac];
+
+// audioCodec names the codec of a track from parseInit, as the server does.
+export function audioCodec(t) {
+  if (t.codec === 'mp4a') return DTS_OBJECT_TYPES.includes(t.objectType) ? 'dts' : null;
+  return SAMPLE_ENTRIES[t.codec] || null;
+}
+
+// The codecs the converter decodes and an MP4 stream can carry (MP4 has no
+// MLP), as the server names them.
+export const CLIENT_AUDIO = DECODERS.filter((c) => Object.values(SAMPLE_ENTRIES).includes(c));
 
 export const clientAudioSupported = () => typeof WebAssembly === 'object' && typeof Worker === 'function';
 
@@ -107,8 +120,9 @@ export class AudioConverter {
     if (!this.ftyp) throw failure('the stream has no ftyp');
     this.init = parseInit(moov);
     this.audio = this.init.tracks.find((t) => t.handler === 'soun');
-    if (!this.audio || !['ac-3', 'ec-3'].includes(this.audio.codec)) throw failure(`unexpected audio track ${this.audio?.codec || 'none'}`);
-    await this.request({ op: 'open', codec: this.audio.codec, timescale: this.audio.timescale, channels: this.channels, bitrate: this.bitrate });
+    const codec = this.audio && audioCodec(this.audio);
+    if (!CLIENT_AUDIO.includes(codec)) throw failure(`unexpected audio track ${this.audio?.codec || 'none'}`);
+    await this.request({ op: 'open', codec, timescale: this.audio.timescale, channels: this.channels, bitrate: this.bitrate });
   }
 
   async fragment(moof, mdat) {

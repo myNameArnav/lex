@@ -35,6 +35,8 @@ export class BoxReader {
     if (size === 1) {
       if (this.len < 16) return null;
       size = Number(d.getBigUint64(8));
+    } else if (size === 0 && fourcc(this.buf, 4) === 'moof') {
+      if ((size = this.repairMoof()) < 0) return null;
     } else if (size < 8) {
       throw new Error(`unsupported MP4 box size ${size}`);
     }
@@ -43,6 +45,49 @@ export class BoxReader {
     this.buf.copyWithin(0, size, this.len);
     this.len -= size;
     return box;
+  }
+
+  // ffmpeg writes a box's size as a placeholder and seeks back to fill it
+  // in. On a pipe that only works while the box is still in its 32 KB write
+  // buffer; otherwise the size stays 0 and ffmpeg writes it after the box
+  // instead. Long fragments of TrueHD (1200 samples a second, 8 bytes each
+  // in the trun) arrive like that. repairMoof fills in the first box's
+  // sizes and drops the stray ones, which leaves the moof ffmpeg meant (its
+  // data offsets assume that), or returns -1 until the moof has arrived.
+  repairMoof() {
+    const b = this.buf, d = view(b);
+    const size = (at) => {
+      if (at + 16 > this.len) return -1;
+      let n = d.getUint32(at);
+      if (n) return n;
+      const type = fourcc(b, at + 4);
+      if (type === 'trun') {
+        const flags = d.getUint32(at + 8), perSample = [0x100, 0x200, 0x400, 0x800].filter((f) => flags & f).length * 4;
+        n = 16 + (flags & 0x1 ? 4 : 0) + (flags & 0x4 ? 4 : 0) + d.getUint32(at + 12) * perSample;
+      } else if (type === 'moof' || type === 'traf') {
+        // Children run up to the mdat (or, in a traf, the next traf).
+        for (n = 8; ;) {
+          const p = at + n;
+          if (p + 8 > this.len) return -1;
+          if (!/^[a-z0-9]{4}$/.test(fourcc(b, p + 4))) {
+            // Not a box: a size ffmpeg couldn't put in its place.
+            b.copyWithin(p, p + 4, this.len);
+            this.len -= 4;
+            continue;
+          }
+          const next = fourcc(b, p + 4);
+          if (next === 'mdat' || (type === 'traf' && next === 'traf')) break;
+          const c = size(p);
+          if (c < 0) return -1;
+          n += c;
+        }
+      } else {
+        throw new Error(`unsupported MP4 box size 0 (${type})`);
+      }
+      d.setUint32(at, n);
+      return n;
+    };
+    return size(0);
   }
 }
 
@@ -61,6 +106,24 @@ export function children(b, start = 8, end = b.byteLength) {
 }
 
 const child = (b, box, type) => children(b, box.body, box.end).find((c) => c.type === type);
+
+// objectType reads the objectTypeIndication of an esds box (ES_Descriptor
+// → DecoderConfigDescriptor, ISO 14496-1), or 0.
+function objectType(b, esds) {
+  let at = esds.body + 4;
+  const tag = () => {
+    const t = b[at++];
+    for (let i = 0; i < 4 && b[at++] & 0x80; i++); // the size, 1-4 bytes
+    return t;
+  };
+  if (tag() !== 3) return 0;
+  const flags = b[at + 2];
+  at += 3;
+  if (flags & 0x80) at += 2; // dependsOn_ES_ID
+  if (flags & 0x40) at += 1 + b[at]; // URL
+  if (flags & 0x20) at += 2; // OCR_ES_Id
+  return at < esds.end && tag() === 4 && at < esds.end ? b[at] : 0;
+}
 
 // parseInit reads the tracks of a moov box.
 export function parseInit(moov) {
@@ -84,6 +147,8 @@ export function parseInit(moov) {
     if (t.handler === 'soun' && entry) {
       t.channels = d.getUint16(entry.body + 16);
       t.sampleRate = d.getUint16(entry.body + 24);
+      const esds = entry.type === 'mp4a' && children(moov, entry.body + 28, entry.end).find((c) => c.type === 'esds');
+      if (esds) t.objectType = objectType(moov, esds);
     }
     tracks.push(t);
   }
