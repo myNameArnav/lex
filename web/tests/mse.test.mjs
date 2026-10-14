@@ -37,7 +37,10 @@ async function fixture(response, { quota = false, keyframeInterval = 0, remux = 
   });
   const source = await readFile(new URL('../static/js/mse.js', import.meta.url), 'utf8');
   const module = new vm.SourceTextModule(source, { context });
-  await module.link((specifier) => specifier === './client-audio.js'
+  const streamError = await readFile(new URL('../static/js/stream-error.js', import.meta.url), 'utf8');
+  await module.link((specifier) => specifier === './stream-error.js'
+    ? new vm.SourceTextModule(streamError, { context })
+    : specifier === './client-audio.js'
     ? new vm.SyntheticModule(['AudioWorker', 'AudioConverter'], function () {
       this.setExport('AudioWorker', class {});
       this.setExport('AudioConverter', class {});
@@ -271,7 +274,7 @@ test('paused playback and a hole that fills promptly do not rebuild the pipeline
 
 test('temporary proxy errors during a server restart retry and recover', async () => {
   const f = await fixture(async (_opts, attempt) => attempt <= 2
-    ? { ok: false, status: attempt === 1 ? 502 : 503, json: async () => { throw new SyntaxError('Proxy HTML response'); } }
+    ? { ok: false, status: attempt === 1 ? 502 : 503, text: async () => '<html>Bad gateway</html>' }
     : { ok: true, body: { getReader: () => ({
       read: async () => ({ value: new Uint8Array([2]), done: false }), cancel: async () => {},
     }) } });
@@ -287,7 +290,7 @@ test('temporary proxy errors during a server restart retry and recover', async (
 });
 
 test('a permanently unavailable proxy uses the same bounded retry budget', async () => {
-  const f = await fixture(async () => ({ ok: false, status: 502, json: async () => ({}) }));
+  const f = await fixture(async () => ({ ok: false, status: 502, text: async () => '{}' }));
   void f.engine.load(610, true);
   await f.advance(60000);
   assert.equal(f.requests.length, 7);
@@ -297,7 +300,7 @@ test('a permanently unavailable proxy uses the same bounded retry budget', async
 
 test('the server transcode-limit 503 stays terminal and retains its explanation', async () => {
   const message = 'transcode limit reached: too many simultaneous transcodes on this server';
-  const f = await fixture(async () => ({ ok: false, status: 503, json: async () => ({ error: message }) }));
+  const f = await fixture(async () => ({ ok: false, status: 503, text: async () => JSON.stringify({ error: message }) }));
   void f.engine.load(610, true);
   await f.advance(60000);
   assert.equal(f.requests.length, 1);

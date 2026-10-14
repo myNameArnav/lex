@@ -4,6 +4,7 @@
 // carries the request's id.
 
 import { loadRemuxer, RemuxError } from './remux-core.js';
+import { streamError } from './stream-error.js';
 
 // A synchronous range request: { bytes, size } or an error with the HTTP
 // status (0: no response).
@@ -25,9 +26,8 @@ function rangeGetter(url) {
     // The whole file instead of the range: something between us and the
     // server ignores Range, so let the server remux.
     if (x.status === 200 || x.status === 206) throw new RemuxError('the server ignored a range request');
-    let msg = `Stream failed (HTTP ${x.status})`;
-    try { msg = JSON.parse(new TextDecoder().decode(x.response)).error || msg; } catch {}
-    throw Object.assign(new Error(msg), { status: x.status, serverError: msg !== `Stream failed (HTTP ${x.status})` });
+    const { msg, serverError } = streamError(x.status, new TextDecoder().decode(x.response));
+    throw Object.assign(new Error(msg), { status: x.status, serverError });
   };
 }
 

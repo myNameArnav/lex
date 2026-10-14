@@ -11,6 +11,7 @@
 import { mediaSourceClass } from './caps.js';
 import { AudioWorker, AudioConverter } from './client-audio.js';
 import { RemuxWorker, RemuxStream } from './client-remux.js';
+import { streamError } from './stream-error.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -248,9 +249,7 @@ export class MseEngine {
         return;
       }
       if (!res.ok) {
-        let msg = `Stream failed (HTTP ${res.status})`;
-        let serverError = false;
-        try { const j = await res.json(); if (j.error) { msg = j.error; serverError = true; } } catch {}
+        const { msg, serverError } = streamError(res.status, await res.text().catch(() => ''));
         if (gen !== this.gen || ctrl.signal.aborted) return;
         this.httpError(gen, res.status, msg, serverError);
         return;

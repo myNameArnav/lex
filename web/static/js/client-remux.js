@@ -5,6 +5,8 @@
 // server only serves file bytes. MseEngine reads a RemuxStream as it would
 // read the server's response.
 
+import { WorkerRPC } from './worker-rpc.js';
+
 // The containers the remuxer reads, as the server names them.
 export const CLIENT_REMUX = ['mkv', 'webm'];
 
@@ -15,28 +17,21 @@ const failure = (msg) => new DOMException(`Browser remux: ${msg}`, 'NotSupported
 
 // RemuxWorker is the main-thread side of remux-worker.js: one per
 // playback, opened on the plan's file and audio track.
-export class RemuxWorker {
+export class RemuxWorker extends WorkerRPC {
   constructor({ url, audio = -1, fragMs = 0 }) {
-    this.seq = 0;
-    this.pending = new Map();
+    super(new URL('./remux-worker.js', import.meta.url), failure, "the remuxer didn't load");
+    this.file = { url, audio, fragMs };
     this.fetched = 0;
     this.requests = 0;
-    this.worker = new Worker(new URL('./remux-worker.js', import.meta.url), { type: 'module' });
-    this.worker.onmessage = ({ data }) => {
-      const p = this.pending.get(data.id);
-      if (!p) return;
-      this.pending.delete(data.id);
-      if (data.fetched !== undefined) Object.assign(this, { fetched: data.fetched, requests: data.requests, heap: data.heap });
-      if (data.remux) p.reject(failure(data.error));
-      // Network and HTTP failures: the stream's usual error handling.
-      else if (data.error) p.reject(Object.assign(new Error(data.error), { status: data.status, serverError: data.serverError }));
-      else p.resolve(data);
-    };
-    this.worker.onerror = (e) => {
-      e.preventDefault?.();
-      this.fail(failure(e.message || "the remuxer didn't load"));
-    };
-    this.file = { url, audio, fragMs };
+  }
+
+  replyError(data) {
+    // Replies carry the reader's figures, for Stats for nerds.
+    if (data.fetched !== undefined) Object.assign(this, { fetched: data.fetched, requests: data.requests, heap: data.heap });
+    if (data.remux) return failure(data.error);
+    // Network and HTTP failures: the stream's usual error handling.
+    if (data.error) return Object.assign(new Error(data.error), { status: data.status, serverError: data.serverError });
+    return null;
   }
 
   // open reads the file's header once; a lost connection lets the next
@@ -49,25 +44,6 @@ export class RemuxWorker {
     return this.opened;
   }
 
-  fail(err) {
-    this.failed = err;
-    for (const p of this.pending.values()) p.reject(err);
-    this.pending.clear();
-  }
-
-  request(msg) {
-    if (this.failed) return Promise.reject(this.failed);
-    const id = ++this.seq;
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.worker.postMessage({ ...msg, id });
-    });
-  }
-
-  terminate() {
-    this.worker.terminate();
-    this.fail(failure('stopped'));
-  }
 }
 
 // RemuxStream is the remuxer's output from time on (a seek starts a new
