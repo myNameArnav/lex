@@ -24,6 +24,9 @@ type Caps struct {
 	// ClientAudio lists the audio codecs the player can convert itself
 	// (WebAssembly), so the server copies them instead of transcoding.
 	ClientAudio []string `json:"clientAudio"`
+	// ClientRemux lists the containers the player can remux to fragmented
+	// MP4 itself (WebAssembly), reading the file with range requests.
+	ClientRemux []string `json:"clientRemux"`
 }
 
 type PlanRequest struct {
@@ -67,7 +70,18 @@ type Plan struct {
 	// ClientAudio is set when the stream carries audio the player must
 	// convert to AAC itself; it describes the AAC it should produce.
 	ClientAudio *ClientAudio `json:"clientAudio,omitempty"`
+	// ClientRemux is set when the player remuxes the original file itself
+	// (URL is then the Direct Play URL it reads ranges of), with fragments
+	// of at least FragmentMs, as the server's remux would write them.
+	ClientRemux bool `json:"clientRemux,omitempty"`
+	FragmentMs  int  `json:"fragmentMs,omitempty"`
 }
+
+// The codecs the player's remuxer copies (scripts/build-remux-wasm.sh).
+var (
+	clientRemuxVideo = map[string]bool{"h264": true, "hevc": true, "av1": true, "vp9": true}
+	clientRemuxAudio = map[string]bool{"aac": true, "ac3": true, "eac3": true, "flac": true, "opus": true, "mp3": true}
+)
 
 type ClientAudio struct {
 	Codec    string `json:"codec"`
@@ -449,6 +463,15 @@ func Decide(cfg store.Config, f *store.File, req PlanRequest, remote bool) (*Pla
 	if hls {
 		plan.URL = fmt.Sprintf("/api/files/%d/hls/index.m3u8?%s", f.ID, p.Query().Encode())
 		plan.Mime = "application/vnd.apple.mpegurl"
+	}
+	// Everything is copied and the player can remux the file itself: it
+	// reads the original with range requests and no ffmpeg runs here. It
+	// seeks through the file's keyframe index, which HLSCopy says exists.
+	if !hls && videoCopy && (a == nil || audioCopy) && cfg.ClientRemux && req.HLSCopy &&
+		slices.Contains(req.Caps.ClientRemux, ckey) && clientRemuxVideo[v.Codec] && (a == nil || clientRemuxAudio[a.Codec]) {
+		plan.ClientRemux, plan.FragmentMs = true, cfg.FragmentMs
+		plan.URL = fmt.Sprintf("/api/files/%d/direct?sid=%s&via=remux", f.ID, url.QueryEscape(req.SessionID))
+		reasons = append(reasons, "remuxed in the browser")
 	}
 	plan.Reasons = dedupe(reasons)
 	return plan, nil

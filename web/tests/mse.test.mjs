@@ -3,9 +3,9 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 
-async function fixture(response, { quota = false, keyframeInterval = 0 } = {}) {
+async function fixture(response, { quota = false, keyframeInterval = 0, remux = null } = {}) {
   let now = 1000, timerID = 0;
-  const timers = new Map(), requests = [], errors = [];
+  const timers = new Map(), requests = [], errors = [], remuxStarts = [];
   let ranges = [[600, 610]];
   const buffered = () => ({ length: ranges.length, start: i => ranges[i][0], end: i => ranges[i][1] });
   const video = Object.assign(new EventTarget(), {
@@ -42,6 +42,12 @@ async function fixture(response, { quota = false, keyframeInterval = 0 } = {}) {
       this.setExport('AudioWorker', class {});
       this.setExport('AudioConverter', class {});
     }, { context })
+    : specifier === './client-remux.js'
+    ? new vm.SyntheticModule(['RemuxWorker', 'RemuxStream'], function () {
+      this.setExport('RemuxWorker', class {});
+      // The browser's remuxer: remux(time, n) returns the n-th stream's reader.
+      this.setExport('RemuxStream', class { constructor(_, t) { remuxStarts.push(t); return remux(t, remuxStarts.length); } });
+    }, { context })
     : new vm.SyntheticModule(['mediaSourceClass'], function () {
       this.setExport('mediaSourceClass', () => null);
     }, { context }));
@@ -51,6 +57,7 @@ async function fixture(response, { quota = false, keyframeInterval = 0 } = {}) {
   }, { forward: 60, back: 30, onError: (...args) => errors.push(args) });
   engine.ms = { readyState: 'open', endOfStream() {} };
   engine.sb = sb;
+  if (remux) engine.remuxWorker = { terminate() {} };
   const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
   const advance = async ms => {
     const until = now + ms;
@@ -61,7 +68,7 @@ async function fixture(response, { quota = false, keyframeInterval = 0 } = {}) {
       await flush();
     }
   };
-  return { engine, video, sb, requests, errors, advance, flush, setRanges: value => { ranges = value; } };
+  return { engine, video, sb, requests, errors, remuxStarts, advance, flush, setRanges: value => { ranges = value; } };
 }
 
 const hanging = ({ signal }) => new Promise((resolve, reject) => {
@@ -409,5 +416,35 @@ test('a fully streamed file stays ended so the video can fire ended', async () =
   ms.readyState = 'open';
   await f.advance(500);
   assert.equal(ms.readyState, 'ended');
+  f.engine.destroy();
+});
+
+test('a browser remux feeds the same pipeline; its lost connections retry and HTTP errors are reported', async () => {
+  const f = await fixture(hanging, { remux: (t, n) => {
+    let reads = 0;
+    return { read: async () => {
+      if (reads++ === 0) return { value: new Uint8Array([2]), done: false };
+      // The first stream loses the server, the second hits an admin stop.
+      throw Object.assign(new Error(n === 1 ? 'Lost connection to the server while streaming.' : 'Playback was stopped by the server admin'), { status: n === 1 ? 0 : 410 });
+    }, cancel: async () => {} };
+  } });
+  void f.engine.load(610, true);
+  await f.advance(5000);
+  assert.deepEqual(f.remuxStarts, [610, 625]);
+  assert.equal(f.requests.length, 0, 'nothing fetched from the server stream');
+  assert.deepEqual(f.errors, [['Playback was stopped by the server admin', 410]]);
+  f.engine.destroy();
+});
+
+test('a browser remux failure is a decode error that names the remuxer', async () => {
+  const f = await fixture(hanging, { remux: () => ({
+    read: async () => { throw new DOMException('Browser remux: Remuxing failed: Invalid data found when processing input', 'NotSupportedError'); },
+    cancel: async () => {},
+  }) });
+  void f.engine.load(610, true);
+  await f.advance(1000);
+  assert.equal(f.errors.length, 1);
+  assert.match(f.errors[0][0], /Browser remux: Remuxing failed/);
+  assert.equal(f.errors[0][2], true);
   f.engine.destroy();
 });

@@ -35,6 +35,11 @@ export function pauseForOverlay() {
 
 const END_FMT = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 const DIRECT_STARTUP_TIMEOUT = 15000;
+// Failures to blame on the browser's remuxer rather than the codecs: its own
+// errors, Chrome rejecting its output as unparseable, and the gaps Firefox
+// leaves when it drops fragments it can't parse (it reports nothing else).
+const REMUX_FAULT = /Browser remux|CHUNK_DEMUXER_ERROR_APPEND_FAILED|unplayable gap/;
+const remuxFault = (reason, err) => REMUX_FAULT.test(`${reason} ${err?.message || ''}`);
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 const DEFAULT_FONT = '/vendor/jassub/default.woff2';
 const LANG_CHOICES = ['eng', 'spa', 'fre', 'ger', 'ita', 'por', 'hin', 'jpn', 'kor', 'chi', 'ara', 'rus', 'dut', 'swe', 'nor', 'dan', 'fin', 'pol', 'tur', 'tam', 'tel', 'ukr', 'heb', 'gre', 'cze', 'hun', 'rum', 'tha', 'vie', 'ind', 'may']
@@ -479,6 +484,8 @@ class Player {
     let caps = detectCaps();
     // Browser audio conversion failed for this file: the server converts.
     if (this.noClientAudio) caps = { ...caps, clientAudio: [] };
+    // So did remuxing it in the browser: the server remuxes.
+    if (this.noClientRemux) caps = { ...caps, clientRemux: [] };
     let mode = overrides.mode || this.mode;
     // "HLS" isn't a server mode: it asks for HLS delivery with automatic
     // direct/remux/transcode choice. Only browsers with native HLS can use it.
@@ -733,6 +740,14 @@ class Player {
     };
     const clientAudio = this.plan.clientAudio && !this.noClientAudio;
     if (clientAudio && reason.includes('Browser audio decoding')) return serverAudio();
+    // Remuxing in the browser: when the remuxer failed, or the browser
+    // couldn't parse what it wrote, the server remuxes with the same
+    // method. A video the browser can't decode still goes to transcode.
+    if (this.plan.clientRemux && !this.noClientRemux && remuxFault(reason, this.video.error)) {
+      this.noClientRemux = true;
+      toast("Couldn't remux this file in the browser — the server will remux it");
+      return this.replan({ mode: this.mode, resume: true });
+    }
     // A hardware-encoded transcode the browser can't parse: retry once with
     // the server's software encoder before giving up.
     if (idx === 2 && /hardware/.test(this.plan.videoOut || '') && !this.swEncode) {
@@ -1498,7 +1513,8 @@ class Player {
     r('Position', `${fmtTime(t)} / ${fmtTime(d)}`, v.playbackRate !== 1 ? `${v.playbackRate}x` : '');
     const seg = this.intro();
     if (seg) r('Intro', `${fmtTime(seg.start)}–${fmtTime(seg.end)}`, seg.source);
-    r('Container', `${(f.name || '').split('.').pop()} → ${p.hls ? 'HLS' : p.method === 'direct' ? 'original file' : 'fragmented MP4'}`, p.hls ? p.mime : p.method === 'direct' ? 'range requests' : 'MSE');
+    r('Container', `${(f.name || '').split('.').pop()} → ${p.hls ? 'HLS' : p.method === 'direct' ? 'original file' : 'fragmented MP4'}`,
+      p.hls ? p.mime : p.method === 'direct' ? 'range requests' : p.clientRemux ? 'remuxed in the browser · MSE' : 'MSE');
 
     sec('Buffer & network');
     if (es) {
@@ -1514,6 +1530,7 @@ class Player {
     } else {
       r('Ahead', secs(cs.bufferAhead), 'browser managed', bufLvl);
     }
+    if (es?.fileBytes != null) r('File read', fmtBytes(es.fileBytes), `range requests · remuxer memory ${fmtBytes(es.remuxHeap)}`);
     r('Server rate', fmtBitrate(this.serverRate * 8));
     r('Stalls', String(cs.bufferEvents), `${cs.bufferSeconds.toFixed(1)}s total${cs.buffering ? ' · buffering now' : ''}`, cs.buffering ? 'bad' : cs.bufferEvents ? 'warn' : '');
     r('Read from', this.cached ? 'SSD cache' : 'library disk');
@@ -1769,7 +1786,7 @@ class Player {
           on: () => { this.quality = k; prefs.set('quality', k); this.closeMenu(); this.replan(); },
         })));
       case 'method':
-        return page('Playback method', modes.map(([k, l, d]) => ({ label: l, sub: d, active: this.mode === k, on: () => { this.mode = k; prefs.set('mode', k); this.fallbacks = 0; this.swEncode = false; this.noClientAudio = false; this.closeMenu(); this.replan(); } })));
+        return page('Playback method', modes.map(([k, l, d]) => ({ label: l, sub: d, active: this.mode === k, on: () => { this.mode = k; prefs.set('mode', k); this.fallbacks = 0; this.swEncode = false; this.noClientAudio = false; this.noClientRemux = false; this.closeMenu(); this.replan(); } })));
       case 'speed':
         // The default rate survives load(), so the speed outlasts track,
         // quality and method changes, fallbacks and the next episode.
@@ -1934,12 +1951,13 @@ class Player {
     this.introSkipped = false;
     if (this.skipBtn) { this.skipBtn.remove(); this.skipBtn = null; }
     for (const c of [...this.rail.querySelectorAll('.chap, .seg')]) c.remove();
-    // Fallbacks (remux/transcode, software encoder, server audio) were for the last file;
+    // Fallbacks (remux/transcode, software encoder, server audio/remux) were for the last file;
     // the next one starts from the user's chosen method again.
     this.fallbacks = 0;
     this.mode = prefs.get('mode');
     this.swEncode = false;
     this.noClientAudio = false;
+    this.noClientRemux = false;
     this.stalls = { count: 0, secs: 0, since: 0 };
     this.teardown();
   }

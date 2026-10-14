@@ -2,6 +2,7 @@
 // Media Source Extensions (fragmented MP4 from the server).
 
 import { CLIENT_AUDIO, clientAudioSupported } from './client-audio.js';
+import { CLIENT_REMUX, clientRemuxSupported } from './client-remux.js';
 
 let cached = null;
 
@@ -52,6 +53,8 @@ export function detectCaps() {
   caps.nativeAudio.flac = caps.nativeAudio.flac || nativeOK('audio/flac');
   // Audio the player converts to AAC itself (client-audio.js).
   caps.clientAudio = mse && caps.audio.aac && clientAudioSupported() ? CLIENT_AUDIO : [];
+  // Containers the player remuxes to fragmented MP4 itself (client-remux.js).
+  caps.clientRemux = mse && clientRemuxSupported() ? CLIENT_REMUX : [];
   caps.direct.mp4 = nativeOK('video/mp4');
   caps.direct.webm = nativeOK('video/webm');
   caps.direct.mkv = nativeOK('video/x-matroska') || nativeOK('video/mkv');
@@ -77,5 +80,6 @@ export function capsSummary(c = detectCaps()) {
     'Streamed video (MSE)': on(c.video),
     'Streamed audio (MSE)': on(c.audio),
     'Audio converted in the browser': c.clientAudio.map((k) => LABELS[k] || k).join(', ') || 'none',
+    'Remuxed in the browser': c.clientRemux.map((k) => LABELS[k] || k).join(', ') || 'none',
   };
 }

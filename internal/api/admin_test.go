@@ -225,3 +225,33 @@ func TestDevicesMarkCurrentSession(t *testing.T) {
 		}
 	}
 }
+
+// "Remux in the browser" goes through the settings API like the others.
+func TestClientRemuxSettingRoundTrip(t *testing.T) {
+	s, h := securityServer(t)
+	admin, err := s.St.CreateInitialAdmin("admin", "test-password-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _ := s.St.CreateToken(admin.ID, "Test", "127.0.0.1")
+	get := func() store.Config {
+		t.Helper()
+		w := adminRequest(t, h, token, "GET", "/api/admin/config", "")
+		var c store.Config
+		if err := json.Unmarshal(w.Body.Bytes(), &c); err != nil {
+			t.Fatalf("config: %d %s", w.Code, w.Body.String())
+		}
+		return c
+	}
+	if !get().ClientRemux {
+		t.Fatal("off by default")
+	}
+	for _, on := range []bool{false, true} {
+		if w := adminRequest(t, h, token, "PUT", "/api/admin/config", `{"clientRemux":`+strconv.FormatBool(on)+`}`); w.Code != 200 {
+			t.Fatalf("save: %d %s", w.Code, w.Body.String())
+		}
+		if c := get(); c.ClientRemux != on || !c.ClientAudio {
+			t.Fatalf("clientRemux=%v clientAudio=%v, want %v and untouched", c.ClientRemux, c.ClientAudio, on)
+		}
+	}
+}
