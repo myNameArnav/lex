@@ -42,3 +42,36 @@ func TestNormalizeTVChannels(t *testing.T) {
 		t.Fatalf("hidden = %q", d.TVHidden)
 	}
 }
+
+// Remuxing in the browser is on by default, also for settings saved before
+// the option existed, and can be turned off.
+func TestClientRemuxSetting(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if !s.Config().ClientRemux {
+		t.Fatal("off by default")
+	}
+	if err := s.setKV("config", `{"clientAudio":false}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.loadConfig(); err != nil {
+		t.Fatal(err)
+	}
+	if c := s.Config(); !c.ClientRemux || c.ClientAudio {
+		t.Fatalf("older settings: clientRemux=%v clientAudio=%v", c.ClientRemux, c.ClientAudio)
+	}
+	c := s.Config()
+	c.ClientRemux = false
+	if _, err := s.SaveConfig(c); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.loadConfig(); err != nil {
+		t.Fatal(err)
+	}
+	if s.Config().ClientRemux {
+		t.Fatal("turning it off didn't stick")
+	}
+}

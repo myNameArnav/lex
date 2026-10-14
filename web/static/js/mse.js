@@ -1,5 +1,6 @@
 // MseEngine plays a server-side remux/transcode (fragmented MP4 over one
-// HTTP response) through Media Source Extensions.
+// HTTP response) through Media Source Extensions, or the same stream from
+// the browser's own remuxer (client-remux.js).
 //
 // The server keeps the source file's timestamps (ffmpeg -copyts), so the
 // video element's timeline is the file's timeline: seeking to an unbuffered
@@ -9,6 +10,8 @@
 
 import { mediaSourceClass } from './caps.js';
 import { AudioWorker, AudioConverter } from './client-audio.js';
+import { RemuxWorker, RemuxStream } from './client-remux.js';
+import { streamError } from './stream-error.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -26,6 +29,8 @@ export class MseEngine {
     this.offset = -(plan.startTime || 0);
     // The server copied audio the browser can't play; convert it here.
     this.clientAudio = plan.clientAudio || null;
+    // The browser remuxes the original file itself (client-remux.js).
+    this.clientRemux = plan.clientRemux ? { url: plan.url, audio: plan.audio, fragMs: plan.fragmentMs } : null;
     this.opts = { forward: 0, back: 30, onError: () => {}, onEnded: () => {}, ...opts };
     this.gen = 0;
     this.ctrl = null;
@@ -55,6 +60,7 @@ export class MseEngine {
     await opened;
     if (this.destroyed) return;
     if (this.clientAudio) this.audioWorker = new AudioWorker();
+    if (this.clientRemux) this.remuxWorker = new RemuxWorker(this.clientRemux);
     this.sb = this.ms.addSourceBuffer(this.mime);
     this.sb.mode = 'segments';
     try { this.ms.duration = this.duration; } catch {}
@@ -73,6 +79,8 @@ export class MseEngine {
     clearTimeout(this.seekTimer);
     this.conv?.cancel();
     this.audioWorker?.terminate();
+    this.remuxStream?.cancel();
+    this.remuxWorker?.terminate();
     this.video.removeEventListener('seeking', this.onSeeking);
     try { if (this.ms && this.ms.readyState === 'open') this.ms.endOfStream(); } catch {}
     if (this.objUrl) URL.revokeObjectURL(this.objUrl);
@@ -228,24 +236,26 @@ export class MseEngine {
     if (gen !== this.gen) return;
     try { this.sb.timestampOffset = this.offset; } catch {}
 
-    let res;
-    try {
-      res = await fetch(`${this.url}&t=${Math.max(0, t).toFixed(3)}`, { signal: ctrl.signal, credentials: 'same-origin', cache: 'no-store' });
-    } catch (e) {
-      if (gen === this.gen && !ctrl.signal.aborted && e.name !== 'AbortError') this.networkError(gen, e);
-      return;
+    let reader;
+    this.remuxStream?.cancel();
+    if (this.remuxWorker) {
+      reader = this.remuxStream = new RemuxStream(this.remuxWorker, Math.max(0, t));
+    } else {
+      let res;
+      try {
+        res = await fetch(`${this.url}&t=${Math.max(0, t).toFixed(3)}`, { signal: ctrl.signal, credentials: 'same-origin', cache: 'no-store' });
+      } catch (e) {
+        if (gen === this.gen && !ctrl.signal.aborted && e.name !== 'AbortError') this.networkError(gen, e);
+        return;
+      }
+      if (!res.ok) {
+        const { msg, serverError } = streamError(res.status, await res.text().catch(() => ''));
+        if (gen !== this.gen || ctrl.signal.aborted) return;
+        this.httpError(gen, res.status, msg, serverError);
+        return;
+      }
+      reader = res.body.getReader();
     }
-    if (!res.ok) {
-      let msg = `Stream failed (HTTP ${res.status})`;
-      let serverError = false;
-      try { const j = await res.json(); if (j.error) { msg = j.error; serverError = true; } } catch {}
-      if (gen !== this.gen || ctrl.signal.aborted) return;
-      // Lex's own 503 explains the transcode limit; it isn't an outage.
-      if ([502, 504].includes(res.status) || (res.status === 503 && !serverError)) this.networkError(gen, new Error(msg));
-      else { this.fetching = false; this.opts.onError(msg, res.status); }
-      return;
-    }
-    const reader = res.body.getReader();
     let pending = [], pendingBytes = 0, lastFlush = performance.now();
     const flush = async () => {
       if (!pendingBytes) return true;
@@ -309,7 +319,10 @@ export class MseEngine {
       }
     } catch (e) {
       if (gen === this.gen && !ctrl.signal.aborted && e.name !== 'AbortError') {
-        if (e.name === 'QuotaStallError') {
+        if (e.status > 0) {
+          // The remuxer's range request failed.
+          this.httpError(gen, e.status, e.message, e.serverError);
+        } else if (e.name === 'QuotaStallError') {
           this.bufferError('The video buffer stopped accepting frames.');
         } else if (e.name === 'InvalidStateError' || e.name === 'NotSupportedError') {
           this.fetching = false;
@@ -328,6 +341,12 @@ export class MseEngine {
         this.stopped(gen);
       }
     }
+  }
+
+  httpError(gen, status, msg, serverError) {
+    // Lex's own 503 explains the transcode limit; it isn't an outage.
+    if ([502, 504].includes(status) || (status === 503 && !serverError)) this.networkError(gen, new Error(msg));
+    else { this.fetching = false; this.opts.onError(msg, status); }
   }
 
   // Throughput over wall-clock windows (≥1 s) of active downloading, so
@@ -460,6 +479,8 @@ export class MseEngine {
     // proxy kept a dead connection open) gets restarted.
     if (this.fetching && !this.throttled && this.ahead() < 5 && this.lastData && performance.now() - this.lastData > 15000) {
       this.ctrl?.abort();
+      // The remuxer's range request can't be aborted: replace its worker.
+      this.remuxWorker?.restart();
       this.networkError(this.gen, new Error('Stream stopped delivering data'));
     }
     if (!this.sb.updating && performance.now() - (this.lastEvict || 0) > 5000) {
@@ -481,6 +502,9 @@ export class MseEngine {
       throttled: this.throttled,
       fetching: this.fetching,
       streamFrom: this.streamFrom,
+      // The original file's bytes read by the browser's remuxer, and its memory.
+      fileBytes: this.remuxWorker ? this.remuxWorker.fetched : null,
+      remuxHeap: this.remuxWorker?.heap || 0,
     };
   }
 }

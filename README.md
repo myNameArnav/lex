@@ -79,6 +79,11 @@ frames from the films.</sub>
     via Media Source Extensions: seeking restarts ffmpeg at the target, and once the
     client's forward buffer is full it stops reading, TCP backpressure pauses ffmpeg,
     and nothing is written to disk.
+  - **Direct Stream without ffmpeg**: for MKV/WebM files whose codecs the browser plays
+    (or converts), the browser reads the original file with range requests and remuxes
+    it to the same fragmented MP4 itself (WebAssembly, in a worker), so the server only
+    sends bytes. Settings → Transcoding → Streaming → "Remux in the browser" (on by
+    default). If that fails, the server remuxes instead.
   - **HLS** for browsers without Media Source Extensions (older iOS, some TVs,
     AirPlay) or on request: 6-second segments written to the data folder and
     deleted as playback moves on.
@@ -387,6 +392,7 @@ internal/version   version number and build commit
 web/static         vanilla JavaScript UI (no build step)
 web/static/vendor  prebuilt third-party browser code (JASSUB subtitle renderer, FFmpeg audio converter)
 wasm/audio         source of the browser's AC-3/E-AC-3 → AAC converter (scripts/build-audio-wasm.sh)
+wasm/remux         source of the browser's MKV/WebM → fragmented MP4 remuxer (scripts/build-remux-wasm.sh)
 deploy             Linux deployment examples
 docker             Raspberry Pi archive keys for the container build
 scripts            release, WebAssembly builds and publication privacy checks

@@ -13,43 +13,12 @@ export const clientAudioSupported = () => typeof WebAssembly === 'object' && typ
 
 const failure = (msg) => new DOMException(`Browser audio decoding: ${msg}`, 'NotSupportedError');
 
+import { WorkerRPC } from './worker-rpc.js';
+
 // AudioWorker is the main-thread side of audio-worker.js.
-export class AudioWorker {
+export class AudioWorker extends WorkerRPC {
   constructor() {
-    this.seq = 0;
-    this.pending = new Map();
-    this.worker = new Worker(new URL('./audio-worker.js', import.meta.url), { type: 'module' });
-    this.worker.onmessage = ({ data }) => {
-      const p = this.pending.get(data.id);
-      if (!p) return;
-      this.pending.delete(data.id);
-      if (data.error) p.reject(failure(data.error));
-      else p.resolve(data);
-    };
-    this.worker.onerror = (e) => {
-      e.preventDefault?.();
-      this.fail(failure(e.message || "the decoder didn't load"));
-    };
-  }
-
-  fail(err) {
-    this.failed = err;
-    for (const p of this.pending.values()) p.reject(err);
-    this.pending.clear();
-  }
-
-  request(msg, transfer = []) {
-    if (this.failed) return Promise.reject(this.failed);
-    const id = ++this.seq;
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.worker.postMessage({ ...msg, id }, transfer);
-    });
-  }
-
-  terminate() {
-    this.worker.terminate();
-    this.fail(failure('stopped'));
+    super(new URL('./audio-worker.js', import.meta.url), failure, "the decoder didn't load");
   }
 }
 
