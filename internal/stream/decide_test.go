@@ -68,39 +68,71 @@ func TestDecide(t *testing.T) {
 	}
 }
 
-// Firefox can't decode E-AC-3 but the player can convert it: the server
-// copies it and asks for AAC from the browser.
+// Firefox can't decode E-AC-3, DTS or TrueHD but the player can convert
+// them: the server copies them and asks for AAC from the browser.
 func TestDecideClientAudio(t *testing.T) {
 	cfg := store.DefaultConfig()
-	f := file("/m/a.mkv", store.Stream{Index: 0, Codec: "h264", BitDepth: 8, Width: 1920, Height: 1080, CodecString: "avc1.640028"},
-		store.Stream{Index: 1, Codec: "eac3", Channels: 6, Default: true, CodecString: "ec-3"})
+	h264 := store.Stream{Index: 0, Codec: "h264", BitDepth: 8, Width: 1920, Height: 1080, CodecString: "avc1.640028"}
 	caps := chrome
-	caps.ClientAudio = []string{"ac3", "eac3"}
-	p, err := Decide(cfg, f, PlanRequest{Audio: -1, Subtitle: -1, Caps: caps}, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := ClientAudio{Codec: "eac3", Channels: 2, Bitrate: 192}
-	if p.Method != "remux" || !p.AudioCopy || p.ClientAudio == nil || *p.ClientAudio != want {
-		t.Fatalf("got %s acopy=%v client=%+v", p.Method, p.AudioCopy, p.ClientAudio)
-	}
-	if p.Mime != `video/mp4; codecs="avc1.640028,mp4a.40.2"` {
-		t.Errorf("mime %q should name the AAC the browser produces", p.Mime)
-	}
-	if !strings.Contains(strings.Join(p.Reasons, ";"), "converted in the browser") {
-		t.Errorf("reasons %v", p.Reasons)
-	}
+	caps.ClientAudio = []string{"ac3", "eac3", "dts", "truehd"}
+	for _, a := range []store.Stream{
+		{Index: 1, Codec: "eac3", Channels: 6, Default: true, CodecString: "ec-3"},
+		{Index: 1, Codec: "dts", Profile: "DTS-HD MA", Channels: 8, Default: true},
+		{Index: 1, Codec: "truehd", Channels: 8, Default: true},
+	} {
+		t.Run(a.Codec, func(t *testing.T) {
+			f := file("/m/a.mkv", h264, a)
+			p, err := Decide(cfg, f, PlanRequest{Audio: -1, Subtitle: -1, Caps: caps}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := ClientAudio{Codec: a.Codec, Channels: 2, Bitrate: 192}
+			if p.Method != "remux" || !p.AudioCopy || p.ClientAudio == nil || *p.ClientAudio != want {
+				t.Fatalf("got %s acopy=%v client=%+v", p.Method, p.AudioCopy, p.ClientAudio)
+			}
+			if p.Mime != `video/mp4; codecs="avc1.640028,mp4a.40.2"` {
+				t.Errorf("mime %q should name the AAC the browser produces", p.Mime)
+			}
+			if !strings.Contains(strings.Join(p.Reasons, ";"), "audio codec "+a.Codec+" converted in the browser") {
+				t.Errorf("reasons %v", p.Reasons)
+			}
 
-	// Turned off, or HLS (no MSE to feed): the server converts it.
-	off := cfg
-	off.ClientAudio = false
-	p, _ = Decide(off, f, PlanRequest{Audio: -1, Subtitle: -1, Caps: caps}, false)
-	if p.AudioCopy || p.ClientAudio != nil {
-		t.Errorf("disabled: acopy=%v client=%+v", p.AudioCopy, p.ClientAudio)
-	}
-	p, _ = Decide(cfg, f, PlanRequest{Audio: -1, Subtitle: -1, Caps: caps, ForceHLS: true}, false)
-	if p.ClientAudio != nil {
-		t.Errorf("HLS: client=%+v", p.ClientAudio)
+			// 5.1 output: 7.1 sources are mixed down to the configured count.
+			six := cfg
+			six.AudioChannels = 6
+			p, _ = Decide(six, f, PlanRequest{Audio: -1, Subtitle: -1, Caps: caps}, false)
+			if p.ClientAudio == nil || p.ClientAudio.Channels != 6 {
+				t.Errorf("5.1: client=%+v", p.ClientAudio)
+			}
+
+			// The Pi's hardware encoder goes through MPEG-TS, which carries
+			// all of these: still copied.
+			hw := cfg
+			hw.VideoEncoder = "h264_v4l2m2m"
+			p, _ = Decide(hw, f, PlanRequest{Audio: -1, Subtitle: -1, Caps: caps, Mode: "transcode"}, false)
+			if p.Method != "transcode" || p.ClientAudio == nil {
+				t.Errorf("hardware transcode: %s client=%+v", p.Method, p.ClientAudio)
+			}
+
+			// Not reported by the browser, turned off, or HLS (no MSE to
+			// feed): the server converts it.
+			old := chrome
+			old.ClientAudio = []string{"ac3"}
+			p, _ = Decide(cfg, f, PlanRequest{Audio: -1, Subtitle: -1, Caps: old}, false)
+			if p.AudioCopy || p.ClientAudio != nil {
+				t.Errorf("not reported: acopy=%v client=%+v", p.AudioCopy, p.ClientAudio)
+			}
+			off := cfg
+			off.ClientAudio = false
+			p, _ = Decide(off, f, PlanRequest{Audio: -1, Subtitle: -1, Caps: caps}, false)
+			if p.AudioCopy || p.ClientAudio != nil {
+				t.Errorf("disabled: acopy=%v client=%+v", p.AudioCopy, p.ClientAudio)
+			}
+			p, _ = Decide(cfg, f, PlanRequest{Audio: -1, Subtitle: -1, Caps: caps, ForceHLS: true}, false)
+			if p.AudioCopy || p.ClientAudio != nil {
+				t.Errorf("HLS: acopy=%v client=%+v", p.AudioCopy, p.ClientAudio)
+			}
+		})
 	}
 }
 

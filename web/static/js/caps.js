@@ -64,6 +64,7 @@ const LABELS = {
   h264: 'H.264', h264_10: 'H.264 10-bit', hevc: 'HEVC', hevc10: 'HEVC 10-bit', av1: 'AV1', av1_10: 'AV1 10-bit',
   vp8: 'VP8', vp9: 'VP9', vp9_10: 'VP9 10-bit', dv5: 'Dolby Vision 5',
   aac: 'AAC', mp3: 'MP3', ac3: 'Dolby Digital (AC-3)', eac3: 'Dolby Digital Plus (E-AC-3)', opus: 'Opus', flac: 'FLAC', alac: 'ALAC', vorbis: 'Vorbis',
+  dts: 'DTS', truehd: 'Dolby TrueHD',
   mp4: 'MP4', webm: 'WebM', mkv: 'MKV',
 };
 
