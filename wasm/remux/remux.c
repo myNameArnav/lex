@@ -14,6 +14,7 @@
 #include <libavformat/avformat.h>
 #include <libavutil/mathematics.h>
 #include <libavutil/opt.h>
+#include <libavutil/pixfmt.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -252,6 +253,58 @@ static int64_t video_dts(int64_t pts) {
   return dts;
 }
 
+// matroskadec drops VP9's CodecPrivate, but the MP4 muxer's vpcC box needs
+// the profile, bit depth and chroma subsampling: read them from the first
+// keyframe's uncompressed header (VP9 bitstream spec 6.2).
+typedef struct {
+  const uint8_t *b;
+  int n, at;
+} Bits;
+
+static int bits(Bits *g, int k) {
+  int v = 0;
+  for (; k > 0; k--, g->at++) {
+    if (g->at >= g->n * 8) return -1;
+    v = v << 1 | (g->b[g->at >> 3] >> (7 - (g->at & 7)) & 1);
+  }
+  return v;
+}
+
+static void vp9_params(AVCodecParameters *par, const AVPacket *p) {
+  static const enum AVPixelFormat yuv[3][2][2] = { // [depth][subsampled x][subsampled y]
+    {{AV_PIX_FMT_YUV444P, AV_PIX_FMT_YUV440P}, {AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUV420P}},
+    {{AV_PIX_FMT_YUV444P10, AV_PIX_FMT_YUV440P10}, {AV_PIX_FMT_YUV422P10, AV_PIX_FMT_YUV420P10}},
+    {{AV_PIX_FMT_YUV444P12, AV_PIX_FMT_YUV440P12}, {AV_PIX_FMT_YUV422P12, AV_PIX_FMT_YUV420P12}},
+  };
+  static const enum AVPixelFormat rgb[3] = {AV_PIX_FMT_GBRP, AV_PIX_FMT_GBRP10, AV_PIX_FMT_GBRP12};
+  static const enum AVColorSpace spaces[8] = {AVCOL_SPC_UNSPECIFIED, AVCOL_SPC_BT470BG, AVCOL_SPC_BT709, AVCOL_SPC_SMPTE170M,
+                                              AVCOL_SPC_SMPTE240M, AVCOL_SPC_BT2020_NCL, AVCOL_SPC_UNSPECIFIED, AVCOL_SPC_RGB};
+  Bits g = {p->data, p->size, 0};
+  if (bits(&g, 2) != 2) return; // frame marker
+  int profile = bits(&g, 1);
+  profile |= bits(&g, 1) << 1;
+  if (profile == 3) bits(&g, 1);
+  // Not a shown keyframe: show_existing_frame, frame_type,
+  // (show_frame, error_resilient_mode), the sync code.
+  if (bits(&g, 1) != 0 || bits(&g, 1) != 0 || bits(&g, 2) < 0 || bits(&g, 24) != 0x498342) return;
+  int depth = profile >= 2 ? 1 + bits(&g, 1) : 0; // 8, 10 or 12 bits
+  int space = bits(&g, 3), full = 1, sx = 0, sy = 0;
+  if (space < 0 || depth < 0) return;
+  if (space != 7) {
+    full = bits(&g, 1);
+    sx = sy = 1;
+    if (profile & 1) {
+      sx = bits(&g, 1);
+      sy = bits(&g, 1);
+    }
+    if (full < 0 || sx < 0 || sy < 0) return;
+  }
+  par->format = space == 7 ? rgb[depth] : yuv[depth][sx][sy];
+  par->profile = profile;
+  if (par->color_range == AVCOL_RANGE_UNSPECIFIED) par->color_range = full ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+  if (par->color_space == AVCOL_SPC_UNSPECIFIED) par->color_space = spaces[space];
+}
+
 // Starts the output at t seconds: the keyframe at or before it, with a new
 // init segment. Timestamps stay the file's, as with ffmpeg -copyts.
 EMSCRIPTEN_KEEPALIVE int rx_start(double t) {
@@ -291,6 +344,15 @@ EMSCRIPTEN_KEEPALIVE int rx_start(double t) {
     os->time_base = is->time_base;
     if (i == 0) vout = os->index;
     else aout = os->index;
+  }
+  if (ic->streams[vin]->codecpar->codec_id == AV_CODEC_ID_VP9) {
+    for (int i = 0; i < qlen; i++) {
+      AVPacket *p = queue[(qhead + i) % MAX_QUEUE];
+      if (p->stream_index == vin) {
+        vp9_params(oc->streams[vout]->codecpar, p);
+        break;
+      }
+    }
   }
   uint8_t *buf = av_malloc(1 << 16);
   if (!buf || !(oc->pb = avio_alloc_context(buf, 1 << 16, 1, NULL, NULL, write_cb, NULL))) return fail(-1, "%s", "out of memory");

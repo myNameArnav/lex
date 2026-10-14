@@ -277,6 +277,21 @@ test('subtitles, attachments and other audio tracks are left out', { skip }, asy
   checkVideo(src, mp4);
 });
 
+// matroskadec drops VP9's CodecPrivate, so the MP4 muxer's vpcC box needs
+// the pixel format the remuxer reads from the first keyframe.
+for (const [pixFmt, profile] of [['yuv420p', 'Profile 0'], ['yuv420p10le', 'Profile 2'], ['yuv444p', 'Profile 1']]) {
+  test(`VP9 ${profile} (${pixFmt}) gets a complete codec configuration`, { skip: skip || (!encoders.includes('libvpx-vp9') && 'no libvpx-vp9') }, async () => {
+    const src = fixture(`vp9-${pixFmt}.mkv`, ...picture, ...tone, '-c:v', 'libvpx-vp9', '-pix_fmt', pixFmt, '-deadline', 'realtime', '-cpu-used', '8',
+      '-b:v', '300k', '-g', '48', '-c:a', 'libopus');
+    const { mp4 } = await remux(src);
+    // ffprobe refuses an empty vpcC ("Empty VP Codec Configuration box").
+    const [v, a] = probe(write(`vp9-${pixFmt}.mp4`, mp4), ['-show_entries', 'stream=codec_name,profile,pix_fmt']).streams;
+    assert.deepEqual([v.codec_name, v.profile, v.pix_fmt, a.codec_name], ['vp9', profile, pixFmt, 'opus']);
+    checkVideo(src, mp4);
+    checkVideo(src, (await remux(src, { time: 5, seekFirst: 0 })).mp4, 4);
+  });
+}
+
 // A film whose first GOPs have no B-frames and later ones reorder deeply
 // (b-adapt choosing none on a static opening, anime at bframes=16).
 test('frames that reorder deeper later in the file are all copied', { skip }, async () => {
