@@ -185,13 +185,12 @@ function checkVideo(src, mp4, from = 0) {
 
 test('H.264 (B-frames) + AAC: the server remux\'s fMP4 with the file\'s timestamps', { skip }, async () => {
   const src = fixture('h264-aac.mkv', ...picture, ...tone, ...x264, '-c:a', 'aac', '-b:a', '128k');
-  const { mp4, stats, requests } = await remux(src);
+  const { mp4, requests } = await remux(src);
   const out = write('h264-aac.mp4', mp4);
   const [v, a] = streams(out);
   assert.equal(v.codec_name, 'h264');
   assert.equal(a.codec_name, 'aac');
   checkVideo(src, mp4);
-  assert.equal(stats.delay, 2);
   // The audio, packet for packet at the source's times.
   assert.deepEqual(packets(out, 'a').map((p) => ms(+p.pts_time)), packets(src, 'a').map((p) => ms(+p.pts_time)));
   // The same kind of stream as the server's ffmpeg remux: ftyp, moov, then
@@ -261,7 +260,6 @@ test('HEVC (B-frames) is tagged hvc1 like the server\'s remux', { skip: skip || 
   checkVideo(src, mp4, 6);
   const all = await remux(src);
   checkVideo(src, all.mp4);
-  assert.ok(all.stats.delay >= 2, `reorder delay ${all.stats.delay}`);
 });
 
 test('subtitles, attachments and other audio tracks are left out', { skip }, async () => {
@@ -277,6 +275,18 @@ test('subtitles, attachments and other audio tracks are left out', { skip }, asy
   const out = write('extras.mp4', mp4);
   assert.deepEqual(streams(out).map((x) => x.codec_name), ['h264', 'opus']);
   checkVideo(src, mp4);
+});
+
+// A film whose first GOPs have no B-frames and later ones reorder deeply
+// (b-adapt choosing none on a static opening, anime at bframes=16).
+test('frames that reorder deeper later in the file are all copied', { skip }, async () => {
+  const part = (name, bf) => fixture(name, '-f', 'lavfi', '-i', 'testsrc2=s=320x180:r=24:d=6', '-c:v', 'libx264', '-preset', 'veryfast',
+    '-bf', String(bf), '-b-pyramid', 'normal', '-g', '48', '-keyint_min', '48', '-sc_threshold', '0');
+  const list = join(dir, 'parts.txt');
+  writeFileSync(list, `file '${part('flat.mkv', 0)}'\nfile '${part('deep.mkv', 8)}'\nfile '${part('deeper.mkv', 16)}'\n`);
+  const src = fixture('reorder.mkv', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy');
+  checkVideo(src, (await remux(src, { audio: -1 })).mp4);
+  checkVideo(src, (await remux(src, { audio: -1, time: 9, seekFirst: 0 })).mp4, 8);
 });
 
 test('files the remuxer can\'t copy fail with a remuxer error', { skip }, async () => {

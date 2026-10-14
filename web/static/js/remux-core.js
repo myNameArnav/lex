@@ -92,7 +92,7 @@ export async function loadRemuxer(get) {
         return stats();
       case 'pump': {
         const done = check(M._rx_pump(), 'Remuxing') === 1;
-        return { data: take(), done, delay: M._rx_delay(), ...stats() };
+        return { data: take(), done, ...stats() };
       }
     }
     throw new Error(`unknown request ${m.op}`);

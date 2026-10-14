@@ -27,7 +27,6 @@ export class RemuxWorker {
       if (!p) return;
       this.pending.delete(data.id);
       if (data.fetched !== undefined) Object.assign(this, { fetched: data.fetched, requests: data.requests, heap: data.heap });
-      if (data.delay !== undefined) this.delay = data.delay;
       if (data.remux) p.reject(failure(data.error));
       // Network and HTTP failures: the stream's usual error handling.
       else if (data.error) p.reject(Object.assign(new Error(data.error), { status: data.status, serverError: data.serverError }));

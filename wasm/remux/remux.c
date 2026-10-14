@@ -31,19 +31,17 @@ static char err[256];
 static int frag_us = 1000000;
 
 // Video DTS. Matroska stores presentation times only; with B-frames the
-// decode times have to be rebuilt, as ffmpeg does when it has decoded the
-// stream: delay frames of reordering, so each frame's DTS is the PTS that
-// many ranks lower. delay is measured from the first frames of every
-// start (and only ever grows: a fresh muxer starts at each).
-#define MAX_DELAY 16
-#define LOOKAHEAD 32  // video frames read before any is muxed
+// decode times have to be rebuilt. Frames are muxed LOOKAHEAD video frames
+// behind the reading, and each frame's DTS is the smallest PTS still
+// queued: its rank in presentation order. That's right as long as frames
+// reorder less than LOOKAHEAD deep (H.264 and HEVC allow 16), however the
+// depth changes through the file. dts_lead keeps DTS before PTS; the
+// muxer's negative composition offsets take it out again.
+#define LOOKAHEAD 32
 #define MAX_QUEUE 1024
-static int delay;
-static int64_t frame_dur, pts0, last_dts, nvideo;
-static int64_t largest[MAX_DELAY + 1]; // the delay+1 largest PTS so far, ascending
-static int nlargest;
+static int64_t frame_dur, dts_lead, last_dts;
 static AVPacket *queue[MAX_QUEUE];
-static int qhead, qlen, qeof;
+static int qhead, qlen, qvideo, qeof, keyed;
 static AVPacket *pkt;
 
 static int fail(int code, const char *fmt, const char *what) {
@@ -97,8 +95,7 @@ static int write_cb(void *opaque, const uint8_t *buf, int n) {
 
 static void clear_queue(void) {
   for (; qlen; qlen--, qhead = (qhead + 1) % MAX_QUEUE) av_packet_free(&queue[qhead]);
-  qhead = 0;
-  qeof = 0;
+  qhead = qvideo = qeof = 0;
 }
 
 static void close_output(void) {
@@ -174,7 +171,7 @@ EMSCRIPTEN_KEEPALIVE int rx_open(double size, int audio, int frag_ms) {
   if (ain >= 0 && !audio_ok(ic->streams[ain]->codecpar->codec_id))
     return fail(-2, "unsupported audio codec %s", avcodec_get_name(ic->streams[ain]->codecpar->codec_id));
   if (!(pkt = av_packet_alloc())) return fail(-1, "%s", "out of memory");
-  delay = started = 0;
+  started = 0;
   return 0;
 }
 
@@ -188,15 +185,10 @@ static int read_packet(AVPacket *p) {
   }
 }
 
-static int64_t queue_video(void) {
-  int64_t n = 0;
-  for (int i = 0; i < qlen; i++) n += queue[(qhead + i) % MAX_QUEUE]->stream_index == vin;
-  return n;
-}
-
-// Fills the lookahead, then measures the reordering and frame duration in it.
-static int lookahead(void) {
-  while (!qeof && qlen < MAX_QUEUE && queue_video() < LOOKAHEAD) {
+// Reads until LOOKAHEAD video frames wait behind the next one (or the file
+// ends).
+static int refill(void) {
+  while (!qeof && qlen < MAX_QUEUE && qvideo <= LOOKAHEAD) {
     AVPacket *p = av_packet_alloc();
     if (!p) return AVERROR(ENOMEM);
     int r = read_packet(p);
@@ -206,54 +198,55 @@ static int lookahead(void) {
       qeof = 1;
       break;
     }
-    // A start (seek) lands on a keyframe; nothing before it can be decoded.
-    if (p->stream_index == vin && !queue_video() && !(p->flags & AV_PKT_FLAG_KEY)) {
-      av_packet_free(&p);
-      continue;
-    }
-    if (p->stream_index == vin && p->pts == AV_NOPTS_VALUE) {
-      av_packet_free(&p);
-      return fail(-5, "%s", "video frames without timestamps");
+    if (p->stream_index == vin) {
+      // A start (seek) lands on a keyframe; nothing before it can be decoded.
+      if (!keyed && !(p->flags & AV_PKT_FLAG_KEY)) {
+        av_packet_free(&p);
+        continue;
+      }
+      if (p->pts == AV_NOPTS_VALUE) {
+        av_packet_free(&p);
+        return fail(-5, "%s", "video frames without timestamps");
+      }
+      keyed = 1;
+      qvideo++;
     }
     queue[(qhead + qlen++) % MAX_QUEUE] = p;
   }
+  return 0;
+}
+
+// The frame duration (for frames without one) and the DTS lead: at least
+// 2 s, and 17 frames for slow frame rates.
+static void measure(void) {
   int64_t v[LOOKAHEAD + 1];
   int n = 0;
   for (int i = 0; i < qlen && n <= LOOKAHEAD; i++) {
     AVPacket *p = queue[(qhead + i) % MAX_QUEUE];
     if (p->stream_index == vin) v[n++] = p->pts;
   }
-  // How many earlier frames (decode order) show after each frame.
-  for (int i = 0; i < n; i++) {
-    int later = 0;
-    for (int j = 0; j < i; j++) later += v[j] > v[i];
-    if (later > delay) delay = later > MAX_DELAY ? MAX_DELAY : later;
-  }
-  pts0 = n ? v[0] : 0;
+  int64_t longest = 0;
   frame_dur = 0;
   for (int i = 0; i < n; i++) {
-    if (v[i] < pts0) pts0 = v[i];
-    for (int j = 0; j < n; j++) {
-      int64_t d = v[j] - v[i];
-      if (d > 0 && (!frame_dur || d < frame_dur)) frame_dur = d;
-    }
+    int64_t next = 0; // the next PTS after v[i]
+    for (int j = 0; j < n; j++)
+      if (v[j] > v[i] && (!next || v[j] < next)) next = v[j];
+    if (!next) continue;
+    if (!frame_dur || next - v[i] < frame_dur) frame_dur = next - v[i];
+    if (next - v[i] > longest) longest = next - v[i];
   }
   if (!frame_dur) frame_dur = 1;
-  return 0;
+  AVRational tb = ic->streams[vin]->time_base;
+  dts_lead = FFMAX(av_rescale_q(2, (AVRational){1, 1}, tb), 17 * longest);
 }
 
 static int64_t video_dts(int64_t pts) {
-  if (nlargest < delay + 1) {
-    int i = nlargest++;
-    for (; i > 0 && largest[i - 1] > pts; i--) largest[i] = largest[i - 1];
-    largest[i] = pts;
-  } else if (pts > largest[0]) {
-    int i = 0;
-    for (; i < delay && largest[i + 1] < pts; i++) largest[i] = largest[i + 1];
-    largest[i] = pts;
+  int64_t first = pts;
+  for (int i = 0; i < qlen; i++) {
+    AVPacket *p = queue[(qhead + i) % MAX_QUEUE];
+    if (p->stream_index == vin && p->pts < first) first = p->pts;
   }
-  int64_t dts = nvideo < delay ? pts0 - (delay - nvideo) * frame_dur : largest[0];
-  nvideo++;
+  int64_t dts = first - dts_lead;
   if (last_dts != AV_NOPTS_VALUE && dts <= last_dts) dts = last_dts + 1;
   last_dts = dts;
   return dts;
@@ -280,10 +273,11 @@ EMSCRIPTEN_KEEPALIVE int rx_start(double t) {
     if (r < 0) return fail_av(r, "Seeking");
   }
   started = 1;
-  nvideo = nlargest = 0;
+  keyed = 0;
   last_dts = AV_NOPTS_VALUE;
-  int r = lookahead();
+  int r = refill();
   if (r < 0) return err[0] ? r : fail_av(r, "Reading the file");
+  measure();
 
   r = avformat_alloc_output_context2(&oc, NULL, "mp4", NULL);
   if (r < 0) return fail_av(r, "Starting the MP4 muxer");
@@ -318,16 +312,21 @@ EMSCRIPTEN_KEEPALIVE int rx_start(double t) {
   return 0;
 }
 
+// The next packet to mux, with the video DTS set.
 static int next_packet(AVPacket *p) {
-  if (qlen) {
-    av_packet_move_ref(p, queue[qhead]);
-    av_packet_free(&queue[qhead]);
-    qhead = (qhead + 1) % MAX_QUEUE;
-    qlen--;
-    return 0;
+  int r = refill();
+  if (r < 0) return r;
+  if (!qlen) return AVERROR_EOF;
+  AVPacket *q = queue[qhead];
+  if (q->stream_index == vin) {
+    q->dts = video_dts(q->pts); // before it leaves the queue
+    qvideo--;
   }
-  if (qeof) return AVERROR_EOF;
-  return read_packet(p);
+  av_packet_move_ref(p, q);
+  av_packet_free(&queue[qhead]);
+  qhead = (qhead + 1) % MAX_QUEUE;
+  qlen--;
+  return 0;
 }
 
 // Muxes until some output is ready (a fragment, usually) or the file ends.
@@ -347,10 +346,9 @@ EMSCRIPTEN_KEEPALIVE int rx_pump(void) {
     AVStream *is = ic->streams[pkt->stream_index];
     int video = pkt->stream_index == vin;
     if (video) {
-      pkt->dts = video_dts(pkt->pts);
       if (pkt->dts > pkt->pts) {
         av_packet_unref(pkt);
-        return fail(-5, "%s", "frames reordered more than measured");
+        return fail(-5, "%s", "frames reordered deeper than the lookahead");
       }
       if (pkt->duration <= 0) pkt->duration = frame_dur;
     } else {
@@ -377,5 +375,3 @@ EMSCRIPTEN_KEEPALIVE uint8_t *rx_out(void) { return out; }
 EMSCRIPTEN_KEEPALIVE int rx_out_len(void) { return out_len; }
 EMSCRIPTEN_KEEPALIVE void rx_out_clear(void) { out_len = 0; }
 EMSCRIPTEN_KEEPALIVE const char *rx_error(void) { return err; }
-// The video reordering in use (for tests and stats).
-EMSCRIPTEN_KEEPALIVE int rx_delay(void) { return delay; }
