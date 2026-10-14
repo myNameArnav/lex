@@ -6,6 +6,7 @@
 // read the server's response.
 
 import { WorkerRPC } from './worker-rpc.js';
+import { streamError } from './stream-error.js';
 
 // The containers the remuxer reads, as the server names them.
 export const CLIENT_REMUX = ['mkv', 'webm'];
@@ -14,6 +15,28 @@ export const clientRemuxSupported = () => typeof WebAssembly === 'object' && typ
 
 // The player recognises this prefix and lets the server remux instead.
 const failure = (msg) => new DOMException(`Browser remux: ${msg}`, 'NotSupportedError');
+
+// The worker's synchronous reads can't stop a download once it has
+// started. A proxy that ignores Range would make the first one fetch the
+// whole file: check once, with a request that can be aborted, that the
+// server answers ranges.
+async function probeRanges(url) {
+  const ctrl = new AbortController();
+  let res;
+  try {
+    res = await fetch(url, { headers: { Range: 'bytes=0-0' }, credentials: 'same-origin', cache: 'no-store', signal: ctrl.signal });
+  } catch {
+    throw Object.assign(new Error('Lost connection to the server while streaming.'), { status: 0 });
+  }
+  try {
+    if (res.status === 206 && /\/\d+$/.test(res.headers.get('Content-Range') || '')) return;
+    if (res.ok) throw failure('the server ignored a range request');
+    const { msg, serverError } = streamError(res.status, await res.text().catch(() => ''));
+    throw Object.assign(new Error(msg), { status: res.status, serverError });
+  } finally {
+    ctrl.abort();
+  }
+}
 
 // RemuxWorker is the main-thread side of remux-worker.js: one per
 // playback, opened on the plan's file and audio track.
@@ -38,7 +61,7 @@ export class RemuxWorker extends WorkerRPC {
   // stream try again.
   open() {
     if (!this.opened) {
-      this.opened = this.request({ op: 'open', ...this.file });
+      this.opened = probeRanges(this.file.url).then(() => this.request({ op: 'open', ...this.file }));
       this.opened.catch((e) => { if (e.status !== undefined) this.opened = null; });
     }
     return this.opened;
