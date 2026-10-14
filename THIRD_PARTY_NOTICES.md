@@ -12,6 +12,19 @@ see `web/static/vendor/lexaudio/LICENSE`. The FFmpeg source is available at the
 link above, and the script rebuilds the files, which can be replaced with
 your own build.
 
+## FFmpeg 7.1.2 (`web/static/vendor/lexremux/`)
+
+The browser's Matroska/WebM → fragmented MP4 remuxer. `remux.wasm` and its
+loader `remux.js` are built by `scripts/build-remux-wasm.sh` from
+[FFmpeg 7.1.2](https://ffmpeg.org/releases/ffmpeg-7.1.2.tar.xz) (only
+libavformat's Matroska demuxer and MP4 muxer, the parsers and bitstream
+filters a stream copy needs, and libavutil, without GPL or nonfree
+components) linked with Lex's `wasm/remux/remux.c`. FFmpeg is licensed under
+the GNU Lesser General Public License 2.1 or later; see
+`web/static/vendor/lexremux/LICENSE`. The FFmpeg source is available at the
+link above, and the script rebuilds the files, which can be replaced with
+your own build.
+
 ## JASSUB 2.5.16 (`web/static/vendor/jassub/`)
 
 Browser subtitle renderer, bundled unmodified from the npm package

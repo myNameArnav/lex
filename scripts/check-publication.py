@@ -38,8 +38,9 @@ def check(path, content, location):
         # "scheme://user:secret@host" is a URL's credentials, not an address.
         if URL_CREDENTIALS.search(content[max(0, match.start() - 256):match.start()]):
             continue
-        # FFmpeg's public mailing list is compiled into the browser audio
-        # converter's bug-report messages (web/static/vendor/lexaudio).
+        # FFmpeg's public mailing list is compiled into the bug-report
+        # messages of the browser's audio converter and remuxer
+        # (web/static/vendor/lexaudio, web/static/vendor/lexremux).
         if match.group(0).lower() == b"ffmpeg-devel@ffmpeg.org":
             continue
         if match.group(1).lower() not in {b"example.com", b"example.org", b"example.net", b"example.invalid"}:
