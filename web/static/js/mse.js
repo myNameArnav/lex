@@ -479,6 +479,8 @@ export class MseEngine {
     // proxy kept a dead connection open) gets restarted.
     if (this.fetching && !this.throttled && this.ahead() < 5 && this.lastData && performance.now() - this.lastData > 15000) {
       this.ctrl?.abort();
+      // The remuxer's range request can't be aborted: replace its worker.
+      this.remuxWorker?.restart();
       this.networkError(this.gen, new Error('Stream stopped delivering data'));
     }
     if (!this.sb.updating && performance.now() - (this.lastEvict || 0) > 5000) {

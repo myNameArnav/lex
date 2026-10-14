@@ -6,6 +6,10 @@
 import { loadRemuxer, RemuxError } from './remux-core.js';
 import { streamError } from './stream-error.js';
 
+// A range request (at most 4 MB) that takes longer than this has stalled;
+// a synchronous one can't be aborted any other way.
+const READ_TIMEOUT = 30000;
+
 // A synchronous range request: { bytes, size } or an error with the HTTP
 // status (0: no response).
 function rangeGetter(url) {
@@ -13,6 +17,7 @@ function rangeGetter(url) {
     const x = new XMLHttpRequest();
     x.open('GET', url, false);
     x.responseType = 'arraybuffer';
+    x.timeout = READ_TIMEOUT;
     x.setRequestHeader('Range', `bytes=${start}-${end}`);
     try {
       x.send();

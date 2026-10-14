@@ -451,3 +451,15 @@ test('a browser remux failure is a decode error that names the remuxer', async (
   assert.equal(f.errors[0][2], true);
   f.engine.destroy();
 });
+
+test('a browser remux stuck in a range request gets a fresh worker from the watchdog', async () => {
+  // The worker blocks in a synchronous request: reads never settle.
+  const f = await fixture(hanging, { remux: () => ({ read: () => new Promise(() => {}), cancel: async () => {} }) });
+  let restarts = 0;
+  f.engine.remuxWorker.restart = () => { restarts++; };
+  void f.engine.load(610, true);
+  await f.advance(17000);
+  assert.equal(restarts, 1);
+  assert.equal(f.remuxStarts.length, 2, 'resumed on the new worker');
+  f.engine.destroy();
+});

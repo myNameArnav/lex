@@ -44,6 +44,15 @@ export class RemuxWorker extends WorkerRPC {
     return this.opened;
   }
 
+  // restart replaces a worker stuck in a range request, which is
+  // synchronous and can't be aborted. The next stream opens the file again.
+  restart() {
+    this.worker.terminate();
+    this.fail(new DOMException('Remuxer restarted', 'AbortError'));
+    this.opened = null;
+    this.spawn();
+  }
+
 }
 
 // RemuxStream is the remuxer's output from time on (a seek starts a new
