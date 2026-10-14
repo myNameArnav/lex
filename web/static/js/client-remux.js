@@ -49,6 +49,7 @@ export class RemuxWorker extends WorkerRPC {
   }
 
   replyError(data) {
+    if (data.replaced) return new DOMException('Stream replaced', 'AbortError');
     // Replies carry the reader's figures, for Stats for nerds.
     if (data.fetched !== undefined) Object.assign(this, { fetched: data.fetched, requests: data.requests, heap: data.heap });
     if (data.remux) return failure(data.error);
@@ -78,21 +79,28 @@ export class RemuxWorker extends WorkerRPC {
 
 }
 
+let streams = 0;
+
 // RemuxStream is the remuxer's output from time on (a seek starts a new
-// one). read() resolves like a fetch body reader's: { done, value }.
+// one). read() resolves like a fetch body reader's: { done, value }. A
+// stream starts the remuxer when it's first read, and the worker skips the
+// requests of streams a newer one replaced, so scrubbing past many
+// positions doesn't make it seek to each in turn.
 export class RemuxStream {
   constructor(worker, time) {
     this.worker = worker;
-    this.started = worker.open().then(() => this.request({ op: 'start', time }));
+    this.time = time;
+    this.id = ++streams;
   }
 
   request(msg) {
     if (this.cancelled) return Promise.reject(new DOMException('Stream replaced', 'AbortError'));
-    return this.worker.request(msg);
+    return this.worker.request({ ...msg, stream: this.id });
   }
 
   async read() {
     if (this.done) return { done: true };
+    this.started ??= this.worker.open().then(() => this.request({ op: 'start', time: this.time }));
     await this.started;
     const res = await this.request({ op: 'pump' });
     this.done = res.done;

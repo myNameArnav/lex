@@ -70,3 +70,18 @@ test('a stuck worker is replaced and the file opened again', async () => {
   assert.deepEqual(ops(f.workers[1]), ['open']);
   assert.equal(f.probes.length, 2);
 });
+
+test('a stream starts the remuxer when first read, so replaced streams cost nothing', async () => {
+  const f = await fixture({ reply: (m) => (m.op === 'pump' ? { data: new Uint8Array(4), done: false } : {}) });
+  const skipped = new f.RemuxStream(f.worker, 10);
+  skipped.cancel();
+  const s = new f.RemuxStream(f.worker, 20);
+  const { value } = await s.read();
+  assert.equal(value.byteLength, 4);
+  const posted = f.workers[0].posted;
+  assert.deepEqual(posted.map((m) => m.op), ['open', 'start', 'pump']);
+  assert.deepEqual([posted[1].time, posted[1].stream, posted[2].stream], [20, s.id, s.id]);
+  // The worker's verdict on a replaced stream ends its read quietly.
+  const g = await fixture({ reply: (m) => (m.op === 'start' ? { replaced: true } : {}) });
+  await assert.rejects(new g.RemuxStream(g.worker, 5).read(), (e) => e.name === 'AbortError');
+});

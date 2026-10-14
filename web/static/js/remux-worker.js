@@ -38,9 +38,26 @@ function rangeGetter(url) {
 
 let handle;
 let queue = Promise.resolve();
+// The newest stream (a seek) the player has asked for: requests of older
+// ones still queued are skipped rather than run.
+let latest = 0;
+
+// Lets the messages that arrived while a request ran be delivered (and
+// update latest) before the next one runs.
+const delivered = () => new Promise((resolve) => {
+  const c = new MessageChannel();
+  c.port1.onmessage = () => { c.port1.close(); resolve(); };
+  c.port2.postMessage(0);
+});
 
 self.onmessage = ({ data: m }) => {
+  if (m.stream > latest) latest = m.stream;
   queue = queue.then(async () => {
+    await delivered();
+    if (m.stream < latest) {
+      self.postMessage({ id: m.id, replaced: true });
+      return;
+    }
     try {
       // Opened again after a failed attempt (a lost connection): the same module.
       if (m.op === 'open' && !handle) handle = await loadRemuxer(rangeGetter(m.url));

@@ -56,3 +56,19 @@ test('Lex\'s JSON errors and other HTTP failures are told apart', async () => {
     assert.deepEqual([w.replies[0].status, w.replies[0].serverError, w.replies[0].error], [410, serverError, error]);
   }
 });
+
+test('requests of a stream a newer one replaced are skipped, not run', async () => {
+  const w = await worker();
+  w.post({ id: 1, op: 'open', url: '/f' });
+  // Scrubbing: three seeks queue up behind the open.
+  for (const [id, stream] of [[2, 1], [3, 2], [4, 3]]) w.post({ id, op: 'start', stream, time: id });
+  w.post({ id: 5, op: 'pump', stream: 3 });
+  await w.settle();
+  assert.deepEqual(w.ran, ['open', 'start3', 'pump3']);
+  assert.deepEqual(w.replies.filter((r) => r.replaced).map((r) => r.id), [2, 3]);
+  // A seek posted before the last stream's pump ran replaces that pump.
+  w.post({ id: 6, op: 'pump', stream: 3 });
+  w.post({ id: 7, op: 'start', stream: 4, time: 9 });
+  await w.settle();
+  assert.deepEqual(w.ran.slice(3), ['start4']);
+});
