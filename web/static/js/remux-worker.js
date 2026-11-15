@@ -6,8 +6,9 @@
 import { loadRemuxer, RemuxError } from './remux-core.js';
 import { streamError } from './stream-error.js';
 
-// A range request (at most 4 MB) that takes longer than this has stalled;
-// a synchronous one can't be aborted any other way.
+// A range request (at most 4 MB, sized by the measured read rate) that
+// takes longer than this has stalled; a synchronous one can't be aborted
+// any other way.
 const READ_TIMEOUT = 30000;
 
 // A synchronous range request: { bytes, size } or an error with the HTTP

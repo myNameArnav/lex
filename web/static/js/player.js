@@ -1530,7 +1530,7 @@ class Player {
     } else {
       r('Ahead', secs(cs.bufferAhead), 'browser managed', bufLvl);
     }
-    if (es?.fileBytes != null) r('File read', fmtBytes(es.fileBytes), `range requests · remuxer memory ${fmtBytes(es.remuxHeap)}`);
+    if (es?.fileBytes != null) r('File read', fmtBytes(es.fileBytes), `range requests${es.fileRate ? ` at ${fmtBitrate(es.fileRate * 8)}` : ''} · remuxer memory ${fmtBytes(es.remuxHeap)}`);
     r('Server rate', fmtBitrate(this.serverRate * 8));
     r('Stalls', String(cs.bufferEvents), `${cs.bufferSeconds.toFixed(1)}s total${cs.buffering ? ' · buffering now' : ''}`, cs.buffering ? 'bad' : cs.bufferEvents ? 'warn' : '');
     r('Read from', this.cached ? 'SSD cache' : 'library disk');
