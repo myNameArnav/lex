@@ -9,14 +9,8 @@ import (
 )
 
 func (s *Server) trickMeta(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r, "id")
-	if err != nil {
-		writeErr(w, 400, "bad id")
-		return
-	}
-	f, err := s.St.File(id)
-	if err != nil {
-		notFoundOr500(w, err)
+	f, ok := s.pathFile(w, r)
+	if !ok {
 		return
 	}
 	m, _, err := s.Trick.Meta(f)
@@ -28,19 +22,13 @@ func (s *Server) trickMeta(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) trickSheet(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r, "id")
-	if err != nil {
-		writeErr(w, 400, "bad id")
+	f, ok := s.pathFile(w, r)
+	if !ok {
 		return
 	}
 	n, err := strconv.Atoi(strings.TrimSuffix(r.PathValue("n"), ".jpg"))
 	if err != nil || n < 1 {
 		writeErr(w, 400, "bad sheet")
-		return
-	}
-	f, err := s.St.File(id)
-	if err != nil {
-		notFoundOr500(w, err)
 		return
 	}
 	m, dir, err := s.Trick.Meta(f)

@@ -54,7 +54,8 @@ func (s *Store) SetWatchlist(uid, itemID int64, on bool) error {
 // Watchlist returns a user's watchlist, most recently added first; limit <=
 // 0 returns all of it.
 func (s *Store) Watchlist(uid int64, limit int) ([]*Item, error) {
-	q := `JOIN watchlist w ON w.item_id=i.id AND w.user_id=:uid ORDER BY w.added_at DESC, i.id DESC`
+	q := `WHERE i.id IN (SELECT item_id FROM watchlist WHERE user_id=:uid)
+		ORDER BY (SELECT w.added_at FROM watchlist w WHERE w.user_id=:uid AND w.item_id=i.id) DESC, i.id DESC`
 	args := []any{sql.Named("uid", uid)}
 	if limit > 0 {
 		q += ` LIMIT :lim`
@@ -161,7 +162,7 @@ func (s *Store) CollectionItems(uid, collID int64) (*Collection, []*Item, error)
 	if err != nil {
 		return nil, nil, err
 	}
-	items, err := s.queryItemsUD(udSelect(`JOIN item_collections ic ON ic.item_id=i.id AND ic.collection_id=:cid
+	items, err := s.queryItemsUD(udSelect(`WHERE i.id IN (SELECT item_id FROM item_collections WHERE collection_id=:cid)
 		ORDER BY CASE WHEN i.premiere<>'' THEN i.premiere WHEN i.year>0 THEN printf('%04d', i.year) ELSE '9999' END, i.sort_title`),
 		sql.Named("uid", uid), sql.Named("cid", collID))
 	return c, items, err

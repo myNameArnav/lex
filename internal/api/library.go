@@ -18,7 +18,8 @@ func (s *Server) libraries(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, libraryViews(libs, userOf(r).IsAdmin))
+	u := userOf(r)
+	writeJSON(w, libraryViews(visibleLibraries(libs, u), u.IsAdmin))
 }
 
 // adminLibrary adds what the settings page shows about a library's folders.
@@ -104,7 +105,8 @@ type homeRow struct {
 }
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
-	uid := userOf(r).ID
+	u := userOf(r)
+	uid := u.ID
 	var rows []homeRow
 	if cw, err := s.St.ContinueWatching(uid, 20); err == nil && len(cw) > 0 {
 		rows = append(rows, homeRow{ID: "continue", Title: "Continue Watching", Kind: "landscape", Items: cw})
@@ -116,6 +118,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, homeRow{ID: "watchlist", Title: "Watchlist", Kind: "poster", Items: wl})
 	}
 	libs, _ := s.St.Libraries()
+	libs = visibleLibraries(libs, u)
 	for _, l := range libs {
 		items, _, err := s.St.ListItems(uid, store.ListQuery{LibraryID: l.ID, Sort: "latest", Desc: true, Limit: 24})
 		if err == nil && len(items) > 0 {
@@ -130,7 +133,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 			s.withWatchlist(uid, row.Items...)
 		}
 	}
-	writeJSON(w, map[string]any{"rows": rows, "libraries": libraryViews(libs, userOf(r).IsAdmin)})
+	writeJSON(w, map[string]any{"rows": rows, "libraries": libraryViews(libs, u.IsAdmin)})
 }
 
 func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
@@ -156,7 +159,7 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) genres(w http.ResponseWriter, r *http.Request) {
 	lib, _ := strconv.ParseInt(r.URL.Query().Get("library"), 10, 64)
-	g, err := s.St.Genres(lib)
+	g, err := s.St.Genres(userOf(r).ID, lib)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -269,12 +272,11 @@ func (s *Server) itemDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) itemChildren(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r, "id")
-	if err != nil {
-		writeErr(w, 400, "bad id")
+	it, ok := s.pathItem(w, r)
+	if !ok {
 		return
 	}
-	ch, err := s.St.ChildCards(id, userOf(r).ID)
+	ch, err := s.St.ChildCards(it.ID, userOf(r).ID)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -283,11 +285,11 @@ func (s *Server) itemChildren(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) setPlayed(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r, "id")
-	if err != nil {
-		writeErr(w, 400, "bad id")
+	it, ok := s.pathItem(w, r)
+	if !ok {
 		return
 	}
+	id := it.ID
 	var req struct{ Played bool }
 	if err := readJSON(r, &req); err != nil {
 		writeErr(w, 400, "bad request")
@@ -301,11 +303,11 @@ func (s *Server) setPlayed(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) setFavorite(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r, "id")
-	if err != nil {
-		writeErr(w, 400, "bad id")
+	it, ok := s.pathItem(w, r)
+	if !ok {
 		return
 	}
+	id := it.ID
 	var req struct{ Favorite bool }
 	if err := readJSON(r, &req); err != nil {
 		writeErr(w, 400, "bad request")
@@ -321,17 +323,12 @@ func (s *Server) setFavorite(w http.ResponseWriter, r *http.Request) {
 // shuffle returns a show's or a season's episodes in random order. A show
 // leaves out its specials, unless that's all it has.
 func (s *Server) shuffle(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r, "id")
-	if err != nil {
-		writeErr(w, 400, "bad id")
+	it, ok := s.pathItem(w, r)
+	if !ok {
 		return
 	}
-	uid := userOf(r).ID
-	it, err := s.St.Item(id)
-	if err != nil {
-		notFoundOr500(w, err)
-		return
-	}
+	id, uid := it.ID, userOf(r).ID
+	var err error
 	var eps []*store.Item
 	switch it.Kind {
 	case "show":

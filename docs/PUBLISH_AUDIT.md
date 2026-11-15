@@ -71,7 +71,9 @@ OpenPGP verification certificates, not private keys.
   Load/soak testing, codec/subtitle/HDR matrices, and full mobile/accessibility
   coverage remain outside this audit.
 - Administrators are trusted with filesystem access and every user's account.
-  All signed-in users can play all libraries. Runtime databases, logs and
+  Signed-in users can play every library unless an admin limits them to some
+  (per library only, enforced server-side; admins see everything; Live TV
+  channels airing a hidden library are hidden). Runtime databases, logs and
   backups deliberately contain account/device/playback information; protect
   them and keep them out of publication.
 - The privacy guard detects specific patterns and file types. It does not prove

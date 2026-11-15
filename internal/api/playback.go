@@ -123,7 +123,7 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Subs.Prefetch(f)
-	s.cacheAround(it, f)
+	s.cacheAround(it, f, u.ID)
 	s.Trick.Prioritize(f.ID)
 	if plan.HLS {
 		plan.URL += "&k=" + s.Sess.StreamKey(plan.SessionID)
@@ -158,7 +158,7 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 	// buffered, so no media request re-opened the session: re-open it here,
 	// as a media request would, so progress keeps being saved.
 	if errors.Is(err, stream.ErrUnknownSession) && req.SessionID != "" && req.FileID > 0 {
-		if f, ferr := s.St.File(req.FileID); ferr == nil {
+		if f, ferr := s.St.File(req.FileID); ferr == nil && userOf(r).CanAccess(f.LibraryID) {
 			method := req.Method
 			if method != "remux" && method != "transcode" {
 				method = "direct"
@@ -255,14 +255,8 @@ var directTypes = map[string]string{
 }
 
 func (s *Server) direct(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r, "id")
-	if err != nil {
-		writeErr(w, 400, "bad id")
-		return
-	}
-	f, err := s.St.File(id)
-	if err != nil {
-		notFoundOr500(w, err)
+	f, ok := s.pathFile(w, r)
+	if !ok {
 		return
 	}
 	fh, err := os.Open(s.Cache.Resolve(f))
@@ -339,14 +333,8 @@ func (e *endedReader) Read(b []byte) (int, error) {
 // is natural: when the player stops reading (buffer full), the socket fills,
 // ffmpeg blocks on the pipe and uses no CPU.
 func (s *Server) streamFile(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r, "id")
-	if err != nil {
-		writeErr(w, 400, "bad id")
-		return
-	}
-	f, err := s.St.File(id)
-	if err != nil {
-		notFoundOr500(w, err)
+	f, ok := s.pathFile(w, r)
+	if !ok {
 		return
 	}
 	cfg := s.St.Config()
@@ -496,9 +484,8 @@ func (s *Server) streamFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) subtitle(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r, "id")
-	if err != nil {
-		writeErr(w, 400, "bad id")
+	f, ok := s.pathFile(w, r)
+	if !ok {
 		return
 	}
 	raw := r.PathValue("idx")
@@ -506,11 +493,6 @@ func (s *Server) subtitle(w http.ResponseWriter, r *http.Request) {
 	idx, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSuffix(raw, ".vtt"), ".ass"))
 	if err != nil {
 		writeErr(w, 400, "bad index")
-		return
-	}
-	f, err := s.St.File(id)
-	if err != nil {
-		notFoundOr500(w, err)
 		return
 	}
 	var p string
@@ -560,7 +542,7 @@ func (s *Server) subtitle(w http.ResponseWriter, r *http.Request) {
 
 // cacheAround queues the file being played, and the next few episodes, for
 // the SSD cache.
-func (s *Server) cacheAround(it *store.Item, f *store.File) {
+func (s *Server) cacheAround(it *store.Item, f *store.File, uid int64) {
 	cfg := s.St.Config()
 	if !cfg.CacheEnabled {
 		return
@@ -571,7 +553,7 @@ func (s *Server) cacheAround(it *store.Item, f *store.File) {
 	if it.Kind != "episode" || cfg.CachePrefetch <= 0 {
 		return
 	}
-	eps, err := s.St.ShowEpisodes(it.ShowID, 0)
+	eps, err := s.St.ShowEpisodes(it.ShowID, uid)
 	if err != nil {
 		return
 	}

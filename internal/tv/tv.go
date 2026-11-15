@@ -48,9 +48,17 @@ type Guide struct {
 	channels    []Channel
 	channelsAt  time.Time
 	channelsFor string // the admin's channels (and hidden ones) the list was made from
+	libs        map[string]channelLibs
 }
 
-func New(st *store.Store) *Guide { return &Guide{St: st, days: map[string][]Program{}} }
+type channelLibs struct {
+	ids []int64
+	at  time.Time
+}
+
+func New(st *store.Store) *Guide {
+	return &Guide{St: st, days: map[string][]Program{}, libs: map[string]channelLibs{}}
+}
 
 // Channels lists the admin's channels (Settings › Server), then the
 // automatic ones the admin hasn't turned off. A channel with nothing to air
@@ -129,6 +137,40 @@ func (g *Guide) Channel(id string) (Channel, bool, error) {
 		}
 	}
 	return Channel{}, false, nil
+}
+
+// Libraries lists the libraries a channel's titles come from, so a channel
+// can be hidden from users who can't see all of them (every viewer sees the
+// same schedule, so it can't leave out what they can't see). Kept for a
+// minute.
+func (g *Guide) Libraries(ch Channel) ([]int64, error) {
+	key := ch.ID + "|" + fmt.Sprint(ch.filter)
+	g.mu.Lock()
+	c, ok := g.libs[key]
+	g.mu.Unlock()
+	if ok && time.Since(c.at) < time.Minute {
+		return c.ids, nil
+	}
+	pool, err := g.St.Airables(ch.filter)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for _, a := range pool {
+		if !slices.Contains(ids, a.LibraryID) {
+			ids = append(ids, a.LibraryID)
+		}
+	}
+	slices.Sort(ids)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for k, v := range g.libs {
+		if time.Since(v.at) >= time.Minute {
+			delete(g.libs, k)
+		}
+	}
+	g.libs[key] = channelLibs{ids: ids, at: time.Now()}
+	return ids, nil
 }
 
 // Programs returns the programs airing at some point in [from, to), in

@@ -814,12 +814,23 @@ function folderBrowser(onPick, starts) {
 const actionsTh = () => h('th', null, h('span', { class: 'sr-only' }, 'Actions'));
 const fmtDay = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '');
 
+// What a user may watch, in a few words.
+function accessLabel(u, libs) {
+  if (u.isAdmin || u.allLibraries) return 'All libraries';
+  const names = libs.filter((l) => (u.libraries || []).includes(l.id)).map((l) => l.name);
+  return names.length ? names.join(', ') : 'None';
+}
+
 async function usersSection() {
-  const users = await api('/api/admin/users');
-  const tbl = h('table', { class: 'tbl stack' }, h('tr', null, h('th', null, 'Name'), h('th', null, 'Role'), h('th', null, 'Created'), actionsTh()),
+  // For an admin, /api/libraries lists every library.
+  const [users, libs] = await Promise.all([api('/api/admin/users'), api('/api/libraries')]);
+  const tbl = h('table', { class: 'tbl stack' }, h('tr', null, h('th', null, 'Name'), h('th', null, 'Role'), h('th', null, 'Libraries'), h('th', null, 'Created'), actionsTh()),
     users.map((u) => h('tr', null, h('td', null, h('b', null, u.name, u.id === state.me.id ? [' ', h('span', { class: 'dim' }, '(you)')] : null)), h('td', null, u.isAdmin ? 'Admin' : 'User'),
+      h('td', { 'data-label': 'Libraries', class: u.isAdmin || u.allLibraries ? 'muted' : null }, accessLabel(u, libs)),
       h('td', { class: 'nowrap', 'data-label': 'Created' }, fmtDay(u.createdAt)),
       h('td', null, h('div', { class: 'row wrap tbl-actions' },
+        // Admins always see every library.
+        u.isAdmin ? null : h('button', { class: 'btn sm', 'aria-label': `Library access for ${u.name}`, dataset: { focusKey: `user-libs-${u.id}` }, onclick: () => libraryAccessModal(u, libs) }, 'Libraries'),
         // Resetting your own password here would sign you out everywhere.
         u.id === state.me.id
           ? h('a', { class: 'btn sm', href: '#/settings/account', dataset: { focusKey: 'settings-nav-account' }, onclick: () => focusAfterRoute('settings-nav-account') }, 'Change password')
@@ -866,6 +877,40 @@ function addUserForm() {
     toggleRow('Administrator', 'Can change settings, libraries and see stats.', false, (v) => { admin = v; }),
     errors.err,
     h('div', null, btn));
+}
+
+// Which libraries a regular user may see and play: all of them (including
+// ones added later), or the ones ticked. The server hides everything else.
+function libraryAccessModal(u, libs) {
+  const formId = `user-libs-form-${u.id}`;
+  let all = u.allLibraries !== false;
+  const picked = new Set(u.libraries || []);
+  const errors = formErrors(`${formId}-err`, []);
+  const groupId = `${formId}-l`;
+  const boxes = libs.map((l) => h('input', { type: 'checkbox', checked: picked.has(l.id), disabled: all,
+    onchange: (e) => { if (e.target.checked) picked.add(l.id); else picked.delete(l.id); } }));
+  const group = h('div', { class: 'field' }, h('span', { id: groupId }, 'Only these libraries'),
+    libs.length
+      ? h('div', { class: 'check-chips', role: 'group', 'aria-labelledby': groupId }, libs.map((l, i) => h('label', null, boxes[i], l.name)))
+      : h('p', { class: 'muted small', style: { margin: 0 } }, 'No libraries yet.'));
+  const btn = h('button', { class: 'btn primary', type: 'submit', form: formId }, 'Save');
+  const onsubmit = async (e) => {
+    e.preventDefault();
+    errors.reset();
+    if (!all && !picked.size && !(await confirmDialog(`With no library ticked, ${u.name} can’t watch anything.`, 'Save anyway', false, 'No libraries?'))) return;
+    const body = { allLibraries: all, libraries: all ? [] : [...picked] };
+    if (await submitInline(btn, errors, () => api(`/api/admin/users/${u.id}`, { method: 'PUT', body }), `Saved library access for ${u.name}`)) {
+      m.close();
+      focusAfterRoute(`user-libs-${u.id}`);
+      refreshSoft();
+    }
+  };
+  const m = modal({ title: `Library access for ${u.name}`, body: h('form', { id: formId, novalidate: true, onsubmit, style: { display: 'grid', gap: '12px' } },
+    toggleRow('All libraries', 'Includes libraries added later.', all, (v) => { all = v; boxes.forEach((b) => { b.disabled = v; }); }),
+    group,
+    h('p', { class: 'muted small', style: { margin: 0 } }, `${u.name} won’t see, search or play anything in other libraries, or Live TV channels that air them.`),
+    errors.err),
+  actions: [h('button', { class: 'btn', type: 'button', onclick: () => m.close() }, 'Cancel'), btn] });
 }
 
 // An admin sets a new password for someone else; it signs them out everywhere.

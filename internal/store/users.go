@@ -28,6 +28,26 @@ type User struct {
 	IsAdmin   bool   `json:"isAdmin"`
 	CreatedAt int64  `json:"createdAt"`
 	Prefs     string `json:"-"`
+	// AllLibraries: the user sees every library, including ones added
+	// later; otherwise only Libraries. Admins always see every library.
+	AllLibraries bool    `json:"allLibraries"`
+	Libraries    []int64 `json:"libraries"`
+}
+
+// CanAccess reports whether u may see library lib and everything in it.
+func (u *User) CanAccess(lib int64) bool {
+	if u == nil {
+		return false
+	}
+	if u.IsAdmin || u.AllLibraries {
+		return true
+	}
+	for _, id := range u.Libraries {
+		if id == lib {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) UserCount() (int, error) {
@@ -80,16 +100,24 @@ func (s *Store) createUser(name, password string, admin, initial bool) (*User, e
 
 func (s *Store) User(id int64) (*User, error) {
 	u := &User{}
-	err := s.db.QueryRow(`SELECT id,name,is_admin,created_at,prefs FROM users WHERE id=?`, id).
-		Scan(&u.ID, &u.Name, &u.IsAdmin, &u.CreatedAt, &u.Prefs)
+	err := s.db.QueryRow(`SELECT id,name,is_admin,created_at,prefs,all_libraries FROM users WHERE id=?`, id).
+		Scan(&u.ID, &u.Name, &u.IsAdmin, &u.CreatedAt, &u.Prefs, &u.AllLibraries)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
-	return u, err
+	if err != nil {
+		return nil, err
+	}
+	libs, err := s.userLibraries(u.ID)
+	if err != nil {
+		return nil, err
+	}
+	u.Libraries = nonNilIDs(libs[u.ID])
+	return u, nil
 }
 
 func (s *Store) Users() ([]User, error) {
-	rows, err := s.db.Query(`SELECT id,name,is_admin,created_at,prefs FROM users ORDER BY id`)
+	rows, err := s.db.Query(`SELECT id,name,is_admin,created_at,prefs,all_libraries FROM users ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -97,12 +125,79 @@ func (s *Store) Users() ([]User, error) {
 	var out []User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Name, &u.IsAdmin, &u.CreatedAt, &u.Prefs); err != nil {
+		if err := rows.Scan(&u.ID, &u.Name, &u.IsAdmin, &u.CreatedAt, &u.Prefs, &u.AllLibraries); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	libs, err := s.userLibraries(0)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Libraries = nonNilIDs(libs[out[i].ID])
+	}
+	return out, nil
+}
+
+// userLibraries maps restricted users (uid, or everyone for 0) to the
+// libraries they may see.
+func (s *Store) userLibraries(uid int64) (map[int64][]int64, error) {
+	rows, err := s.db.Query(`SELECT user_id,library_id FROM user_libraries WHERE ?=0 OR user_id=? ORDER BY user_id,library_id`, uid, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][]int64{}
+	for rows.Next() {
+		var uid, lib int64
+		if err := rows.Scan(&uid, &lib); err != nil {
+			return nil, err
+		}
+		out[uid] = append(out[uid], lib)
+	}
 	return out, rows.Err()
+}
+
+func nonNilIDs(v []int64) []int64 {
+	if v == nil {
+		return []int64{}
+	}
+	return v
+}
+
+// SetLibraryAccess lets a user see every library (all), or only libs. Ids
+// of libraries that don't exist are ignored. It has no effect on what an
+// admin sees, but is kept should they become a regular user.
+func (s *Store) SetLibraryAccess(id int64, all bool, libs []int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`UPDATE users SET all_libraries=? WHERE id=?`, all, id)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(`DELETE FROM user_libraries WHERE user_id=?`, id); err != nil {
+		return err
+	}
+	if !all {
+		for _, lib := range libs {
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO user_libraries(user_id,library_id) SELECT ?,id FROM libraries WHERE id=?`, id, lib); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
 }
 
 var (

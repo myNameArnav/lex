@@ -87,7 +87,7 @@ func TestListItemsSeededRandomIsStableAcrossPages(t *testing.T) {
 	all := func(seed int64) []int64 {
 		var out []int64
 		for off := 0; off < 30; off += 7 {
-			out = append(out, listIDs(t, st, 1, ListQuery{LibraryID: 1, Sort: "random", Seed: seed, Limit: 7, Offset: off})...)
+			out = append(out, listIDs(t, st, 0, ListQuery{LibraryID: 1, Sort: "random", Seed: seed, Limit: 7, Offset: off})...)
 		}
 		return out
 	}
@@ -140,7 +140,7 @@ func TestListItemsSearchMatchesWildcardsLiterally(t *testing.T) {
 		{"0% c", []int64{2}},
 		{"TITLE", []int64{1}},
 	} {
-		if got := listIDs(t, st, 1, ListQuery{Search: tc.q}); !slices.Equal(got, tc.want) {
+		if got := listIDs(t, st, 0, ListQuery{Search: tc.q}); !slices.Equal(got, tc.want) {
 			t.Errorf("search %q = %v, want %v", tc.q, got, tc.want)
 		}
 	}

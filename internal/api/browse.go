@@ -18,11 +18,11 @@ func (s *Server) withWatchlist(uid int64, items ...*store.Item) {
 }
 
 func (s *Server) setWatchlist(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r, "id")
-	if err != nil {
-		writeErr(w, 400, "bad id")
+	it, ok := s.pathItem(w, r)
+	if !ok {
 		return
 	}
+	id := it.ID
 	var req struct{ Watchlist bool }
 	if err := readJSON(r, &req); err != nil {
 		writeErr(w, 400, "bad request")
@@ -56,6 +56,11 @@ func (s *Server) collection(w http.ResponseWriter, r *http.Request) {
 	}
 	uid := userOf(r).ID
 	c, items, err := s.St.CollectionItems(uid, id)
+	// Only the libraries the user can see count: a collection with none of
+	// its movies there doesn't exist for them.
+	if u := userOf(r); err == nil && len(items) == 0 && !u.IsAdmin && !u.AllLibraries {
+		err = store.ErrNotFound
+	}
 	if err != nil {
 		notFoundOr500(w, err)
 		return

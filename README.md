@@ -147,7 +147,8 @@ frames from the films.</sub>
   in Settings → Server). The Library tab breaks the library down by codec,
   resolution, HDR, container and size.
 - **Users** – multiple accounts, per-user watch state, admin roles (an admin can't
-  change their own role), device sign-out, login rate limiting, bcrypt passwords, session tokens stored only as hashes, HttpOnly cookies, and cross-origin
+  change their own role), per-user library access (Settings → Users → **Libraries**:
+  all libraries, the default, or only some; admins always see everything), device sign-out, login rate limiting, bcrypt passwords, session tokens stored only as hashes, HttpOnly cookies, and cross-origin
   protection for browser mutations.
 - **Settings** – everything above is toggleable: methods, transcode limits, encoder,
   preset/CRF/threads/nice, audio channels/bitrate, tone mapping, fragment & keyframe
@@ -293,8 +294,12 @@ proxy peer, so list every proxy hop in a chain. `X-Real-IP` and
 and its allowlist defaults to loopback.
 
 Clients outside **Local networks** receive the configured **Remote bitrate
-limit** during playback planning. All signed-in users can access all libraries;
-admin roles control server settings and account management.
+limit** during playback planning. By default every signed-in user can access
+every library; an admin can limit a regular user to some libraries in Settings →
+Users. Everything in other libraries, including Live TV channels that air them,
+is then hidden from that user and answers 404 like an id that doesn't exist.
+Admin roles control server settings and account management, and admins always
+see every library.
 
 For Sonarr/Radarr, configure a POST webhook using the URL shown in Settings →
 Server. It carries a separate scan token; keep the URL private and redact query

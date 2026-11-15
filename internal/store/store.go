@@ -199,6 +199,13 @@ CREATE TABLE IF NOT EXISTS credits_scans (
 	scanned_at INTEGER NOT NULL,
 	result TEXT NOT NULL DEFAULT ''
 );
+
+-- The libraries a user restricted to some (users.all_libraries=0) may see.
+CREATE TABLE IF NOT EXISTS user_libraries (
+	user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+	PRIMARY KEY (user_id, library_id)
+);
 `
 
 func Open(dataDir string) (*Store, error) {
@@ -251,6 +258,9 @@ func Open(dataDir string) (*Store, error) {
 // Additions only; see the comment on migrations in migrate.go.
 var lateColumns = []struct{ table, column, def string }{
 	{"files", "probe_attempts", "INTEGER NOT NULL DEFAULT 0"},
+	// 1: the user sees every library (existing users keep that); 0: only
+	// those in user_libraries. Admins always see every library.
+	{"users", "all_libraries", "INTEGER NOT NULL DEFAULT 1"},
 }
 
 func addLateColumns(db dbtx) error {

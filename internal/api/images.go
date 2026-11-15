@@ -108,9 +108,8 @@ func (s *Server) itemImage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad kind")
 		return
 	}
-	it, err := s.St.Item(id)
-	if err != nil {
-		notFoundOr500(w, err)
+	it, ok := s.itemFor(w, r, id)
+	if !ok {
 		return
 	}
 	ref := s.imageRef(it, kind)
@@ -144,9 +143,8 @@ func (s *Server) castImage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad cast index")
 		return
 	}
-	it, err := s.St.Item(id)
-	if err != nil {
-		notFoundOr500(w, err)
+	it, ok := s.itemFor(w, r, id)
+	if !ok {
 		return
 	}
 	if index >= len(it.Cast) || it.Cast[index].Image == "" {

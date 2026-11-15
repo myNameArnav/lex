@@ -432,6 +432,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name, Password string
 		IsAdmin        bool `json:"isAdmin"`
+		libraryAccess
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeErr(w, 400, "bad request")
@@ -441,6 +442,16 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, 400, err.Error())
 		return
+	}
+	if req.AllLibraries != nil {
+		if err := s.St.SetLibraryAccess(u.ID, *req.AllLibraries, req.Libraries); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		if u, err = s.St.User(u.ID); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
 	}
 	writeJSON(w, u)
 }
@@ -454,6 +465,7 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Password string `json:"password"`
 		IsAdmin  *bool  `json:"isAdmin"`
+		libraryAccess
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeErr(w, 400, "bad request")
@@ -476,7 +488,20 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.AllLibraries != nil {
+		if err := s.St.SetLibraryAccess(id, *req.AllLibraries, req.Libraries); err != nil {
+			notFoundOr500(w, err)
+			return
+		}
+	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// libraryAccess is what a user may see: every library (allLibraries), or
+// only libraries. Leaving allLibraries out keeps what they have.
+type libraryAccess struct {
+	AllLibraries *bool   `json:"allLibraries"`
+	Libraries    []int64 `json:"libraries"`
 }
 
 func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
