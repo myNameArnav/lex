@@ -94,6 +94,10 @@ type Config struct {
 	IntroScanSecs int  `json:"introScanSecs"`
 	IntroMinSecs  int  `json:"introMinSecs"`
 	IntroMaxSecs  int  `json:"introMaxSecs"`
+
+	// HistoryRetentionDays is how long playback history is kept; older plays
+	// are pruned in the background. 0 keeps it forever.
+	HistoryRetentionDays int `json:"historyRetentionDays"`
 }
 
 // TVChannel is a Live TV channel an admin made. Kind "picked" airs just
@@ -158,6 +162,8 @@ func DefaultConfig() Config {
 		IntroScanSecs:      600,
 		IntroMinSecs:       12,
 		IntroMaxSecs:       130,
+
+		HistoryRetentionDays: 365,
 	}
 }
 
@@ -256,6 +262,12 @@ func (c *Config) normalize() {
 	}
 	if c.TrickplayWidth < 120 || c.TrickplayWidth > 480 {
 		c.TrickplayWidth = d.TrickplayWidth
+	}
+	if c.HistoryRetentionDays < 0 {
+		c.HistoryRetentionDays = 0
+	}
+	if c.HistoryRetentionDays > 36500 {
+		c.HistoryRetentionDays = 36500
 	}
 	if c.WebhookToken == "" {
 		c.WebhookToken = RandomToken(12)

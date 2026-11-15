@@ -475,6 +475,8 @@ async function serverSection() {
         field('Probe workers', num('probeWorkers', { min: 1, max: 8 }), 'Parallel ffprobe processes for new files. 1 is best on a Pi.')),
       tg('scanOnStartup', 'Scan on startup'),
       webhookHelp(`${location.origin}${info.webhookUrl}`)),
+    h('div', { class: 'form-section' }, h('h2', null, 'Playback history'),
+      field('Keep history for (days)', num('historyRetentionDays', { min: 0, max: 36500 }), '0 keeps it forever. Older plays are deleted hourly, and the Playback dashboard only covers what is kept.')),
     h('div', { class: 'form-section' }, h('h2', null, 'Network & remote access'),
       h('div', { class: 'form-grid' },
         field('Remote bitrate limit (kbps)', num('remoteMaxBitrate', { min: 0, step: 500 }), '0 = unlimited. Applies to clients outside the local networks below; files above it get transcoded.'),
@@ -1480,17 +1482,19 @@ async function libraryTitles(dim, key, label) {
 }
 
 // Every play, newest first, under the playback statistics. It covers all
-// time (not the selected range). Nothing at all renders nothing: the
+// that is kept (not the selected range). Nothing at all renders nothing: the
 // statistics' empty state covers it.
 async function historySection(ctx, days) {
   const offset = Math.max(0, +ctx.query.get('offset') || 0);
-  const rows = await api(`/api/admin/history?limit=100&offset=${offset}`);
+  const [rows, cfg] = await Promise.all([api(`/api/admin/history?limit=100&offset=${offset}`), api('/api/admin/config').catch(() => ({}))]);
+  const keep = cfg.historyRetentionDays;
   if (!rows.length && !offset) return null;
   const page = (o) => `#/dashboard/playback?days=${days}&offset=${o}`;
   const pager = (label, o) => h('a', { class: 'btn sm', href: page(o), onclick: (e) => { if (!e.ctrlKey && !e.metaKey && !e.shiftKey) focusAfterRoute('history'); } }, label);
   const reasons = (r) => r.reasons ? r.reasons.split('; ').map(reasonLabel).join('; ') : '';
   return h('section', { id: 'history', style: { marginTop: '28px' } },
-    h('div', { class: 'toolbar' }, h('h2', { class: 'section-title', tabindex: '-1', dataset: { focusKey: 'history' } }, 'History · all time'),
+    h('div', { class: 'toolbar' }, h('h2', { class: 'section-title', tabindex: '-1', dataset: { focusKey: 'history' } }, keep > 0 ? `History · last ${keep} days` : 'History · all time'),
+      h('a', { class: 'muted small', href: '#/settings/server' }, 'Retention'),
       rows.length ? h('span', { class: 'muted small' }, `${offset + 1}–${offset + rows.length}`) : null, h('div', { class: 'spacer' }),
       offset > 0 ? pager('Newer', Math.max(0, offset - 100)) : null,
       rows.length === 100 ? pager('Older', offset + 100) : null,

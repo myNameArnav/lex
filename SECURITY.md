@@ -20,7 +20,10 @@ there are no per-library permissions.
   Authentication tokens in query strings are rejected.
 - New and changed passwords must be 12–72 bytes. Existing password hashes still
   work. Password changes revoke existing sessions. Session tokens expire after
-  90 days of inactivity; sign out unused devices in Settings.
+  90 days of inactivity; sign out unused devices in Settings. The database
+  keeps only a SHA-256 hash of each session token, so a copy of it or of a
+  backup can't be used to take over a session (tokens saved by older versions
+  are hashed on the first start after upgrading, without signing anyone out).
 - The scan webhook accepts POST with its separate `token` query parameter.
   Treat its URL as a secret and redact query strings in reverse-proxy logs.
 - Only use trusted media and metadata sidecars. Keep the OS and FFmpeg patched.
@@ -31,9 +34,10 @@ there are no per-library permissions.
 ## Stored data
 
 The data directory contains usernames, password hashes, API credentials,
-authentication tokens, media paths, watch state, artwork and subtitle caches.
+hashed session tokens, media paths, watch state, artwork and subtitle caches.
 Device records and playback history include client IP addresses and browser
-labels. Admin logs can include usernames, IPs, titles and paths. Lex creates new
+labels. Playback history is kept for 365 days by default (Settings → Server →
+Playback history; 0 keeps it forever) and older plays are deleted hourly. Admin logs can include usernames, IPs, titles and paths. Lex creates new
 data directories with mode 0700 and databases with mode 0600. Protect existing
 folder permissions, backups and custom cache directories as well.
 

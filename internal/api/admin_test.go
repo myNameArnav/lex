@@ -217,11 +217,54 @@ func TestDevicesMarkCurrentSession(t *testing.T) {
 		t.Fatalf("got %d devices", len(devs))
 	}
 	for _, d := range devs {
-		if want := d.Prefix == mine[:8]; d.Current != want {
+		if want := d.Prefix == store.DeviceID(mine); d.Current != want {
 			t.Fatalf("%s (%s): current=%v, want %v", d.Client, d.Prefix, d.Current, want)
 		}
-		if d.Prefix == other[:8] && d.Current {
+		if d.Prefix == store.DeviceID(other) && d.Current {
 			t.Fatal("another session was marked current")
+		}
+	}
+}
+
+// Devices are signed out by the id the list shows, not by a token prefix.
+func TestDeleteDeviceByID(t *testing.T) {
+	s, h := securityServer(t)
+	admin, err := s.St.CreateInitialAdmin("admin", "test-password-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mine, _ := s.St.CreateToken(admin.ID, "Firefox on macOS", "127.0.0.1")
+	other, _ := s.St.CreateToken(admin.ID, "Safari on iPhone", "127.0.0.2")
+	if w := adminRequest(t, h, mine, "DELETE", "/api/admin/devices/"+other[:8], ""); w.Code != 400 {
+		t.Fatalf("token prefix: %d %s", w.Code, w.Body.String())
+	}
+	if w := adminRequest(t, h, mine, "DELETE", "/api/admin/devices/"+store.DeviceID(other), ""); w.Code != 200 {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := s.St.TokenUser(other); err == nil {
+		t.Fatal("device still signed in")
+	}
+	if _, err := s.St.TokenUser(mine); err != nil {
+		t.Fatalf("own session signed out: %v", err)
+	}
+}
+
+// History retention goes through the settings API like the others.
+func TestHistoryRetentionRoundTrip(t *testing.T) {
+	s, h := securityServer(t)
+	admin, err := s.St.CreateInitialAdmin("admin", "test-password-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _ := s.St.CreateToken(admin.ID, "Test", "127.0.0.1")
+	for _, c := range []struct{ in, want int }{{0, 0}, {90, 90}, {-3, 0}} {
+		w := adminRequest(t, h, token, "PUT", "/api/admin/config", `{"historyRetentionDays":`+strconv.Itoa(c.in)+`}`)
+		var got store.Config
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != 200 {
+			t.Fatalf("save: %d %s", w.Code, w.Body.String())
+		}
+		if got.HistoryRetentionDays != c.want || s.St.Config().HistoryRetentionDays != c.want {
+			t.Fatalf("sent %d, got %d", c.in, got.HistoryRetentionDays)
 		}
 	}
 }
