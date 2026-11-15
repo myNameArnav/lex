@@ -2,8 +2,25 @@
 
 Lex is intended for a trusted, self-hosted media library. Administrators can
 browse the server filesystem, choose library/cache paths, manage every account,
-and see playback history and logs. All signed-in users can play all libraries;
-there are no per-library permissions.
+and see playback history and logs. By default every signed-in user can play
+every library; an admin can limit a regular user to some libraries.
+
+## Library access
+
+- Settings → Users → **Libraries** lets a regular user see all libraries (the
+  default, including libraries added later) or only those ticked. Admins always
+  see every library.
+- The server enforces it: library lists, home rows, browsing, genres, search,
+  Continue Watching/Next Up, item details, images, watched/favorite marks, play
+  plans, direct/remuxed/HLS streams, subtitles, fonts, trickplay and subtitle
+  search all leave out, or answer 404 for, items and files in other libraries,
+  the same as for ids that don't exist.
+- Every viewer gets the same Live TV schedule, so a channel that airs anything
+  from a library the user can't see is hidden from them, not edited.
+- Limits: access is per library, not per title or rating. A change applies from
+  the user's next request; a response already streaming finishes. Library ids
+  are small integers and not secret; their names and contents are. Admin pages
+  (stats, history, sessions, logs) still cover every library.
 
 ## Deployment
 

@@ -396,11 +396,23 @@ func (s *Store) queryItemsUD(q string, args ...any) ([]*Item, error) {
 	return out, rows.Err()
 }
 
-// udSelect builds a select of items joined with a user's data plus aggregates.
+// libAccess limits items i to the libraries user :uid may see: all of them
+// for an admin or an unrestricted user, else those in user_libraries. A uid
+// of 0 is the server itself (scans, metadata, the cache), which sees all.
+const libAccess = `(:uid=0 OR EXISTS(SELECT 1 FROM users au WHERE au.id=:uid AND (au.is_admin=1 OR au.all_libraries=1))
+	OR i.library_id IN (SELECT ul.library_id FROM user_libraries ul WHERE ul.user_id=:uid))`
+
+// udSelect builds a select of items joined with a user's data plus
+// aggregates. where starts with "WHERE"; only items in libraries the user
+// may see are returned (libAccess).
 func udSelect(where string) string { return udSelectCols(itemCols, where) }
 
 // udSelectCols is udSelect with another projection (cardCols, childCols).
 func udSelectCols(cols, where string) string {
+	cond, ok := strings.CutPrefix(where, "WHERE ")
+	if !ok {
+		panic("udSelect: where must start with WHERE")
+	}
 	return `SELECT ` + cols + `,
 		COALESCE(ud.position,0),COALESCE(ud.played,0),COALESCE(ud.play_count,0),COALESCE(ud.last_played,0),COALESCE(ud.favorite,0),
 		CASE i.kind WHEN 'show' THEN (SELECT COUNT(*) FROM items e WHERE e.show_id=i.id AND e.kind='episode')
@@ -409,7 +421,7 @@ func udSelectCols(cols, where string) string {
 		            WHEN 'season' THEN (SELECT COUNT(*) FROM items e LEFT JOIN user_data u2 ON u2.item_id=e.id AND u2.user_id=:uid WHERE e.parent_id=i.id AND e.kind='episode' AND COALESCE(u2.played,0)=0) ELSE 0 END,
 		COALESCE((SELECT s.title FROM items s WHERE s.id=i.show_id),''),
 		COALESCE((SELECT MAX(f.duration) FROM files f WHERE f.item_id=i.id),0)
-		FROM items i LEFT JOIN user_data ud ON ud.item_id=i.id AND ud.user_id=:uid ` + where
+		FROM items i LEFT JOIN user_data ud ON ud.item_id=i.id AND ud.user_id=:uid WHERE ` + libAccess + ` AND ` + cond
 }
 
 func (s *Store) ItemForUser(id, uid int64) (*Item, error) {
@@ -505,6 +517,7 @@ func (s *Store) ListItems(uid int64, q ListQuery) ([]*Item, int, error) {
 		conds = append(conds, "i.kind=:kind")
 		args = append(args, sql.Named("kind", q.Kind))
 	}
+	conds = append(conds, libAccess)
 	if q.LibraryID > 0 {
 		conds = append(conds, "i.library_id=:lib")
 		args = append(args, sql.Named("lib", q.LibraryID))
@@ -614,8 +627,11 @@ func randomSeed(seed int64) int64 {
 	return int64(x%(randomPrime-1)) + 1
 }
 
-func (s *Store) Genres(libID int64) ([]string, error) {
-	rows, err := s.db.Query(`SELECT DISTINCT j.value FROM items i, json_each(i.genres) j WHERE i.parent_id IS NULL AND (?=0 OR i.library_id=?) ORDER BY 1`, libID, libID)
+// Genres lists the genres of top-level titles in a library (0: all) that
+// user uid may see.
+func (s *Store) Genres(uid, libID int64) ([]string, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT j.value FROM items i, json_each(i.genres) j WHERE i.parent_id IS NULL AND (:lib=0 OR i.library_id=:lib) AND `+libAccess+` ORDER BY 1`,
+		sql.Named("uid", uid), sql.Named("lib", libID))
 	if err != nil {
 		return nil, err
 	}
@@ -659,9 +675,9 @@ func (s *Store) NextUp(uid int64, limit int) ([]*Item, error) {
 // order); nxt is the first unwatched non-special episode after it, if that
 // one was watched.
 var nextUpSQL = `WITH shows AS (
-		SELECT e.show_id sid, MAX(ud.last_played) lp FROM user_data ud JOIN items e ON e.id=ud.item_id
-		WHERE ud.user_id=:uid AND e.kind='episode' AND (ud.played=1 OR ud.position>0)
-		GROUP BY e.show_id ORDER BY lp DESC, e.show_id LIMIT :shows),
+		SELECT i.show_id sid, MAX(ud.last_played) lp FROM user_data ud JOIN items i ON i.id=ud.item_id
+		WHERE ud.user_id=:uid AND i.kind='episode' AND (ud.played=1 OR ud.position>0) AND ` + libAccess + `
+		GROUP BY i.show_id ORDER BY lp DESC, i.show_id LIMIT :shows),
 	last AS (
 		SELECT sid, lp, (SELECT e.id FROM items e JOIN user_data u ON u.item_id=e.id AND u.user_id=:uid
 			WHERE e.show_id=sid AND e.kind='episode' AND (u.played=1 OR u.position>0)
@@ -674,7 +690,8 @@ var nextUpSQL = `WITH shows AS (
 			ORDER BY n.season, n.episode, n.id LIMIT 1) nid
 		FROM last l JOIN items le ON le.id=l.lid JOIN user_data lu ON lu.item_id=le.id AND lu.user_id=:uid
 		WHERE lu.played=1)
-	` + udSelectCols(cardCols, `JOIN nxt ON nxt.nid=i.id ORDER BY nxt.lp DESC, nxt.sid LIMIT :limit`)
+	` + udSelectCols(cardCols, `WHERE i.id IN (SELECT nid FROM nxt)
+		ORDER BY (SELECT lp FROM nxt WHERE nxt.nid=i.id) DESC, i.show_id LIMIT :limit`)
 
 // PruneEmpty deletes seasons and shows that no longer have episodes, and
 // movies/episodes without files.
@@ -772,10 +789,11 @@ func (s *Store) SetFavorite(uid, itemID int64, fav bool) error {
 
 // Airable is a movie or episode with a known duration, for Live TV.
 type Airable struct {
-	ItemID   int64
-	ShowID   int64 // 0 for movies
-	Season   int
-	Duration float64
+	ItemID    int64
+	LibraryID int64
+	ShowID    int64 // 0 for movies
+	Season    int
+	Duration  float64
 }
 
 // AirFilter picks what a Live TV channel airs: titles in any of Libraries,
@@ -796,7 +814,7 @@ type AirFilter struct {
 // first (ItemFiles' order).
 func (s *Store) Airables(f AirFilter) ([]Airable, error) {
 	// Genres are matched decoded: stored JSON escapes e.g. "&".
-	q := `SELECT id, show_id, season, dur FROM (SELECT i.id, i.show_id, i.season,
+	q := `SELECT id, library_id, show_id, season, dur FROM (SELECT i.id, i.library_id, i.show_id, i.season,
 			(SELECT f.duration FROM files f WHERE f.item_id=i.id ORDER BY f.height DESC, f.size DESC LIMIT 1) dur
 		FROM items i LEFT JOIN items sh ON sh.id=i.show_id AND i.kind='episode'
 		WHERE i.kind IN ('movie','episode')
@@ -823,7 +841,7 @@ func (s *Store) Airables(f AirFilter) ([]Airable, error) {
 	var out []Airable
 	for rows.Next() {
 		var a Airable
-		if err := rows.Scan(&a.ItemID, &a.ShowID, &a.Season, &a.Duration); err != nil {
+		if err := rows.Scan(&a.ItemID, &a.LibraryID, &a.ShowID, &a.Season, &a.Duration); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

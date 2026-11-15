@@ -41,6 +41,9 @@ func (s *Server) hlsFile(w http.ResponseWriter, r *http.Request) (*store.File, s
 		return nil, stream.Params{}, false
 	}
 	f, err := s.St.File(id)
+	if err == nil && !userOf(r).CanAccess(f.LibraryID) {
+		err = store.ErrNotFound
+	}
 	if err != nil || f.Info == nil {
 		writeErr(w, 404, "not found")
 		return nil, stream.Params{}, false

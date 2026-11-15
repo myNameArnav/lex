@@ -87,7 +87,7 @@ func TestListItemsSeededRandomIsStableAcrossPages(t *testing.T) {
 	all := func(seed int64) []int64 {
 		var out []int64
 		for off := 0; off < 30; off += 7 {
-			out = append(out, listIDs(t, st, 1, ListQuery{LibraryID: 1, Sort: "random", Seed: seed, Limit: 7, Offset: off})...)
+			out = append(out, listIDs(t, st, 0, ListQuery{LibraryID: 1, Sort: "random", Seed: seed, Limit: 7, Offset: off})...)
 		}
 		return out
 	}
@@ -140,7 +140,7 @@ func TestListItemsSearchMatchesWildcardsLiterally(t *testing.T) {
 		{"0% c", []int64{2}},
 		{"TITLE", []int64{1}},
 	} {
-		if got := listIDs(t, st, 1, ListQuery{Search: tc.q}); !slices.Equal(got, tc.want) {
+		if got := listIDs(t, st, 0, ListQuery{Search: tc.q}); !slices.Equal(got, tc.want) {
 			t.Errorf("search %q = %v, want %v", tc.q, got, tc.want)
 		}
 	}
@@ -175,17 +175,17 @@ func TestListItemsGenreMatchesExactDecodedName(t *testing.T) {
 		{"%", nil},
 		{"Dram", nil},
 	} {
-		if got := listIDs(t, st, 1, ListQuery{Genre: tc.genre}); !slices.Equal(got, tc.want) {
+		if got := listIDs(t, st, 0, ListQuery{Genre: tc.genre}); !slices.Equal(got, tc.want) {
 			t.Errorf("genre %q = %v, want %v", tc.genre, got, tc.want)
 		}
 	}
 	// Every listed genre must find its titles.
-	genres, err := st.Genres(0)
+	genres, err := st.Genres(0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, g := range genres {
-		if len(listIDs(t, st, 1, ListQuery{Genre: g})) == 0 {
+		if len(listIDs(t, st, 0, ListQuery{Genre: g})) == 0 {
 			t.Errorf("genre %q lists no titles", g)
 		}
 	}

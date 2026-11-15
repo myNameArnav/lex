@@ -81,14 +81,8 @@ func writeNoKey(w http.ResponseWriter) {
 }
 
 func (s *Server) subSearch(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r, "id")
-	if err != nil {
-		writeErr(w, 400, "bad id")
-		return
-	}
-	f, err := s.St.File(id)
-	if err != nil {
-		notFoundOr500(w, err)
+	f, ok := s.pathFile(w, r)
+	if !ok {
 		return
 	}
 	it, err := s.St.Item(f.ItemID)
@@ -139,14 +133,8 @@ func (s *Server) subSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) subDownload(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r, "id")
-	if err != nil {
-		writeErr(w, 400, "bad id")
-		return
-	}
-	f, err := s.St.File(id)
-	if err != nil {
-		notFoundOr500(w, err)
+	f, ok := s.pathFile(w, r)
+	if !ok {
 		return
 	}
 	var req struct {
@@ -221,6 +209,11 @@ func (s *Server) subDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "only downloaded subtitles can be deleted")
 		return
 	}
+	f, err := s.St.File(id)
+	if err != nil || !userOf(r).CanAccess(f.LibraryID) {
+		writeErr(w, 404, "not found")
+		return
+	}
 	d, err := s.St.DownloadedSub(int64(idx - store.DownloadedSubBase))
 	if err != nil || d.FileID != id {
 		writeErr(w, 404, "not found")
@@ -251,14 +244,8 @@ func (s *Server) subDelete(w http.ResponseWriter, r *http.Request) {
 
 // fonts lists the fonts attached to a file (for ASS rendering).
 func (s *Server) fonts(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r, "id")
-	if err != nil {
-		writeErr(w, 400, "bad id")
-		return
-	}
-	f, err := s.St.File(id)
-	if err != nil {
-		notFoundOr500(w, err)
+	f, ok := s.pathFile(w, r)
+	if !ok {
 		return
 	}
 	_, names, err := s.Subs.Fonts(r.Context(), f)
@@ -274,14 +261,8 @@ func (s *Server) fonts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) font(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r, "id")
-	if err != nil {
-		writeErr(w, 400, "bad id")
-		return
-	}
-	f, err := s.St.File(id)
-	if err != nil {
-		notFoundOr500(w, err)
+	f, ok := s.pathFile(w, r)
+	if !ok {
 		return
 	}
 	dir, names, err := s.Subs.Fonts(r.Context(), f)
