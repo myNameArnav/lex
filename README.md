@@ -64,6 +64,15 @@ frames from the films.</sub>
   **Radarr** as a keyless TMDB source for movies (auto-detected). Artwork is fetched
   lazily, cached on disk and resized for the grid. Cast portraits use the same
   server cache, so browsers do not contact image providers directly. Manual "Fix match" and refresh.
+- **Browse** – a per-user **Watchlist** ("Watch later") for movies and shows: the
+  bookmark on a title's page or a poster's ⋯ menu adds it, Home shows a Watchlist
+  row, and library grids can filter to it. Movies in a series are grouped into
+  **collections** from TMDB's or Radarr's collection info (read with the movie's
+  own details, so nothing extra is fetched, and nothing at all without a TMDB key or
+  Radarr): a movie's page says "Part of …" and links to the collection in release
+  order. Already-matched movies pick up their collection on the next metadata refresh.
+  Cast and crew link to a page of every title in the library they appear in, and
+  genre chips open the library filtered by that genre.
 - **Playback**
   - **Direct Play**: the original file with HTTP range requests (zero CPU).
   - **Direct Stream (remux)**: ffmpeg repackages to fragmented MP4 without touching

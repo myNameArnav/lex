@@ -112,6 +112,9 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	if nu, err := s.St.NextUp(uid, 20); err == nil && len(nu) > 0 {
 		rows = append(rows, homeRow{ID: "nextup", Title: "Next Up", Kind: "landscape", Items: nu})
 	}
+	if wl, err := s.St.Watchlist(uid, 24); err == nil && len(wl) > 0 {
+		rows = append(rows, homeRow{ID: "watchlist", Title: "Watchlist", Kind: "poster", Items: wl})
+	}
 	libs, _ := s.St.Libraries()
 	for _, l := range libs {
 		items, _, err := s.St.ListItems(uid, store.ListQuery{LibraryID: l.ID, Sort: "latest", Desc: true, Limit: 24})
@@ -121,6 +124,11 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	}
 	if rows == nil {
 		rows = []homeRow{}
+	}
+	for _, row := range rows {
+		if row.ID != "watchlist" {
+			s.withWatchlist(uid, row.Items...)
+		}
 	}
 	writeJSON(w, map[string]any{"rows": rows, "libraries": libraryViews(libs, userOf(r).IsAdmin)})
 }
@@ -142,6 +150,7 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	s.withWatchlist(userOf(r).ID, items...)
 	writeJSON(w, map[string]any{"items": nonNilItems(items), "total": total})
 }
 
@@ -172,6 +181,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	if items, _, err := s.St.ListItems(uid, store.ListQuery{Kind: "show", Search: q, Limit: 40}); err == nil {
 		out["shows"] = nonNilItems(items)
 	}
+	s.withWatchlist(uid, append(slices.Clone(out["movies"]), out["shows"]...)...)
 	if items, _, err := s.St.ListItems(uid, store.ListQuery{Kind: "episode", Search: q, Sort: "premiere", Limit: 40}); err == nil {
 		out["episodes"] = nonNilItems(items)
 	}
@@ -217,7 +227,13 @@ func (s *Server) itemDetail(w http.ResponseWriter, r *http.Request) {
 		notFoundOr500(w, err)
 		return
 	}
+	s.withWatchlist(u.ID, it)
 	out := map[string]any{"item": it, "segments": s.segments(it.ID)}
+	if it.Kind == "movie" {
+		if c, err := s.St.ItemCollection(it.ID); err == nil {
+			out["collection"] = c
+		}
+	}
 	switch it.Kind {
 	case "movie", "episode":
 		out["files"] = s.fileViews(it.ID, u.IsAdmin)

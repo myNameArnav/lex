@@ -53,6 +53,8 @@ type Result struct {
 	PosterURL     string
 	BackdropURL   string
 	IDs           map[string]string
+	// Collection is the movie series a movie belongs to (TMDB ids), if any.
+	Collection *store.Collection
 }
 
 type EpisodeMeta struct {
