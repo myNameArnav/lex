@@ -147,3 +147,42 @@ func TestHeartbeatReopensSessionAfterRestart(t *testing.T) {
 		t.Fatalf("unknown session without a file: %d", rec.Code)
 	}
 }
+
+// The player's events land in the log beside the session's lines, as
+// warnings when something went wrong; unknown events and other users'
+// sessions are refused.
+func TestPlaybackEventIsLogged(t *testing.T) {
+	s, _ := securityServer(t)
+	s.Sess = stream.NewManager(s.St, s.Log)
+	u, err := s.St.CreateInitialAdmin("admin", "test-password-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Sess.Open(&stream.Session{ID: "sess1", UserID: u.ID, UserName: "admin", ItemID: 1, FileID: 1, Title: "Heat", Method: "remux", Client: "Firefox on macOS"}); err != nil {
+		t.Fatal(err)
+	}
+	send := func(body string, uid int64) int {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/api/playback/event", strings.NewReader(body))
+		s.playbackEvent(rec, r.WithContext(context.WithValue(r.Context(), userKey, &store.User{ID: uid, Name: "admin"})))
+		return rec.Code
+	}
+	if code := send(`{"sessionId":"sess1","event":"discarded","detail":"nothing buffered\nafter 32 MB"}`, u.ID); code != 200 {
+		t.Fatalf("event: %d", code)
+	}
+	if code := send(`{"sessionId":"sess1","event":"whatever"}`, u.ID); code != 400 {
+		t.Fatalf("unknown event: %d", code)
+	}
+	if code := send(`{"sessionId":"sess1","event":"seek"}`, u.ID+1); code != 404 {
+		t.Fatalf("another user's session: %d", code)
+	}
+	var found bool
+	for _, l := range s.Log.Lines() {
+		if strings.Contains(l.Msg, "player: admin — Heat (remux, Firefox on macOS): discarded nothing buffered after 32 MB") {
+			found = l.Level == "WARN"
+		}
+	}
+	if !found {
+		t.Fatalf("event not logged as a warning: %+v", s.Log.Lines())
+	}
+}

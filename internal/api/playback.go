@@ -128,7 +128,7 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 	if plan.HLS {
 		plan.URL += "&k=" + s.Sess.StreamKey(plan.SessionID)
 	}
-	s.Log.Infof("play: %s — %s %s via %s%s %v (%s)", u.Name, title, sub, plan.Method, map[bool]string{true: " (HLS)"}[plan.HLS], plan.Reasons, ip)
+	s.Log.Infof("play: %s — %s %s via %s%s %v at %s (%s, %s)", u.Name, title, sub, plan.Method, map[bool]string{true: " (HLS)"}[plan.HLS], plan.Reasons, stream.Clock(req.Start), clientName(r.UserAgent()), ip)
 	writeJSON(w, map[string]any{
 		"plan":     plan,
 		"item":     it,
@@ -183,6 +183,56 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, resp)
+}
+
+// playerEvents are the events the player may log (playbackEvent); the
+// ones that mean something went wrong are warnings.
+var playerEvents = map[string]bool{
+	"seek": false, "resumed": false,
+	"waiting": true, "stall": true, "retry": true, "buffer": true, "discarded": true, "rebuild": true, "fallback": true, "error": true,
+}
+
+// playbackEvent writes what the player saw (seeks outside the buffer,
+// stalls, fallbacks, errors) to the log next to the session's play and
+// ended lines, since the server can't see inside the browser.
+func (s *Server) playbackEvent(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"sessionId"`
+		Event     string `json:"event"`
+		Detail    string `json:"detail"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	warn, known := playerEvents[req.Event]
+	if !known {
+		writeErr(w, 400, "unknown event")
+		return
+	}
+	u := userOf(r)
+	sess, ok := s.Sess.EventAllowed(req.SessionID, u.ID)
+	if sess == nil {
+		writeErr(w, 404, "unknown session")
+		return
+	}
+	if ok {
+		detail := strings.Map(func(c rune) rune {
+			if c < 0x20 || c == 0x7f {
+				return ' '
+			}
+			return c
+		}, req.Detail)
+		if len(detail) > 500 {
+			detail = detail[:500]
+		}
+		logf := s.Log.Infof
+		if warn {
+			logf = s.Log.Warnf
+		}
+		logf("player: %s — %s (%s, %s): %s %s", u.Name, sess.Title, sess.Method, sess.Client, req.Event, detail)
+	}
+	writeJSON(w, map[string]bool{"ok": true, "logged": ok})
 }
 
 func (s *Server) stopPlayback(w http.ResponseWriter, r *http.Request) {

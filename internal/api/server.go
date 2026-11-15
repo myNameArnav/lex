@@ -123,6 +123,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("POST /api/playback/plan", u(s.plan))
 	mux.Handle("POST /api/playback/progress", u(s.progress))
 	mux.Handle("POST /api/playback/stop", u(s.stopPlayback))
+	mux.Handle("POST /api/playback/event", u(s.playbackEvent))
 	mux.Handle("GET /api/files/{id}/direct", u(s.direct))
 	mux.Handle("HEAD /api/files/{id}/direct", u(s.direct))
 	mux.Handle("GET /api/files/{id}/stream", u(s.streamFile))

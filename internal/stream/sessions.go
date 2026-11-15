@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -79,6 +80,16 @@ type Session struct {
 	active    int         // open HTTP responses
 	jobMu     *sync.Mutex // serialises seeks/replacements for this session
 	ended     chan struct{}
+
+	// The no-progress watchdog (Heartbeat): when the position last moved
+	// (or playback paused), the bytes delivered by then, and whether this
+	// stall was logged.
+	movedAt    time.Time
+	movedBytes int64
+	stuckLog   bool
+	// Player events allowed (EventAllowed), refilled over time.
+	eventBudget float64
+	eventAt     time.Time
 }
 
 // Ended is closed when the session ends (player closed, expired or stopped
@@ -155,7 +166,7 @@ func (m *Manager) Open(s *Session) (*Session, error) {
 	}
 	s.StartedAt, s.LastSeen = now.Unix(), now.Unix()
 	s.streamKey = store.RandomToken(16)
-	s.lastTick, s.lastBeat = now, now
+	s.lastTick, s.lastBeat, s.movedAt = now, now, now
 	s.jobMu = &sync.Mutex{}
 	s.ended = make(chan struct{})
 	m.m[s.ID] = s
@@ -294,10 +305,18 @@ func (m *Manager) Heartbeat(id string, uid int64, pos float64, paused bool, cs C
 			s.Watched += min(dp, dt*rate+2)
 		}
 	}
+	stuck, resumed := s.watchProgress(now, pos, paused)
 	s.lastPos, s.lastBeat = pos, now
 	s.Position, s.Paused, s.Client_, s.LastSeen = pos, paused, cs, now.Unix()
 	itemID, dur, playedSet, live := s.ItemID, s.Duration, s.playedSet, s.Live
+	user, title, method, client := s.UserName, s.Title, s.Method, s.Client
 	m.mu.Unlock()
+	if stuck != "" {
+		m.log.Warnf("playback stuck: %s — %s (%s, %s): %s", user, title, method, client, stuck)
+	}
+	if resumed != "" {
+		m.log.Infof("playback moving again: %s — %s: %s", user, title, resumed)
+	}
 
 	switch {
 	case live:
@@ -315,6 +334,71 @@ func (m *Manager) Heartbeat(id string, uid int64, pos float64, paused bool, cs C
 	copy := *s
 	m.mu.Unlock()
 	return &copy, nil
+}
+
+// A session whose position hasn't moved for stuckAfter while unpaused, with
+// at least stuckBytes delivered meanwhile, is downloading without playing
+// (e.g. the browser throwing away what it's sent): worth a warning.
+const (
+	stuckAfter = 60 * time.Second
+	stuckBytes = 64 << 20
+)
+
+// watchProgress runs the no-progress watchdog for a heartbeat (m.mu held).
+// It returns a message the first time a stall qualifies, and one when the
+// position moves again after that.
+func (s *Session) watchProgress(now time.Time, pos float64, paused bool) (stuck, resumed string) {
+	if s.movedAt.IsZero() {
+		s.movedAt, s.movedBytes = now, s.bytes
+	}
+	if paused || s.Paused || math.Abs(pos-s.lastPos) > 0.5 {
+		if s.stuckLog && !paused {
+			resumed = fmt.Sprintf("at %s after %s", Clock(pos), now.Sub(s.movedAt).Round(time.Second))
+		}
+		s.movedAt, s.movedBytes, s.stuckLog = now, s.bytes, false
+		return
+	}
+	waited, sent := now.Sub(s.movedAt), s.bytes-s.movedBytes
+	if !s.stuckLog && waited >= stuckAfter && sent >= stuckBytes {
+		s.stuckLog = true
+		cs := s.Client_
+		stuck = fmt.Sprintf("no progress at %s for %s while %d MB was delivered; client reports %.0fs buffered ahead, buffering=%v, %d stalls",
+			Clock(pos), waited.Round(time.Second), sent>>20, cs.BufferAhead, cs.Buffering, cs.BufferEvents)
+	}
+	return
+}
+
+// Clock formats seconds as m:ss or h:mm:ss.
+func Clock(t float64) string {
+	n := int(max(t, 0))
+	if n >= 3600 {
+		return fmt.Sprintf("%d:%02d:%02d", n/3600, n/60%60, n%60)
+	}
+	return fmt.Sprintf("%d:%02d", n/60, n%60)
+}
+
+// EventAllowed rate-limits the player events a session may log: a burst of
+// 20, then one every 3 seconds. Unknown or foreign sessions get false.
+func (m *Manager) EventAllowed(id string, uid int64) (*Session, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.m[id]
+	if s == nil || s.UserID != uid {
+		return nil, false
+	}
+	now := time.Now()
+	if s.eventAt.IsZero() {
+		s.eventBudget = 20
+	} else {
+		s.eventBudget = min(20, s.eventBudget+now.Sub(s.eventAt).Seconds()/3)
+	}
+	s.eventAt = now
+	copy := *s
+	if s.eventBudget < 1 {
+		return &copy, false
+	}
+	s.eventBudget--
+	return &copy, true
 }
 
 // Stop ends a session immediately (player closed).
@@ -344,6 +428,12 @@ func (m *Manager) finish(s *Session) {
 	m.mu.Unlock()
 	s = &copy
 	bytes := s.bytes
+	// Logged even when too short for the history: a session that never
+	// got going is what needs looking into.
+	if m.log != nil {
+		m.log.Infof("playback ended: %s — %s (%s, %.0fs watched, %d MB, %s, %d stalls/%.0fs, %d stream restarts)",
+			s.UserName, s.Title, s.Method, s.Watched, bytes>>20, s.Client, s.Client_.BufferEvents, s.Client_.BufferSeconds, s.Restarts)
+	}
 	if s.Watched < 10 {
 		return
 	}
@@ -356,7 +446,6 @@ func (m *Manager) finish(s *Session) {
 	if err := m.st.AddHistory(h); err != nil {
 		m.log.Warnf("history: %v", err)
 	}
-	m.log.Infof("playback ended: %s — %s (%s, %.0fs watched, %d MB)", s.UserName, s.Title, s.Method, s.Watched, bytes>>20)
 }
 
 // Snapshot returns copies of all sessions for the dashboard.
