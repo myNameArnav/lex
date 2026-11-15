@@ -17,8 +17,9 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
 Use synthetic usernames, media paths and fixtures. Keep data directories,
 credentials and logs out of Git. This repository uses neutral commit attribution
-to keep personal information out of public history. Set those values locally for this checkout if required by
-the publication privacy check; do not change global Git identity settings.
+to keep personal information out of public history. If the publication privacy
+check asks for it, set that identity locally for this checkout; do not change
+global Git identity settings.
 
 Describe the problem, resulting behavior and checks in pull requests. Include
 regression tests for authentication, authorization, file handling and concurrency
