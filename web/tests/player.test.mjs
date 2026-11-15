@@ -9,7 +9,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
   let now = 0;
   let timerID = 0;
   const timers = new Map();
-  const requests = [], errors = [], spinners = [], subtitleCalls = [], toasts = [];
+  const requests = [], errors = [], spinners = [], subtitleCalls = [], toasts = [], events = [];
   class Video extends EventTarget {
     paused = true;
     currentTime = 0;
@@ -52,6 +52,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
     './api.js': {
       api: async (path, { body } = {}) => {
         if (path.startsWith('/api/items/')) return { item: { id: 1, userData: { position: 45 } }, files: [{ id: 2 }] };
+        if (path === '/api/playback/event') { events.push(body); return { ok: true }; }
         if (path === '/api/playback/progress') {
           if (progressError) throw Object.assign(new Error(progressError.message), { status: progressError.status });
           return {};
@@ -69,7 +70,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
     './caps.js': { detectCaps: () => ({ mse: true }) },
     './app.js': { state: { me: { id: 1, isAdmin: false }, caps: {} } },
     './prefs.js': { prefs: { get: k => k in prefValues ? prefValues[k] : k === 'heartbeat' ? 10 : 0, set: (k, v) => { prefValues[k] = v; } }, QUALITIES: [] },
-    './mse.js': { MseEngine: class {
+    './mse.js': { clock: t => String(Math.floor(t)), MseEngine: class {
       async open() {
         if (openGate) await (typeof openGate === 'function' ? openGate() : openGate);
         // MediaSource.addSourceBuffer refusing the stream's codecs.
@@ -129,7 +130,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
       player.tickUI(); await flush();
     } while (now < until);
   };
-  return { player, video, requests, errors, spinners, subtitleCalls, toasts, advance, flush, history, prefValues };
+  return { player, video, requests, errors, spinners, subtitleCalls, toasts, advance, flush, history, prefValues, events };
 }
 
 function classes() {
@@ -832,4 +833,19 @@ test('auto skip credits jumps once for a film, and plays the next episode withou
   g.video.currentTime = 1301;
   checkUpNext.call(g.player);
   assert.equal(nexts, 1);
+});
+
+test('video the browser discards after a seek goes to transcode, and the fallback is logged', async () => {
+  const f = await fixture({ method: 'remux' });
+  f.player.plan.clientRemux = true;
+  f.player.plan.clientAudio = { codec: 'eac3', channels: 2, bitrate: 192 };
+  f.player.sessionId = 'session';
+  f.video.currentTime = 6000;
+  await f.player.onStreamError('The browser discarded the video it was sent after 1:40:00', 0, true, false);
+  assert.equal(f.requests[0].mode, 'transcode');
+  // Not the remuxer's fault: the server remux would copy the same video.
+  assert.equal(f.requests[0].caps.clientRemux, undefined);
+  const fallback = f.events.find((e) => e.event === 'fallback');
+  assert.equal(fallback.sessionId, 'session');
+  assert.match(fallback.detail, /^remux \(browser remux, browser audio\) at 6000: The browser discarded the video/);
 });

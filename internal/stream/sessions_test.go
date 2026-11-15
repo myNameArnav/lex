@@ -3,6 +3,7 @@ package stream
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -172,5 +173,64 @@ func TestLiveSessionSavesNoProgress(t *testing.T) {
 	}
 	if ud, _ := st.GetUserData(u.ID, 2); !ud.Played {
 		t.Fatalf("on-demand session saved %+v, want played", ud)
+	}
+}
+
+// A session that keeps receiving bytes while its position stands still is
+// logged once, and again when it moves; pauses and seeks don't count.
+func TestWatchProgressFlagsDownloadsThatDontPlay(t *testing.T) {
+	t0 := time.Now()
+	s := &Session{lastPos: 6000, movedAt: t0}
+	beat := func(after time.Duration, pos float64, paused bool, bytes int64) (string, string) {
+		s.bytes = bytes
+		stuck, resumed := s.watchProgress(t0.Add(after), pos, paused)
+		s.lastPos, s.Paused = pos, paused
+		return stuck, resumed
+	}
+	if stuck, _ := beat(30*time.Second, 6000, false, 500<<20); stuck != "" {
+		t.Fatalf("logged before %s: %q", stuckAfter, stuck)
+	}
+	stuck, _ := beat(90*time.Second, 6000, false, 900<<20)
+	if !strings.Contains(stuck, "no progress at 1:40:00 for 1m30s while 900 MB") {
+		t.Fatalf("stuck message: %q", stuck)
+	}
+	if again, _ := beat(120*time.Second, 6000, false, 1000<<20); again != "" {
+		t.Fatalf("logged the same stall twice: %q", again)
+	}
+	if _, resumed := beat(130*time.Second, 6005, false, 1000<<20); !strings.Contains(resumed, "at 1:40:05 after 2m10s") {
+		t.Fatalf("resumed message: %q", resumed)
+	}
+	// Paused with a full buffer: nothing moves, nothing is wrong.
+	beat(140*time.Second, 6005, true, 1000<<20)
+	if stuck, _ := beat(300*time.Second, 6005, true, 2000<<20); stuck != "" {
+		t.Fatalf("paused session logged: %q", stuck)
+	}
+	// Standing still with little delivered (slow network): not this warning.
+	beat(310*time.Second, 6005, false, 2000<<20)
+	if stuck, _ := beat(400*time.Second, 6005, false, 2010<<20); stuck != "" {
+		t.Fatalf("slow session logged: %q", stuck)
+	}
+}
+
+func TestEventAllowedRateLimits(t *testing.T) {
+	m := &Manager{m: map[string]*Session{"s": {ID: "s", UserID: 1}}}
+	if _, ok := m.EventAllowed("s", 2); ok {
+		t.Fatal("another user's session accepted events")
+	}
+	if s, _ := m.EventAllowed("missing", 1); s != nil {
+		t.Fatal("unknown session found")
+	}
+	n := 0
+	for i := 0; i < 100; i++ {
+		if _, ok := m.EventAllowed("s", 1); ok {
+			n++
+		}
+	}
+	if n != 20 {
+		t.Fatalf("burst allowed %d events, want 20", n)
+	}
+	m.m["s"].eventAt = m.m["s"].eventAt.Add(-9 * time.Second)
+	if _, ok := m.EventAllowed("s", 1); !ok {
+		t.Fatal("budget didn't refill")
 	}
 }

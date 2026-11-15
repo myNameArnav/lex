@@ -19,6 +19,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // ~150 MB), up to this many seconds.
 const AUTO_AHEAD = 1200;
 const APPEND_BATCH_BYTES = 1 << 20;
+// A stream that has appended this much without anything buffered where it
+// started is being thrown away by the browser. Firefox 154+ on macOS
+// silently drops HEVC that starts at a CRA keyframe (Mozilla bug 2065822),
+// and open-GOP encodes have an IDR only at 0:00, so a seek into one never
+// plays and would read the whole file.
+const DISCARD_BYTES = 32 << 20;
+
+// m:ss or h:mm:ss, for log lines.
+export const clock = (t) => {
+  t = Math.max(0, Math.floor(t || 0));
+  const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = String(t % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
+};
 
 export class MseEngine {
   constructor(video, plan, opts) {
@@ -31,7 +44,8 @@ export class MseEngine {
     this.clientAudio = plan.clientAudio || null;
     // The browser remuxes the original file itself (client-remux.js).
     this.clientRemux = plan.clientRemux ? { url: plan.url, audio: plan.audio, fragMs: plan.fragmentMs } : null;
-    this.opts = { forward: 0, back: 30, onError: () => {}, onEnded: () => {}, ...opts };
+    // onEvent(event, detail) reports what the engine does for the server log.
+    this.opts = { forward: 0, back: 30, onError: () => {}, onEnded: () => {}, onEvent: () => {}, ...opts };
     this.gen = 0;
     this.ctrl = null;
     this.bytes = 0;
@@ -226,6 +240,8 @@ export class MseEngine {
     this.throttled = false;
     this.lastData = performance.now();
     this.streamFrom = t;
+    this.streamBytes = 0;
+    this.streamBuffered = false;
     this.conv?.cancel();
     const conv = this.conv = this.clientAudio ? new AudioConverter(this.audioWorker, this.clientAudio) : null;
     if (!keep) { this.stalls = 0; this.resumeAfter = 0; }
@@ -267,7 +283,14 @@ export class MseEngine {
       let ok = true;
       for (const seg of conv ? await conv.push(buf) : [buf]) if (!(ok = await this.append(seg, gen))) break;
       // Processing queued bytes is progress even if no new read is needed.
-      if (ok) this.lastData = performance.now();
+      if (ok) {
+        this.lastData = performance.now();
+        this.streamBytes += buf.byteLength;
+        // Anything buffered past where the stream started came from it (a
+        // seek clears the buffer first). Sticky: eviction later removes
+        // the stream's start once playback has moved on.
+        this.streamBuffered ||= this.ranges().some(([, e]) => e > this.streamFrom + 1);
+      }
       // Accepted init headers (or duplicate frames) are not recovery.
       if (ok && this.producingEnd() > Math.max(before, this.video.currentTime) + 0.1) this.retries = 0;
       return ok;
@@ -412,6 +435,7 @@ export class MseEngine {
       return;
     }
     const at = this.bufferedEnd();
+    this.opts.onEvent('retry', `${e.message || e} — retry ${this.retries}/6 from ${clock(at)}`);
     setTimeout(() => { if (gen === this.gen && !this.destroyed) this.load(at, true); }, Math.min(8000, 1000 * this.retries));
   }
 
@@ -422,17 +446,32 @@ export class MseEngine {
     // The running stream is about to reach this point: just wait.
     if (this.fetching && t >= this.streamFrom - 0.5 && t < this.producingEnd() + 8) return;
     clearTimeout(this.seekTimer);
-    this.seekTimer = setTimeout(() => this.load(this.video.currentTime, false), 150);
+    this.seekTimer = setTimeout(() => {
+      const to = this.video.currentTime;
+      this.opts.onEvent('seek', `to ${clock(to)} outside the buffer ${this.describe()} — restarting the stream`);
+      this.load(to, false);
+    }, 150);
   }
 
-  bufferError(message) {
+  // The buffered ranges and stream state, for log lines.
+  describe() {
+    const r = this.ranges().map(([s, e]) => `${clock(s)}-${clock(e)}`).join(' ');
+    const file = this.remuxWorker ? `, ${((this.remuxWorker.fetched || 0) / 1048576).toFixed(0)} MB of the file read` : '';
+    return `[${r || 'empty'}] (stream from ${clock(this.streamFrom)}, ${(this.streamBytes / 1048576).toFixed(0)} MB appended${file})`;
+  }
+
+  // A stream the browser won't keep playing. rebuild: worth one fresh
+  // pipeline with the same method first; otherwise the player falls back.
+  bufferError(message, rebuild = true) {
     if (this.bufferFailed || this.destroyed) return;
     this.bufferFailed = true;
+    this.opts.onEvent(rebuild ? 'buffer' : 'discarded', `${message} ${this.describe()}`);
     this.gen++;
     this.ctrl?.abort();
+    this.remuxStream?.cancel();
     this.fetching = false;
     this.ended = false;
-    this.opts.onError(message, 0, true, true);
+    this.opts.onError(message, 0, true, rebuild);
   }
 
   tick() {
@@ -468,6 +507,12 @@ export class MseEngine {
         return;
       }
     }
+    // Appends that never show up in the buffer: no new pipeline or retry
+    // gets past that, so let the player fall back (transcode).
+    if (this.fetching && this.streamBytes >= DISCARD_BYTES && !this.streamBuffered) {
+      this.bufferError(`The browser discarded the video it was sent after ${clock(this.streamFrom)}`, false);
+      return;
+    }
     // Resume a stream that stopped before the end of the file (server
     // closed it while we weren't reading, quota…), unless stopped() is
     // backing off after a resume that added nothing.
@@ -478,6 +523,7 @@ export class MseEngine {
     // Watchdog: a connection that stays silent while we're starving (e.g. a
     // proxy kept a dead connection open) gets restarted.
     if (this.fetching && !this.throttled && this.ahead() < 5 && this.lastData && performance.now() - this.lastData > 15000) {
+      this.opts.onEvent('stall', `no data for ${((performance.now() - this.lastData) / 1000).toFixed(0)}s at ${clock(t)} ${this.describe()}${this.remuxWorker ? ' — restarting the remuxer' : ''}`);
       this.ctrl?.abort();
       // The remuxer's range request can't be aborted: replace its worker.
       this.remuxWorker?.restart();

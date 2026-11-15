@@ -463,3 +463,46 @@ test('a browser remux stuck in a range request gets a fresh worker from the watc
   assert.equal(f.remuxStarts.length, 2, 'resumed on the new worker');
   f.engine.destroy();
 });
+
+test('a stream whose appends never reach the buffer falls back instead of reading the whole file', async () => {
+  // Firefox drops HEVC that starts at a CRA keyframe without an error: every
+  // append succeeds and nothing is ever buffered at the seek point.
+  let reads = 0;
+  const f = await fixture(hanging, { remux: () => ({
+    read: async () => { reads++; return { value: new Uint8Array(1 << 20), done: false }; },
+    cancel: async () => {},
+  }) });
+  const events = [];
+  f.engine.opts.onEvent = (...e) => events.push(e);
+  f.setRanges([]);
+  f.video.currentTime = 6000;
+  void f.engine.load(6000, false);
+  await f.advance(60000);
+  assert.equal(f.errors.length, 1);
+  assert.match(f.errors[0][0], /discarded the video it was sent after 1:40:00/);
+  // A decode failure without a rebuild: the player falls back to transcode.
+  assert.equal(f.errors[0][2], true);
+  assert.equal(f.errors[0][3], false);
+  assert.ok(reads < 40, `read ${reads} MB before giving up`);
+  assert.equal(events.at(-1)[0], 'discarded');
+  assert.match(events.at(-1)[1], /\[empty\] \(stream from 1:40:00, 3\d MB appended/);
+  f.engine.destroy();
+});
+
+test('a healthy stream that buffers what it appends is not mistaken for a discarding one', async () => {
+  const f = await fixture(hanging, { remux: () => ({
+    read: async () => ({ value: new Uint8Array(1 << 20), done: false }), cancel: async () => {},
+  }) });
+  // Every append extends the buffer, and playback evicts what's behind it,
+  // so the stream's start soon leaves the buffer (the case Chrome hit).
+  let end = 6000;
+  f.sb.appendBuffer = () => { end += 2; f.setRanges([[Math.max(5995, end - 20), end]]); f.video.currentTime = Math.max(6000, end - 10); };
+  f.engine.opts.forward = 1200;
+  f.video.currentTime = 6000;
+  void f.engine.load(6000, false);
+  await f.advance(20000);
+  assert.ok(f.engine.streamBytes > 32 << 20, `only ${f.engine.streamBytes} bytes appended`);
+  assert.ok(f.engine.ranges()[0][0] > 6005);
+  assert.deepEqual(f.errors, []);
+  f.engine.destroy();
+});

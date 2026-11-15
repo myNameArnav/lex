@@ -6,7 +6,7 @@ import { api, img } from './api.js';
 import { state } from './app.js';
 import { detectCaps } from './caps.js';
 import { prefs, QUALITIES } from './prefs.js';
-import { MseEngine } from './mse.js';
+import { MseEngine, clock } from './mse.js';
 
 let current = null;
 
@@ -275,6 +275,10 @@ class Player {
       if (this.started && !v.seeking) { this.stalls.count++; this.stalls.since = performance.now(); }
     });
     const ready = () => {
+      if (this.waitLogged) {
+        this.waitLogged = false;
+        if (this.waitingSince) this.logEvent('resumed', `playing at ${clock(v.currentTime)} after ${((performance.now() - this.waitingSince) / 1000).toFixed(0)}s of buffering`);
+      }
       this.showSpinner(false);
       this.waitingSince = 0;
       this.setStatus('');
@@ -574,6 +578,7 @@ class Player {
         forward: prefs.get('bufferAhead'),
         back: prefs.get('backBuffer'),
         onError: (msg, status, decode, rebuild) => this.onStreamError(msg, status, decode, rebuild),
+        onEvent: (event, detail) => this.logEvent(event, detail),
       });
       await this.engine.open(start);
     }
@@ -680,10 +685,29 @@ class Player {
   checkWaiting() {
     if (!this.waitingSince || this.closed || this.errEl || this.recovering || this.video.ended) return;
     const waited = performance.now() - this.waitingSince;
+    // Spinning for a long time: put what the player sees in the server log.
+    if (waited >= 20000 && !this.waitLogged) {
+      this.waitLogged = true;
+      this.logEvent('waiting', `${(waited / 1000).toFixed(0)}s at ${clock(this.video.currentTime)}, ${this.bufferSummary()}`);
+    }
     if (this.engine?.retries > 0 && waited >= 1000) this.setStatus('Connection lost — reconnecting…');
     else if (waited >= 8000 && !this.statusEl.textContent) this.setStatus('Still buffering…');
     // The MSE engine retries its own stream.
     if (waited >= 1000 && !this.engine && this.plan && performance.now() - (this.lastProbe || 0) > 5000) this.probeServer();
+  }
+
+  // logEvent puts a player event (seek, stall, fallback, error) in the
+  // server log next to the session's play/ended lines.
+  logEvent(event, detail = '') {
+    if (!this.sessionId || this.closed) return;
+    api('/api/playback/event', { method: 'POST', body: { sessionId: this.sessionId, event, detail: String(detail).slice(0, 500) } }).catch(() => {});
+  }
+
+  bufferSummary() {
+    if (this.engine) return `buffer ${this.engine.describe()}`;
+    const b = this.video.buffered, r = [];
+    for (let i = 0; i < b.length; i++) r.push(`${clock(b.start(i))}-${clock(b.end(i))}`);
+    return `buffer [${r.join(' ') || 'empty'}], readyState ${this.video.readyState}, network ${this.video.networkState}`;
   }
 
   setStatus(text) { if (this.statusEl && this.statusEl.textContent !== text) this.statusEl.textContent = text; }
@@ -709,6 +733,7 @@ class Player {
     if (this.stopped) return;
     if (rebuild && !this.bufferRebuilds) {
       if (this.closed || !this.plan || this.failedPlan === this.plan) return;
+      this.logEvent('rebuild', `${msg} — restarting the pipeline once`);
       this.failedPlan = this.plan;
       this.bufferRebuilds = 1;
       toast('Video buffer stalled — restarting playback');
@@ -725,6 +750,8 @@ class Player {
     if (this.closed || !this.plan || this.failedPlan === this.plan || this.stopped) return;
     this.failedPlan = this.plan;
     this.startupWatch = null;
+    const via = [this.plan.clientRemux && 'browser remux', this.plan.clientAudio && 'browser audio'].filter(Boolean).join(', ');
+    this.logEvent('fallback', `${this.plan.method}${this.plan.hls ? ' (HLS)' : ''}${via ? ` (${via})` : ''} at ${clock(this.video.currentTime)}: ${reason}${this.video.error ? ` [media error ${this.video.error.code}: ${this.video.error.message || ''}]` : ''}`);
     if (this.plan.hls && this.mode === 'hls') { this.showError(`HLS playback failed: ${reason}`, { transcode: true }); return; }
     const order = ['direct', 'remux', 'transcode'];
     const idx = order.indexOf(this.plan.method);
@@ -774,8 +801,10 @@ class Player {
   // only for failures a transcode can fix (codec/container, not network,
   // missing files or a stopped session).
   showError(msg, { retry = true, transcode = false, title = "Can't play this" } = {}) {
+    if (this.plan) this.logEvent('error', `${title}: ${msg}`);
     this.startupWatch = null;
     this.waitingSince = 0;
+    this.waitLogged = false;
     this.showSpinner(false);
     this.setStatus('');
     this.hideError();
