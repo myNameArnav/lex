@@ -63,6 +63,9 @@ func ensureBaseSchema(tx *sql.Tx) error {
 	if _, err := tx.Exec(schema); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(browseSchema); err != nil {
+		return err
+	}
 	if err := migrateDownloadedSubs(tx); err != nil {
 		return err
 	}

@@ -87,6 +87,8 @@ type UserData struct {
 	PlayCount  int     `json:"playCount"`
 	LastPlayed int64   `json:"lastPlayed"`
 	Favorite   bool    `json:"favorite"`
+	// Watchlist is set by Watchlist and AnnotateWatchlist only.
+	Watchlist bool `json:"watchlist,omitempty"`
 }
 
 // ---- libraries ----
@@ -485,7 +487,7 @@ type ListQuery struct {
 	Sort      string // title | year | added | rating | played
 	Desc      bool
 	Genre     string
-	Filter    string // unplayed | played | inprogress | favorite
+	Filter    string // unplayed | played | inprogress | favorite | watchlist
 	Search    string
 	Limit     int
 	Offset    int
@@ -539,6 +541,8 @@ func (s *Store) ListItems(uid int64, q ListQuery) ([]*Item, int, error) {
 			ELSE COALESCE(ud.position,0)>0 END`)
 	case "favorite":
 		conds = append(conds, "COALESCE(ud.favorite,0)=1")
+	case "watchlist":
+		conds = append(conds, "EXISTS(SELECT 1 FROM watchlist w WHERE w.user_id=:uid AND w.item_id=i.id)")
 	}
 	where := "WHERE " + strings.Join(conds, " AND ")
 	var total int

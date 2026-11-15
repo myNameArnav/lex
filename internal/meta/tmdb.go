@@ -164,7 +164,11 @@ func (t *TMDB) Movie(ctx context.Context, id string) (*Result, error) {
 		BackdropPath        string      `json:"backdrop_path"`
 		IMDBID              string      `json:"imdb_id"`
 		Credits             tmdbCredits `json:"credits"`
-		ReleaseDates        struct {
+		BelongsTo           *struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		} `json:"belongs_to_collection"`
+		ReleaseDates struct {
 			Results []struct {
 				Country string `json:"iso_3166_1"`
 				Dates   []struct {
@@ -185,6 +189,9 @@ func (t *TMDB) Movie(ctx context.Context, id string) (*Result, error) {
 	}
 	if m.IMDBID != "" {
 		r.IDs["imdb"] = m.IMDBID
+	}
+	if b := m.BelongsTo; b != nil && b.ID > 0 && b.Name != "" {
+		r.Collection = &store.Collection{ID: b.ID, Name: b.Name}
 	}
 	for _, c := range m.ReleaseDates.Results {
 		if c.Country == "US" {

@@ -402,6 +402,9 @@ export async function route({ soft = false } = {}) {
       case 'library': view = await libraryView(ctx, +id); break;
       case 'item': view = await itemView(ctx, +id); break;
       case 'search': view = await searchView(ctx, query.get('q') || ''); break;
+      case 'watchlist': view = await watchlistView(ctx); break;
+      case 'collection': view = await collectionView(ctx, +id); break;
+      case 'person': view = await personView(ctx, query.get('name') || ''); break;
       case 'tv': view = await tvView(ctx); break;
       case 'settings': { const m = await loadAdmin(); view = await m.settingsView(ctx, id || 'preferences'); break; }
       case 'dashboard': { const m = await loadAdmin(); view = await m.dashboardView(ctx, id || 'live'); break; }
@@ -534,7 +537,8 @@ function placeholder(it) {
 
 const progressBar = (pos, dur) => h('div', { class: 'progress', 'aria-hidden': 'true' }, h('i', { style: { width: `${Math.min(100, (pos / dur) * 100)}%` } }));
 
-export function posterCard(it) {
+// posterCard: sub replaces the line under the title (e.g. a person's role).
+export function posterCard(it, { sub } = {}) {
   const ud = it.userData || {};
   const art = h('div', { class: 'art' }, placeholder(it), lazyImg(img(it, 'poster', 320), ''));
   const parent = it.kind === 'show' || it.kind === 'season';
@@ -543,9 +547,35 @@ export function posterCard(it) {
   else if (watched) art.appendChild(h('div', { class: 'badge check', 'aria-hidden': 'true', title: 'Watched', html: icons.check }));
   const left = ud.position > 0 && it.duration ? `${fmtDuration(it.duration - ud.position)} left` : '';
   if (left) art.appendChild(progressBar(ud.position, it.duration));
-  const label = [it.title, subtitleFor(it), parent && it.unplayedCount > 0 ? `${it.unplayedCount} unwatched` : watched ? 'watched' : '', left].filter(Boolean).join(', ');
-  return h('a', { class: 'card', href: `#/item/${it.id}`, 'aria-label': label },
-    art, h('div', { class: 'meta' }, h('div', { class: 't', title: it.title }, it.title), h('div', { class: 's' }, subtitleFor(it))));
+  const line = sub ?? subtitleFor(it);
+  const label = [it.title, line, parent && it.unplayedCount > 0 ? `${it.unplayedCount} unwatched` : watched ? 'watched' : '', ud.watchlist ? 'on your watchlist' : '', left].filter(Boolean).join(', ');
+  const link = h('a', { class: 'card-link', href: `#/item/${it.id}`, 'aria-label': label, dataset: { focusKey: `card-${it.id}` } },
+    art, h('div', { class: 'meta' }, h('div', { class: 't', title: it.title }, it.title), h('div', { class: 's' }, line)));
+  const more = it.kind === 'movie' || it.kind === 'show' ? posterMenuButton(it) : null;
+  return h('div', { class: `card poster${more ? ' has-more' : ''}` }, link, more);
+}
+
+// setWatchlist adds a movie or show to the watchlist or takes it off, and
+// says so (the toast is the undo hint). Resolves to whether it worked.
+async function setWatchlist(it, on) {
+  const ok = await run(null, () => api(`/api/items/${it.id}/watchlist`, { method: 'POST', body: { watchlist: on } }), on ? 'Added to Watchlist' : 'Removed from Watchlist');
+  if (ok) (it.userData ||= {}).watchlist = on;
+  return !!ok;
+}
+
+// The ⋯ on a movie or show poster: Watchlist and watched toggles. The view
+// re-renders in place afterwards (Watchlist rows and filters change).
+function posterMenuButton(it) {
+  const ud = it.userData || {};
+  const items = [ud.watchlist
+    ? { label: 'Remove from Watchlist', icon: 'bookmarkFill', onClick: async () => { if (await setWatchlist(it, false)) refreshSoft(); } }
+    : { label: 'Add to Watchlist', icon: 'bookmark', onClick: async () => { if (await setWatchlist(it, true)) refreshSoft(); } }];
+  if (it.kind === 'movie') {
+    items.push(ud.played
+      ? { label: 'Mark unwatched', icon: 'check', onClick: async () => { if (await run(null, () => api(`/api/items/${it.id}/played`, { method: 'POST', body: { played: false } }), 'Marked unwatched')) refreshSoft(); } }
+      : { label: 'Mark watched', icon: 'check', onClick: async () => { if (await run(null, () => api(`/api/items/${it.id}/played`, { method: 'POST', body: { played: true } }), 'Marked watched')) refreshSoft(); } });
+  }
+  return h('button', { class: 'btn icon ghost sm card-more', type: 'button', title: 'More', 'aria-label': `More for ${it.title}`, dataset: { focusKey: `card-more-${it.id}` }, html: icons.more, onclick: (e) => popupMenu(e.currentTarget, items) });
 }
 
 // landCard: Continue Watching / Next Up (the artwork plays) and episode
@@ -655,7 +685,7 @@ async function homeView(ctx) {
     }
   }
   for (const row of data.rows) {
-    wrap.appendChild(shelf(row.title, row.items, row.kind, row.libraryId ? `#/library/${row.libraryId}?sort=latest&desc=1` : null));
+    wrap.appendChild(shelf(row.title, row.items, row.kind, row.libraryId ? `#/library/${row.libraryId}?sort=latest&desc=1` : row.id === 'watchlist' ? '#/watchlist' : null));
   }
   return wrap;
 }
@@ -722,7 +752,7 @@ async function libraryView(ctx, id) {
     h('div', { class: 'toolbar' },
       sel('Sort titles', 'sort-select', opts.sort, sorts, (v) => setQ({ sort: v, desc: ['added', 'latest', 'rating', 'played', 'year'].includes(v), seed: v === 'random' ? newSeed() : 0 }, 'sort-select')),
       dirLabel ? h('button', { class: 'btn sm', title: 'Reverse order', 'aria-label': `Sort direction: ${dirLabel[+opts.desc]}`, dataset: { focusKey: 'sort-dir' }, onclick: () => setQ({ desc: !opts.desc }, 'sort-dir') }, dirLabel[+opts.desc]) : null,
-      sel('Filter titles', 'filter-select', opts.filter, [['', 'All'], ['unplayed', 'Unwatched'], ['played', 'Watched'], ['inprogress', 'In progress'], ['favorite', 'Favorites']], (v) => setQ({ filter: v }, 'filter-select')),
+      sel('Filter titles', 'filter-select', opts.filter, [['', 'All'], ['unplayed', 'Unwatched'], ['played', 'Watched'], ['inprogress', 'In progress'], ['favorite', 'Favorites'], ['watchlist', 'Watchlist']], (v) => setQ({ filter: v }, 'filter-select')),
       genres.length ? sel('Filter by genre', 'genre-select', opts.genre, [['', 'All genres'], ...genres.map((g) => [g, g])], (v) => setQ({ genre: v }, 'genre-select')) : null,
       h('div', { class: 'spacer' }),
       random),
@@ -747,13 +777,13 @@ async function libraryView(ctx, id) {
       offset += r.items.length;
       if (!r.items.length) total = offset;
       if (total === 0) {
-        const favs = opts.filter === 'favorite' && !opts.genre, filtered = opts.filter || opts.genre;
+        const favs = opts.filter === 'favorite' && !opts.genre, wl = opts.filter === 'watchlist' && !opts.genre, filtered = opts.filter || opts.genre;
         // The list loaded at startup may predate the first scan finishing.
         let scanned = lib.lastScan;
         if (!filtered && !scanned) { await loadLibraries(); scanned = state.libraries.find((l) => l.id === id)?.lastScan; }
         grid.replaceWith(emptyState({ level: 'h2',
-          title: favs ? 'No favorites yet' : filtered ? 'Nothing here' : scanned ? 'No titles found' : 'Still scanning',
-          text: favs ? 'Open a title and select the heart to add it to your favorites.' : filtered ? 'No titles match these filters.' : scanned ? 'No titles found in this library.' : 'This library is still being scanned.',
+          title: favs ? 'No favorites yet' : wl ? 'Your Watchlist is empty' : filtered ? 'Nothing here' : scanned ? 'No titles found' : 'Still scanning',
+          text: favs ? 'Open a title and select the heart to add it to your favorites.' : wl ? WATCHLIST_HINT : filtered ? 'No titles match these filters.' : scanned ? 'No titles found in this library.' : 'This library is still being scanned.',
           actions: filtered ? [h('button', { class: 'btn', onclick: () => setQ({ filter: '', genre: '' }, 'filter-select') }, 'Clear filters')] : [] }));
       }
     } finally {
@@ -883,6 +913,44 @@ function favButton(it) {
   return b;
 }
 
+// watchlistButton toggles "Watch later" in place, like favButton.
+function watchlistButton(it) {
+  let on = !!it.userData?.watchlist, busy = false;
+  const b = h('button', { class: 'btn lg icon', dataset: { focusKey: `watchlist-${it.id}` }, onclick: async () => {
+    if (busy) return;
+    busy = true;
+    on = !on;
+    show();
+    try {
+      await api(`/api/items/${it.id}/watchlist`, { method: 'POST', body: { watchlist: on } });
+      (it.userData ||= {}).watchlist = on;
+    } catch (ex) {
+      on = !on;
+      show();
+      toast(ex.message, 'error');
+    } finally {
+      busy = false;
+    }
+  } });
+  const show = () => {
+    const label = on ? 'Remove from Watchlist' : 'Add to Watchlist';
+    b.innerHTML = on ? icons.bookmarkFill : icons.bookmark;
+    b.style.color = on ? 'var(--accent)' : '';
+    b.setAttribute('aria-pressed', String(on));
+    b.setAttribute('aria-label', label);
+    b.title = label;
+  };
+  show();
+  return b;
+}
+
+// Genre chips open the title's library filtered by that genre.
+function genreLinks(it) {
+  return h('div', { class: 'genres' }, it.genres.map((g) => h('a', { href: `#/library/${it.libraryId}?genre=${encodeURIComponent(g)}`, title: `More ${g} in this library` }, g)));
+}
+
+export const personHref = (name) => `#/person?name=${encodeURIComponent(name)}`;
+
 // moreItems lists the ⋯ menu's actions. They depend only on the item, its
 // files and the user, so the button is left out when there are none.
 function moreItems(it, d) {
@@ -938,10 +1006,10 @@ function castRow(it, excludeDirectors = false) {
   if (!people.length) return null;
   return h('section', { class: 'shelf' },
     h('div', { class: 'shelf-head' }, h('h2', { class: 'section-title' }, 'Cast & crew')),
-    scroller(h('div', { class: 'people', tabindex: '0', role: 'region', 'aria-label': 'Cast & crew' }, people.map(({ person: p, index }) => {
+    scroller(h('div', { class: 'people', tabindex: '-1', role: 'region', 'aria-label': 'Cast & crew' }, people.map(({ person: p, index }) => {
       const portrait = h('div', { class: 'ph' }, p.name.slice(0, 1));
       if (p.image) portrait.replaceChildren(lazyImg(castImg(it, index), p.name, () => { portrait.textContent = p.name.slice(0, 1); }));
-      return h('div', { class: 'person' }, portrait, h('div', { class: 'n' }, p.name), h('div', { class: 'r' }, p.role || ''));
+      return h('a', { class: 'person', href: personHref(p.name), 'aria-label': p.role ? `${p.name}, ${p.role}` : p.name }, portrait, h('div', { class: 'n' }, p.name), h('div', { class: 'r' }, p.role || ''));
     }))));
 }
 
@@ -971,12 +1039,14 @@ function mediaView(ctx, d) {
     d.segments?.find((s) => s.kind === 'intro') ? h('span', { class: 'pill', title: 'Intro detected' }, 'Intro ✓') : null,
     d.segments?.find((s) => s.kind === 'credits') ? h('span', { class: 'pill', title: 'End credits detected' }, 'Credits ✓') : null,
   ]));
-  if (it.genres?.length) info.push(h('div', { class: 'genres' }, it.genres.map((g) => h('span', null, g))));
+  if (it.genres?.length) info.push(genreLinks(it));
+  if (d.collection) info.push(h('p', { class: 'collection-link' }, 'Part of ', h('a', { href: `#/collection/${d.collection.id}` }, d.collection.name)));
   if (!file) info.push(h('p', { class: 'bad' }, 'No media file found for this item.'));
   info.push(h('div', { class: 'actions' },
     file ? playButtons(it) : null,
     watchedButton(it),
     it.kind === 'movie' ? favButton(it) : null,
+    it.kind === 'movie' ? watchlistButton(it) : null,
     moreButton(it, d)));
   if (it.tagline) info.push(h('div', { class: 'tagline' }, it.tagline));
   info.push(h('p', { class: 'overview' }, it.overview || (it.metaStatus === 0 ? 'Fetching details…' : 'No description available.')));
@@ -993,7 +1063,7 @@ function mediaView(ctx, d) {
     info.push(h('div', { class: 'row wrap', style: { marginTop: '18px' } }, d.prev ? epLink(d.prev, 'Previous') : null, d.next ? epLink(d.next, 'Next') : null));
   }
   const director = (it.cast || []).filter((p) => p.role === 'Director');
-  if (director.length) info.push(h('p', { class: 'muted small' }, `Directed by ${director.map((p) => p.name).join(', ')}`));
+  if (director.length) info.push(h('p', { class: 'muted small' }, 'Directed by ', director.map((p, i) => [i ? ', ' : '', h('a', { class: 'plain-link', href: personHref(p.name) }, p.name)])));
   if (it.studios?.length) info.push(h('p', { class: 'muted small', style: { marginTop: '4px' } }, it.studios.slice(0, 4).join(' · ')));
   return h('div', null, hero(it, poster, info, isEp && d.show ? d.show : it), castRow(it, true));
 }
@@ -1106,7 +1176,7 @@ function heroActions(d) {
     btns.push(h('button', { class: 'btn primary lg', dataset: { focusKey: `show-play-${it.id}` }, onclick: () => play(next.id, done ? 0 : null) }, h('span', { html: icons.play }), lbl));
     if (it.childCount > 1) btns.push(h('button', { class: 'btn lg', title: 'Play episodes in random order', dataset: { focusKey: `show-shuffle-${it.id}` }, onclick: (e) => playShuffle(it, e.currentTarget) }, h('span', { html: icons.shuffle }), 'Shuffle'));
   }
-  btns.push(watchedButton(it), favButton(it), moreButton(it, d));
+  btns.push(watchedButton(it), favButton(it), watchlistButton(it), moreButton(it, d));
   // A placeholder title ("Episode 1") would only repeat the button.
   const upNext = !done && next?.title && !/^Episode \d+$/.test(next.title);
   return h('div', { class: 'hero-cta' }, h('div', { class: 'actions' }, btns), upNext ? h('p', { class: 'muted small' }, `Up next: ${next.title}`) : null);
@@ -1127,7 +1197,7 @@ async function showView(ctx, d) {
   const n = seasons.filter((s) => s.season > 0).length;
   const info = [h('h1', null, it.title),
     facts(it, [n ? h('span', null, `${n} season${n === 1 ? '' : 's'}`) : null, it.studios?.length ? h('span', null, it.studios[0]) : null])];
-  if (it.genres?.length) info.push(h('div', { class: 'genres' }, it.genres.map((g) => h('span', null, g))));
+  if (it.genres?.length) info.push(genreLinks(it));
   info.push(cta);
   info.push(h('p', { class: 'overview' }, it.overview || (it.metaStatus === 0 ? 'Fetching details…' : 'No description available.')));
   retryWhileFetching(ctx, it);
@@ -1243,6 +1313,42 @@ function episodeRow(e, onChange) {
     h('div', { class: 'side' }, wbtn));
 }
 
+// ---------- watchlist, collections, people ----------
+const WATCHLIST_HINT = 'Open a movie or show and select the bookmark, or use a poster’s ⋯ menu, to save it for later.';
+
+// titlesPage: a heading block over a grid of posters (or an empty state).
+function titlesPage({ kicker, title, count, head, items, sub, empty }) {
+  const n = items.length;
+  const text = h('div', { style: { minWidth: 0 } },
+    kicker ? h('div', { class: 'kicker' }, kicker) : null,
+    h('h1', { class: 'page-title' }, title),
+    count !== false ? h('span', { class: 'count' }, `${n} title${n === 1 ? '' : 's'}`) : null);
+  return h('div', { class: 'page' },
+    h('div', { class: 'browse-head' }, head || null, text),
+    n ? h('div', { class: 'grid' }, items.map((it) => posterCard(it, { sub: sub?.(it) }))) : emptyState({ level: 'h2', ...empty }));
+}
+
+async function watchlistView() {
+  const r = await api('/api/watchlist');
+  return titlesPage({ title: 'Watchlist', items: r.items, empty: { title: 'Your Watchlist is empty', text: WATCHLIST_HINT, actions: [h('a', { class: 'btn primary', href: '#/' }, 'Browse titles')] } });
+}
+
+async function collectionView(ctx, id) {
+  const r = await api(`/api/collections/${id}`);
+  return titlesPage({ kicker: 'Collection', title: r.collection.name, items: r.items,
+    empty: { title: 'Nothing here', text: 'None of this collection’s movies are in your library any more.' } });
+}
+
+async function personView(ctx, name) {
+  if (!name.trim()) return notFound();
+  const r = await api(`/api/person?name=${encodeURIComponent(name)}`);
+  const portrait = h('div', { class: 'ph', 'aria-hidden': 'true' }, r.name.slice(0, 1));
+  if (r.image) portrait.replaceChildren(lazyImg(castImg({ id: r.image.itemId, updatedAt: r.image.updatedAt }, r.image.index, 240), '', () => { portrait.textContent = r.name.slice(0, 1); }));
+  return titlesPage({ kicker: 'Cast & crew', title: r.name, items: r.items, head: h('div', { class: 'person-portrait' }, portrait),
+    sub: (it) => [r.roles[it.id], it.year].filter(Boolean).join(' · '),
+    empty: { title: 'No titles found', text: `Nothing in your library lists ${r.name}.` } });
+}
+
 // ---------- search ----------
 // ---------- live tv ----------
 // The guide's two lines for a program: the show or movie, then the episode.
@@ -1316,8 +1422,8 @@ async function searchView(ctx, q) {
   // The server sends at most 40 of each kind.
   const group = (title, items, grid) => page.append(h('h2', { class: 'section-title', style: { margin: '24px 0 14px' } }, title), grid,
     ...(items.length >= 40 ? [h('p', { class: 'dim small' }, 'Showing the first 40. Type more of the title to narrow the results.')] : []));
-  if (r.shows.length) group('Shows', r.shows, h('div', { class: 'grid' }, r.shows.map(posterCard)));
-  if (r.movies.length) group('Movies', r.movies, h('div', { class: 'grid' }, r.movies.map(posterCard)));
+  if (r.shows.length) group('Shows', r.shows, h('div', { class: 'grid' }, r.shows.map((it) => posterCard(it))));
+  if (r.movies.length) group('Movies', r.movies, h('div', { class: 'grid' }, r.movies.map((it) => posterCard(it))));
   if (r.episodes.length) group('Episodes', r.episodes, h('div', { class: 'grid land' }, r.episodes.map((e) => landCard(e, { playOnClick: false }))));
   return page;
 }

@@ -56,7 +56,13 @@ type radarrMovie struct {
 	Path          string        `json:"path"`
 	FolderName    string        `json:"folderName"`
 	Images        []radarrImage `json:"images"`
-	Ratings       map[string]struct {
+	// Collection is TMDB's collection; Radarr v3 names it "name", v4+ "title".
+	Collection *struct {
+		Title  string `json:"title"`
+		Name   string `json:"name"`
+		TMDBID int64  `json:"tmdbId"`
+	} `json:"collection"`
+	Ratings map[string]struct {
 		Value float64 `json:"value"`
 	} `json:"ratings"`
 }
@@ -203,6 +209,11 @@ func (r *Radarr) Movie(ctx context.Context, tmdbID string) (*Result, error) {
 	}
 	if m.Studio != "" {
 		res.Studios = []string{m.Studio}
+	}
+	if c := m.Collection; c != nil && c.TMDBID > 0 {
+		if name := firstNonEmpty(c.Title, c.Name); name != "" {
+			res.Collection = &store.Collection{ID: c.TMDBID, Name: name}
+		}
 	}
 	for _, k := range []string{"tmdb", "imdb", "trakt"} {
 		if v, ok := m.Ratings[k]; ok && v.Value > 0 {

@@ -354,6 +354,10 @@ func (a *Agent) refreshMovie(ctx context.Context, it *store.Item, g *store.Match
 		if e := a.save(it, g); e != nil {
 			return false, e
 		}
+		// No match (not a network hiccup): the old collection went with it.
+		if it.MetaStatus != store.MetaPending {
+			a.saveCollection(it, nil)
+		}
 		if err == nil {
 			err = ErrNoMatch
 		}
@@ -366,7 +370,19 @@ func (a *Agent) refreshMovie(ctx context.Context, it *store.Item, g *store.Match
 	if localBackdrop != "" {
 		it.Backdrop = localBackdrop
 	}
-	return true, a.save(it, g)
+	if err := a.save(it, g); err != nil {
+		return false, err
+	}
+	a.saveCollection(it, res.Collection)
+	return true, nil
+}
+
+// saveCollection records the collection a movie's metadata named (nil: none).
+// It comes with the movie's own details: no extra lookups.
+func (a *Agent) saveCollection(it *store.Item, c *store.Collection) {
+	if err := a.st.SetItemCollection(it.ID, c); err != nil {
+		a.log.Warnf("metadata %q: collection: %v", it.Title, err)
+	}
 }
 
 // missingStatus keeps items pending after transient (network) failures so
