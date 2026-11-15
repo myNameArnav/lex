@@ -51,7 +51,7 @@ export class RemuxWorker extends WorkerRPC {
   replyError(data) {
     if (data.replaced) return new DOMException('Stream replaced', 'AbortError');
     // Replies carry the reader's figures, for Stats for nerds.
-    if (data.fetched !== undefined) Object.assign(this, { fetched: data.fetched, requests: data.requests, heap: data.heap });
+    if (data.fetched !== undefined) Object.assign(this, { fetched: data.fetched, requests: data.requests, rate: data.rate, heap: data.heap });
     if (data.remux) return failure(data.error);
     // Network and HTTP failures: the stream's usual error handling.
     if (data.error) return Object.assign(new Error(data.error), { status: data.status, serverError: data.serverError });

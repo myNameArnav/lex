@@ -502,8 +502,10 @@ export class MseEngine {
       throttled: this.throttled,
       fetching: this.fetching,
       streamFrom: this.streamFrom,
-      // The original file's bytes read by the browser's remuxer, and its memory.
+      // The original file's bytes read by the browser's remuxer, its read
+      // rate (bytes/s) and its memory.
       fileBytes: this.remuxWorker ? this.remuxWorker.fetched : null,
+      fileRate: this.remuxWorker?.rate || 0,
       remuxHeap: this.remuxWorker?.heap || 0,
     };
   }

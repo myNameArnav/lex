@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { Worker } from 'node:worker_threads';
 
-import { loadRemuxer, MAX_WINDOW } from '../static/js/remux-core.js';
+import { loadRemuxer, RangeReader, MIN_WINDOW, MAX_WINDOW, TARGET_MS } from '../static/js/remux-core.js';
 import { AudioConverter } from '../static/js/client-audio.js';
 import { loadCodec } from '../static/js/audio-codec.js';
 import { BoxReader, children, parseInit } from '../static/js/mp4.js';
@@ -32,7 +32,8 @@ function fixture(name, ...args) {
 // A range-capable HTTP server and a synchronous client for it, both in a
 // worker thread: the remuxer blocks the calling thread until its read is
 // served, as it does in the browser's worker with synchronous requests.
-// With split, responses stop short at arbitrary points, as a server may.
+// With split, responses stop short at arbitrary points, as a server may;
+// with throttle (bytes/s), each one takes as long as on a link that slow.
 const host = `
 const http = require('node:http'), fs = require('node:fs');
 const { parentPort, workerData: { ctl, data } } = require('node:worker_threads');
@@ -46,8 +47,12 @@ const server = http.createServer((req, res) => {
   let end = Math.min(+m[2], size - 1);
   if (u.searchParams.get('split')) { seed = (seed * 16807) % 2147483647; end = Math.min(end, start + seed % 300000); }
   log.push([start, end]);
-  res.writeHead(206, { 'Content-Range': 'bytes ' + start + '-' + end + '/' + size, 'Content-Length': end - start + 1 });
-  fs.createReadStream(file, { start, end }).pipe(res);
+  const send = () => {
+    res.writeHead(206, { 'Content-Range': 'bytes ' + start + '-' + end + '/' + size, 'Content-Length': end - start + 1 });
+    fs.createReadStream(file, { start, end }).pipe(res);
+  };
+  const throttle = +u.searchParams.get('throttle');
+  if (throttle) setTimeout(send, (end - start + 1) * 1000 / throttle); else send();
 });
 server.listen(0, '127.0.0.1', () => parentPort.postMessage({ port: server.address().port }));
 parentPort.on('message', async (m) => {
@@ -75,7 +80,7 @@ async function rangeHost() {
   const { port } = await new Promise((res) => worker.once('message', res));
   const state = new Int32Array(ctl), meta = new Float64Array(ctl, 8), bytes = new Uint8Array(data);
   server = {
-    url: (file, split) => `http://127.0.0.1:${port}/?f=${encodeURIComponent(file)}${split ? '&split=1' : ''}`,
+    url: (file, { split, throttle } = {}) => `http://127.0.0.1:${port}/?f=${encodeURIComponent(file)}${split ? '&split=1' : ''}${throttle ? `&throttle=${throttle}` : ''}`,
     get: (url) => (start, end) => {
       Atomics.store(state, 0, 0);
       worker.postMessage({ url, start, end });
@@ -89,9 +94,9 @@ async function rangeHost() {
 }
 
 // The remuxer's whole output from time, as the player's worker produces it.
-async function remux(file, { audio = 1, time = 0, split = false, seekFirst } = {}) {
+async function remux(file, { audio = 1, time = 0, split = false, throttle = 0, seekFirst } = {}) {
   const host = await rangeHost();
-  const handle = await loadRemuxer(host.get(host.url(file, split)));
+  const handle = await loadRemuxer(host.get(host.url(file, { split, throttle })));
   handle({ op: 'open', audio, fragMs: 1000 });
   // A seek after playing a while, as the player does.
   if (seekFirst !== undefined) {
@@ -217,6 +222,51 @@ test('reads cut short at arbitrary points give the same bytes', { skip }, async 
   const split = await remux(src, { split: true });
   assert.ok(split.requests.length > whole.requests.length * 2, `${split.requests.length} vs ${whole.requests.length} requests`);
   assert.ok(Buffer.compare(whole.mp4, split.mp4) === 0, 'output differs');
+});
+
+// RangeReader on a simulated link: get() advances the clock by a round
+// trip plus as long as the link takes to send what was asked for.
+function readThrough(rates, total = 24 << 20) {
+  let clock = 0, i = 0;
+  const spans = [];
+  const reader = new RangeReader((start, end) => {
+    const n = end - start + 1, rate = rates[Math.min(i++, rates.length - 1)];
+    spans.push(n);
+    clock += 20 + n * 1000 / rate;
+    return { bytes: new Uint8Array(n), size: total };
+  }, () => clock);
+  const heap = new Uint8Array(64 << 10);
+  for (let pos = 0; pos < total;) pos += reader.read(heap, 0, heap.length, pos);
+  return { spans, reader };
+}
+
+test('range requests grow to the window on a fast link and stay short on a slow one', () => {
+  const fast = readThrough([100 << 20]).spans;
+  assert.deepEqual(fast.slice(0, 6), [MIN_WINDOW, 2 * MIN_WINDOW, 4 * MIN_WINDOW, 8 * MIN_WINDOW, MAX_WINDOW, MAX_WINDOW]);
+  // 2 MB/s: about 1.5 MB per request.
+  const medium = readThrough([2 << 20]);
+  assert.ok(medium.spans.every((n) => n * 1000 / medium.reader.rate <= TARGET_MS * 1.05), `${medium.spans}`);
+  assert.ok(Math.max(...medium.spans) > MIN_WINDOW * 4, `${medium.spans}`);
+  // 100 KB/s: nothing shorter than the floor would work anyway.
+  assert.ok(readThrough([100 << 10], 4 << 20).spans.every((n) => n === MIN_WINDOW));
+  // The link drops from 100 MB/s to 1 MB/s while 4 MB windows are read:
+  // two requests later they fit the slower link.
+  const drop = readThrough([...Array(8).fill(100 << 20), 1 << 20]).spans;
+  assert.equal(drop[7], MAX_WINDOW);
+  assert.ok(drop.slice(10).every((n) => n <= (1 << 20) * TARGET_MS / 1000), `${drop.slice(8)}`);
+});
+
+test('on a throttled link the requests are smaller and the output the same', { skip }, async () => {
+  const src = fixture('h264-2500k.mkv', '-f', 'lavfi', '-i', 'testsrc2=s=640x360:r=24:d=12', ...tone, ...x264,
+    '-b:v', '2500k', '-minrate', '2500k', '-maxrate', '2500k', '-bufsize', '1M', '-c:a', 'aac');
+  const fast = await remux(src);
+  const throttle = 1 << 20;
+  const slow = await remux(src, { throttle });
+  const biggest = (r) => Math.max(...r.requests.map(([s, e]) => e - s + 1));
+  assert.ok(biggest(fast) > 1 << 20, `fast: ${biggest(fast)}`);
+  assert.ok(biggest(slow) <= throttle * TARGET_MS / 1000, `slow: ${biggest(slow)}`);
+  assert.ok(slow.stats.rate > throttle / 2 && slow.stats.rate < throttle * 1.1, `rate ${slow.stats.rate}`);
+  assert.ok(Buffer.compare(fast.mp4, slow.mp4) === 0, 'output differs');
 });
 
 test('a seek starts a fresh init segment at the keyframe before the target', { skip }, async () => {
