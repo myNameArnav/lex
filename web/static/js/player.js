@@ -293,7 +293,7 @@ class Player {
       if (this.upNextShown && v.currentTime < this.upNextAt) { this.cancelUpNext(false); this.upNextShown = false; }
     });
     v.addEventListener('seeking', () => { this.removeEndCard(); this.showSpinner(true); if (!this.waitingSince) this.waitingSince = performance.now(); });
-    v.addEventListener('timeupdate', () => { this.renderTime(); this.checkIntro(); if (this.subTrack) this.renderCues(this.subTrack); });
+    v.addEventListener('timeupdate', () => { this.renderTime(); this.checkSkip(); if (this.subTrack) this.renderCues(this.subTrack); });
     v.addEventListener('progress', () => this.renderTime());
     v.addEventListener('volumechange', () => {
       this.volBtn.innerHTML = v.muted || v.volume === 0 ? icons.mute : icons.volume;
@@ -1380,8 +1380,9 @@ class Player {
     if (!this.chaptersDrawn && d) {
       this.chaptersDrawn = true;
       for (const c of this.chapters().slice(1)) this.rail.appendChild(h('div', { class: 'chap', style: { left: `${(c.start / d) * 100}%` }, title: c.title }));
-      const seg = this.intro();
-      if (seg) this.rail.insertBefore(h('div', { class: 'seg', style: { left: `${(seg.start / d) * 100}%`, width: `${((seg.end - seg.start) / d) * 100}%` }, title: 'Intro' }), this.fill);
+      for (const [seg, title] of [[this.intro(), 'Intro'], [this.credits(), 'Credits']]) {
+        if (seg) this.rail.insertBefore(h('div', { class: 'seg', style: { left: `${(seg.start / d) * 100}%`, width: `${((seg.end - seg.start) / d) * 100}%` }, title }), this.fill);
+      }
     }
     if ('mediaSession' in navigator && d && navigator.mediaSession.setPositionState) {
       try { navigator.mediaSession.setPositionState({ duration: d, position: Math.min(t, d), playbackRate: this.video.playbackRate }); } catch {}
@@ -1511,8 +1512,9 @@ class Player {
     r('Method', method, p.remote ? 'remote' : 'local');
     if (p.reasons?.length) { const why = p.reasons.map(reasonLabel).join('; '); r('Why', why, '', '', why); }
     r('Position', `${fmtTime(t)} / ${fmtTime(d)}`, v.playbackRate !== 1 ? `${v.playbackRate}x` : '');
-    const seg = this.intro();
-    if (seg) r('Intro', `${fmtTime(seg.start)}–${fmtTime(seg.end)}`, seg.source);
+    for (const [seg, name] of [[this.intro(), 'Intro'], [this.credits(), 'Credits']]) {
+      if (seg) r(name, `${fmtTime(seg.start)}–${fmtTime(seg.end)}`, seg.source);
+    }
     r('Container', `${(f.name || '').split('.').pop()} → ${p.hls ? 'HLS' : p.method === 'direct' ? 'original file' : 'fragmented MP4'}`,
       p.hls ? p.mime : p.method === 'direct' ? 'range requests' : p.clientRemux ? 'remuxed in the browser · MSE' : 'MSE');
 
@@ -1809,34 +1811,77 @@ class Player {
     m.append(sw('Stats for nerds', !!this.statsEl, () => this.toggleStats(), 'Shortcut: I'));
     m.append(sw('Autoplay next episode', prefs.get('autoplayNext'), (v) => { prefs.set('autoplayNext', v); if (!v) this.cancelUpNext(false); }));
     m.append(sw('Skip intros automatically', prefs.get('autoSkipIntro'), (v) => prefs.set('autoSkipIntro', v)));
+    m.append(sw('Skip credits automatically', prefs.get('autoSkipCredits'), (v) => prefs.set('autoSkipCredits', v)));
   }
 
-  // ---------- intro skipping ----------
+  // ---------- intro & credits skipping ----------
   intro() { return (this.segments || []).find((s) => s.kind === 'intro'); }
 
-  checkIntro() {
-    const seg = this.intro();
-    const t = this.video.currentTime;
-    const inside = !!seg && this.started && t >= seg.start - 0.5 && t < seg.end - 1.5;
-    if (inside && prefs.get('autoSkipIntro') && !this.introSkipped) {
+  // The end credits: detected by the server, else a chapter named like
+  // credits in the last 30%, else null (Up next then starts a fixed time
+  // before the end).
+  credits() {
+    const seg = (this.segments || []).find((s) => s.kind === 'credits');
+    if (seg) return seg;
+    const d = this.duration(), chaps = this.file?.info?.chapters || [];
+    const i = chaps.findIndex((c) => /credit|outro|ending|ed\b/i.test(c.title || '') && d && c.start > d * 0.7);
+    if (i < 0) return null;
+    const c = chaps[i];
+    return { kind: 'credits', start: c.start, end: c.end > c.start ? c.end : chaps[i + 1]?.start || d, source: 'chapter' };
+  }
+
+  // What the Skip button skips at t: the intro, or the credits when no
+  // episode follows (with one, the Up next card is the way on).
+  skippable(t) {
+    if (!this.started || this.live) return null;
+    const inside = (seg) => !!seg && t >= seg.start - 0.5 && t < seg.end - 1.5;
+    const intro = this.intro();
+    if (inside(intro)) return { kind: 'intro', seg: intro };
+    const credits = this.credits();
+    if (inside(credits) && (!this.detail?.next || this.upNextDismissed)) return { kind: 'credits', seg: credits };
+    return null;
+  }
+
+  skipSegment({ kind, seg }) {
+    if (kind === 'intro') {
       this.introSkipped = true;
       this.seekTo(seg.end);
-      toast('Skipped intro');
       return;
     }
-    if (inside && !this.skipBtn) {
-      this.skipBtn = h('button', { class: 'btn skip-intro', 'aria-keyshortcuts': 's', title: 'Skip intro (s)', onclick: (e) => {
-        e.stopPropagation();
-        this.introSkipped = true;
-        this.seekTo(seg.end);
-      } }, 'Skip Intro', h('span', { html: icons.next }));
-      // Early in Tab order, right after Close (it's positioned, so it doesn't move).
-      this.root.insertBefore(this.skipBtn, this.root.querySelector(':scope > .p-bot'));
-    } else if (!inside && this.skipBtn) {
+    this.creditsSkipped = true;
+    // Credits that run to the end go straight to the end card (seekTo stops
+    // just short of the end, so 'ended' fires); otherwise on to what follows
+    // them, like a post-credits scene.
+    const d = this.duration();
+    this.seekTo(d && seg.end >= d - 5 ? d : seg.end);
+  }
+
+  checkSkip() {
+    const s = this.skippable(this.video.currentTime);
+    const auto = s && (s.kind === 'intro' ? prefs.get('autoSkipIntro') && !this.introSkipped : prefs.get('autoSkipCredits') && !this.creditsSkipped);
+    if (auto) {
+      this.skipSegment(s);
+      toast(s.kind === 'intro' ? 'Skipped intro' : 'Skipped credits');
+      return;
+    }
+    if (this.skipBtn && this.skipKind !== s?.kind) {
       const hadFocus = this.skipBtn.contains(document.activeElement);
       this.skipBtn.remove();
       this.skipBtn = null;
+      this.skipKind = null;
       if (hadFocus) this.root.focus();
+    }
+    if (s && !this.skipBtn) {
+      const label = s.kind === 'intro' ? 'Skip Intro' : 'Skip Credits';
+      this.skipKind = s.kind;
+      this.skipBtn = h('button', { class: 'btn skip-intro', 'aria-keyshortcuts': 's', title: `${label} (s)`, onclick: (e) => {
+        e.stopPropagation();
+        // The segment as it is now, not when the button appeared.
+        const cur = this.skippable(this.video.currentTime);
+        if (cur) this.skipSegment(cur);
+      } }, label, h('span', { html: icons.next }));
+      // Early in Tab order, right after Close (it's positioned, so it doesn't move).
+      this.root.insertBefore(this.skipBtn, this.root.querySelector(':scope > .p-bot'));
     }
   }
 
@@ -1845,13 +1890,20 @@ class Player {
     const next = this.detail?.next;
     const d = this.duration(), t = this.video.currentTime;
     if (this.live || !next || !d || this.upNextShown || this.upNextDismissed || this.video.paused || this.errEl) return;
-    const credits = (this.file?.info?.chapters || []).find((c) => /credit|outro|ending|ed\b/i.test(c.title || '') && c.start > d * 0.7);
+    const credits = this.credits();
     const at = credits ? credits.start : d - Math.max(20, prefs.get('countdown') + 5);
     if (t < at) return;
     this.upNextShown = true;
     this.upNextAt = at;
     let n = prefs.get('countdown');
     const autoplay = prefs.get('autoplayNext');
+    // Skipping credits with autoplay on: no countdown, the next episode starts now.
+    if (credits && autoplay && prefs.get('autoSkipCredits') && !this.creditsSkipped) {
+      this.creditsSkipped = true;
+      toast('Skipped credits');
+      this.playNext();
+      return;
+    }
     // One text node: the button's flex gap would split 'Play in 9 s'.
     const label = h('span', null, autoplay ? `Play in ${n}s` : 'Play now');
     // Announced once, not on every tick of the countdown.
@@ -1949,7 +2001,8 @@ class Player {
     this.chaptersDrawn = false;
     this.segments = [];
     this.introSkipped = false;
-    if (this.skipBtn) { this.skipBtn.remove(); this.skipBtn = null; }
+    this.creditsSkipped = false;
+    if (this.skipBtn) { this.skipBtn.remove(); this.skipBtn = null; this.skipKind = null; }
     for (const c of [...this.rail.querySelectorAll('.chap, .seg')]) c.remove();
     // Fallbacks (remux/transcode, software encoder, server audio/remux) were for the last file;
     // the next one starts from the user's chosen method again.

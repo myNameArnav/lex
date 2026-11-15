@@ -41,7 +41,7 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 	if c.CacheDir != old.CacheDir {
 		s.Cache.Reconcile()
 	}
-	if c.IntroDetect && !old.IntroDetect {
+	if c.IntroDetect && !old.IntroDetect || c.CreditsDetect && !old.CreditsDetect {
 		s.Intro.Trigger()
 	}
 	if c.TrickplayEnabled && !old.TrickplayEnabled {

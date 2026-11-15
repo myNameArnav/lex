@@ -88,7 +88,7 @@ test('the in-player sheet lists only player keys and pauses playback', async () 
   const s = sheet();
   assert.deepEqual(s.sections, ['Player', 'General']);
   assert.deepEqual(s.rows[1], ['Show keyboard shortcuts']);
-  assert.ok(s.rows[0].includes('Skip intro'));
+  assert.ok(s.rows[0].includes('Skip intro / credits'));
   assert.ok(s.rows[0].includes('Start / near the end'));
   assert.equal(calls.paused, 1);
   assert.equal(calls.resumed, 0);

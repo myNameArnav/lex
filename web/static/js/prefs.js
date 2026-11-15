@@ -15,6 +15,7 @@ export const DEFAULTS = {
   subBg: true,
   subPos: 'normal',    // low | normal | high
   autoSkipIntro: false,
+  autoSkipCredits: false,
   autoplayNext: true,
   countdown: 10,
   showStats: false,
