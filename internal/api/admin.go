@@ -506,9 +506,10 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 		t = []store.TokenInfo{}
 	}
 	// Mark the caller's own session so the UI can say "This device".
-	if tok := s.token(r); len(tok) >= 8 {
+	if tok := s.token(r); tok != "" {
+		id := store.DeviceID(tok)
 		for i := range t {
-			t[i].Current = t[i].Prefix == tok[:8]
+			t[i].Current = t[i].Prefix == id
 		}
 	}
 	writeJSON(w, t)

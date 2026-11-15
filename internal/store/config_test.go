@@ -75,3 +75,38 @@ func TestClientRemuxSetting(t *testing.T) {
 		t.Fatal("turning it off didn't stick")
 	}
 }
+
+// History is kept a year by default, also for settings saved before the
+// option existed; 0 keeps it forever and out-of-range values are clamped.
+func TestHistoryRetentionSetting(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if d := s.Config().HistoryRetentionDays; d != 365 {
+		t.Fatalf("default %d", d)
+	}
+	if err := s.setKV("config", `{"serverName":"Old"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.loadConfig(); err != nil {
+		t.Fatal(err)
+	}
+	if d := s.Config().HistoryRetentionDays; d != 365 {
+		t.Fatalf("older settings: %d", d)
+	}
+	for _, c := range []struct{ in, want int }{{0, 0}, {30, 30}, {-1, 0}, {100000, 36500}} {
+		cfg := s.Config()
+		cfg.HistoryRetentionDays = c.in
+		if _, err := s.SaveConfig(cfg); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.loadConfig(); err != nil {
+			t.Fatal(err)
+		}
+		if d := s.Config().HistoryRetentionDays; d != c.want {
+			t.Fatalf("saved %d, got %d, want %d", c.in, d, c.want)
+		}
+	}
+}

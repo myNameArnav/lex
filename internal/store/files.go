@@ -375,6 +375,19 @@ func (s *Store) History(limit, offset int) ([]HistoryEntry, error) {
 	return out, rows.Err()
 }
 
+// PruneHistory deletes plays that started more than days days ago and
+// returns how many went. days <= 0 keeps everything.
+func (s *Store) PruneHistory(days int) (int64, error) {
+	if days <= 0 {
+		return 0, nil
+	}
+	res, err := s.db.Exec(`DELETE FROM history WHERE started_at < ?`, now()-int64(days)*86400)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func (s *Store) ClearHistory() error {
 	_, err := s.db.Exec(`DELETE FROM history`)
 	return err

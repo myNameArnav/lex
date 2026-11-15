@@ -131,10 +131,11 @@ frames from the films.</sub>
   The Playback tab has analytics for 7 to 365 days (watch time per day, or per week
   for long ranges; methods, stall rate by method, top titles, users, clients,
   conversion reasons, time of day; each chart's values can be shown as a table)
-  and the paged play history over all time. The Library tab breaks the library down by codec,
+  and the paged play history (kept 365 days by default; change it, or keep it forever,
+  in Settings → Server). The Library tab breaks the library down by codec,
   resolution, HDR, container and size.
 - **Users** – multiple accounts, per-user watch state, admin roles (an admin can't
-  change their own role), device sign-out, login rate limiting, bcrypt passwords, HttpOnly cookies, and cross-origin
+  change their own role), device sign-out, login rate limiting, bcrypt passwords, session tokens stored only as hashes, HttpOnly cookies, and cross-origin
   protection for browser mutations.
 - **Settings** – everything above is toggleable: methods, transcode limits, encoder,
   preset/CRF/threads/nice, audio channels/bitrate, tone mapping, fragment & keyframe

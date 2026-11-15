@@ -1,7 +1,9 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"strings"
 	"sync"
@@ -191,10 +193,26 @@ func (s *Store) CountAdmins() (int, error) {
 
 // ---- tokens ----
 
+// Session tokens are bearer secrets, so only their SHA-256 is stored: a
+// leaked database or backup can't be replayed as a session. The raw token is
+// handed to the client once, by CreateToken. Devices are named by the first
+// DeviceIDLen hex characters of the hash, which reveal nothing usable.
+
+// DeviceIDLen is the length of a device id (a prefix of the token hash).
+const DeviceIDLen = 16
+
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// DeviceID is the id the devices list shows for a session token.
+func DeviceID(token string) string { return hashToken(token)[:DeviceIDLen] }
+
 func (s *Store) CreateToken(userID int64, client, ip string) (string, error) {
 	t := RandomToken(24)
 	_, err := s.db.Exec(`INSERT INTO tokens(token,user_id,created_at,last_seen,client,ip) VALUES(?,?,?,?,?,?)`,
-		t, userID, now(), now(), client, ip)
+		hashToken(t), userID, now(), now(), client, ip)
 	return t, err
 }
 
@@ -204,8 +222,9 @@ func (s *Store) TokenUser(token string) (*User, error) {
 	if token == "" {
 		return nil, ErrNotFound
 	}
+	h := hashToken(token)
 	var uid, seen int64
-	err := s.db.QueryRow(`SELECT user_id,last_seen FROM tokens WHERE token=?`, token).Scan(&uid, &seen)
+	err := s.db.QueryRow(`SELECT user_id,last_seen FROM tokens WHERE token=?`, h).Scan(&uid, &seen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -214,22 +233,22 @@ func (s *Store) TokenUser(token string) (*User, error) {
 	}
 	// Tokens expire after 90 days of inactivity.
 	if now()-seen > 90*86400 {
-		s.db.Exec(`DELETE FROM tokens WHERE token=?`, token)
+		s.db.Exec(`DELETE FROM tokens WHERE token=?`, h)
 		return nil, ErrNotFound
 	}
 	if now()-seen > 600 {
-		s.db.Exec(`UPDATE tokens SET last_seen=? WHERE token=?`, now(), token)
+		s.db.Exec(`UPDATE tokens SET last_seen=? WHERE token=?`, now(), h)
 	}
 	return s.User(uid)
 }
 
 func (s *Store) DeleteToken(token string) error {
-	_, err := s.db.Exec(`DELETE FROM tokens WHERE token=?`, token)
+	_, err := s.db.Exec(`DELETE FROM tokens WHERE token=?`, hashToken(token))
 	return err
 }
 
 type TokenInfo struct {
-	Prefix   string `json:"prefix"`
+	Prefix   string `json:"prefix"` // device id: a prefix of the token hash, not of the token
 	UserID   int64  `json:"userId"`
 	UserName string `json:"userName"`
 	Created  int64  `json:"created"`
@@ -240,7 +259,7 @@ type TokenInfo struct {
 }
 
 func (s *Store) Tokens() ([]TokenInfo, error) {
-	rows, err := s.db.Query(`SELECT substr(t.token,1,8),t.user_id,u.name,t.created_at,t.last_seen,t.client,t.ip FROM tokens t JOIN users u ON u.id=t.user_id ORDER BY t.last_seen DESC`)
+	rows, err := s.db.Query(`SELECT substr(t.token,1,?),t.user_id,u.name,t.created_at,t.last_seen,t.client,t.ip FROM tokens t JOIN users u ON u.id=t.user_id ORDER BY t.last_seen DESC`, DeviceIDLen)
 	if err != nil {
 		return nil, err
 	}
@@ -256,10 +275,52 @@ func (s *Store) Tokens() ([]TokenInfo, error) {
 	return out, rows.Err()
 }
 
+// DeleteTokenPrefix signs out the device with the given id (see DeviceID).
 func (s *Store) DeleteTokenPrefix(prefix string) error {
-	if len(prefix) < 8 {
-		return errors.New("bad prefix")
+	if len(prefix) != DeviceIDLen || strings.Trim(prefix, "0123456789abcdef") != "" {
+		return errors.New("bad device id")
 	}
-	_, err := s.db.Exec(`DELETE FROM tokens WHERE substr(token,1,8)=?`, prefix)
+	_, err := s.db.Exec(`DELETE FROM tokens WHERE substr(token,1,?)=?`, DeviceIDLen, prefix)
 	return err
+}
+
+// migrateTokens replaces plaintext tokens left by older versions with their
+// hashes, once, so upgrading signs nobody out. A kv marker records that it
+// ran, since a raw token and a hash are both hex strings.
+func migrateTokens(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var done int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM kv WHERE key='tokens_hashed'`).Scan(&done); err != nil || done > 0 {
+		return err
+	}
+	rows, err := tx.Query(`SELECT token FROM tokens`)
+	if err != nil {
+		return err
+	}
+	var raw []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			rows.Close()
+			return err
+		}
+		raw = append(raw, t)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, t := range raw {
+		if _, err := tx.Exec(`UPDATE tokens SET token=? WHERE token=?`, hashToken(t), t); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO kv(key,value) VALUES('tokens_hashed','1')`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

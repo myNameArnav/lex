@@ -181,3 +181,37 @@ func TestOpenAddsLateColumns(t *testing.T) {
 		st.Close()
 	}
 }
+
+// PruneHistory drops plays older than the retention period and keeps the
+// rest; 0 days keeps everything.
+func TestPruneHistory(t *testing.T) {
+	st := testStore(t)
+	day := int64(86400)
+	for _, age := range []int64{0, 10, 29, 31, 400} {
+		started := now() - age*day
+		if err := st.AddHistory(&HistoryEntry{UserID: 1, ItemID: 1, Title: "t", StartedAt: started, EndedAt: started + 60}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := func() int {
+		var n int
+		st.DB().QueryRow(`SELECT COUNT(*) FROM history`).Scan(&n)
+		return n
+	}
+	for _, days := range []int{0, -5} {
+		if n, err := st.PruneHistory(days); err != nil || n != 0 || count() != 5 {
+			t.Fatalf("days=%d pruned %d (%v), %d left", days, n, err, count())
+		}
+	}
+	if n, err := st.PruneHistory(365); err != nil || n != 1 || count() != 4 {
+		t.Fatalf("365: pruned %d (%v), %d left", n, err, count())
+	}
+	if n, err := st.PruneHistory(30); err != nil || n != 1 || count() != 3 {
+		t.Fatalf("30: pruned %d (%v), %d left", n, err, count())
+	}
+	var oldest int64
+	st.DB().QueryRow(`SELECT MIN(started_at) FROM history`).Scan(&oldest)
+	if now()-oldest > 30*day {
+		t.Fatal("kept a play older than 30 days")
+	}
+}

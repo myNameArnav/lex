@@ -190,6 +190,29 @@ func main() {
 		}
 	}()
 
+	// Playback history older than the retention setting goes once at
+	// startup and then hourly (history_started keeps the delete cheap).
+	go func() {
+		prune := func() {
+			if n, err := st.PruneHistory(st.Config().HistoryRetentionDays); err != nil {
+				log.Warnf("prune history: %v", err)
+			} else if n > 0 {
+				log.Infof("pruned %d plays older than %d days from history", n, st.Config().HistoryRetentionDays)
+			}
+		}
+		prune()
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				prune()
+			}
+		}
+	}()
+
 	listener, err := net.Listen("tcp", *addr)
 	if err != nil {
 		log.Errorf("listen: %v", err)
