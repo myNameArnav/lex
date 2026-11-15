@@ -145,6 +145,7 @@ function prefsSection() {
     h('div', { class: 'form-section' }, h('h2', null, 'Player'),
       toggleRow('Autoplay next episode', 'Shows an "Up next" card near the end with a countdown.', p.autoplayNext, set('autoplayNext')),
       toggleRow('Skip intros automatically', 'Otherwise a "Skip Intro" button appears while an intro plays.', p.autoSkipIntro, set('autoSkipIntro')),
+      toggleRow('Skip credits automatically', 'When the end credits start, play the next episode right away (with autoplay on), or jump to the end of a film or last episode. Otherwise a "Skip Credits" button appears.', p.autoSkipCredits, set('autoSkipCredits')),
       toggleRow('Show stats for nerds by default', 'Overlay with codecs, bitrate, buffer health, dropped frames and server transcode speed (press i in the player).', p.showStats, set('showStats')),
       toggleRow('Single-key shortcuts', 'p, /, ? and g-then-key. Ctrl/⌘ K and the player keys always work.', p.shortcuts, set('shortcuts')),
       h('div', { class: 'form-grid' },
@@ -553,13 +554,17 @@ async function metadataSection() {
       h('div', { class: 'form-grid' },
         field('Interval (seconds)', num('trickplayInterval', { min: 2, max: 60 }), 'Changes apply to newly generated previews.'),
         field('Thumbnail width (px)', num('trickplayWidth', { min: 120, max: 480, step: 20 })))),
-    h('div', { class: 'form-section' }, h('h2', null, 'Intro detection'),
-      h('p', { class: 'help', style: { margin: 0 } }, 'Finds TV intros by comparing audio fingerprints of neighbouring episodes (like Jellyfin\'s Intro Skipper), or from chapters named Intro/Opening. Runs in the background at the lowest CPU priority after scans.'),
+    h('div', { class: 'form-section' }, h('h2', null, 'Intro & credits detection'),
+      h('p', { class: 'help', style: { margin: 0 } }, 'Finds TV intros and end credits by comparing audio fingerprints of neighbouring episodes (like Jellyfin\'s Intro Skipper), or from chapters named Intro/Opening and Credits/Ending. Runs in the background at the lowest CPU priority after scans.'),
       tg('introDetect', 'Detect intros'),
       h('div', { class: 'form-grid' },
         field('Analyse the first (seconds)', num('introScanSecs', { min: 120, max: 1800, step: 30 }), 'Intros after cold opens can start a few minutes in.'),
         field('Shortest intro (seconds)', num('introMinSecs', { min: 5, max: 60 })),
-        field('Longest intro (seconds)', num('introMaxSecs', { min: 20, max: 300 })))),
+        field('Longest intro (seconds)', num('introMaxSecs', { min: 20, max: 300 }))),
+      tg('creditsDetect', 'Detect end credits', '"Up next" then starts when the credits do, and films and last episodes get "Skip Credits".'),
+      h('div', { class: 'form-grid' },
+        field('Analyse the last (seconds)', num('creditsScanSecs', { min: 120, max: 1200, step: 30 }), 'At most 40% of an episode is analysed.'),
+        field('Shortest credits (seconds)', num('creditsMinSecs', { min: 5, max: 120 })))),
     h('div', { class: 'form-section' }, h('h2', null, 'Local'),
       tg('useLocalMetadata', 'Use local artwork & hints', 'poster.jpg / fanart.jpg / *-thumb.jpg, .plexmatch and .nfo ids.'),
       tg('generateThumbs', 'Generate missing episode thumbnails', 'Grabs one frame with ffmpeg when no still is available (cached).')),
@@ -573,8 +578,8 @@ async function metadataSection() {
         const btn = e.currentTarget;
         if (await confirmDialog('Re-fetch metadata for every item? Manual matches are kept.', 'Refresh', false, 'Refresh all metadata?')) await run(btn, () => api('/api/admin/metadata/refresh', { method: 'POST', body: {} }), 'Refreshing all metadata in the background');
       } }, 'Refresh all metadata'),
-      h('button', { class: 'btn', type: 'button', disabled: !introOK, 'aria-describedby': introOK ? null : 'intro-unavail', onclick: (e) => run(e.currentTarget, () => api('/api/admin/intro/scan', { method: 'POST' }), 'Intro detection started') }, 'Detect intros now')),
-    introOK ? null : h('div', { class: 'help', id: 'intro-unavail' }, 'Intro detection is unavailable: this ffmpeg has no chromaprint support.'));
+      h('button', { class: 'btn', type: 'button', disabled: !introOK, 'aria-describedby': introOK ? null : 'intro-unavail', onclick: (e) => run(e.currentTarget, () => api('/api/admin/intro/scan', { method: 'POST' }), 'Intro & credits detection started') }, 'Detect intros & credits now')),
+    introOK ? null : h('div', { class: 'help', id: 'intro-unavail' }, 'Intro & credits detection is unavailable: this ffmpeg has no chromaprint support.'));
   return h('div', { class: 'form' }, form, actions);
 }
 
@@ -1003,7 +1008,7 @@ async function logsSection(ctx) {
     status.replaceChildren(
       taskRow('Library scan', s.running, s.running ? `${s.phase}${s.library ? ' · ' + s.library : ''}${s.phase === 'probing' ? ` · ${s.probeDone}/${s.probeTotal} ${s.current}` : ''}` : `idle · last finished ${timeAgo(s.finishedAt)} (found ${s.found}, +${s.added}, −${s.removed}, changed ${s.changed})`),
       taskRow('Metadata', m.running, m.running ? `${m.done}/${m.total} · ${m.current}` : `idle · last run ${timeAgo(m.lastRun)} (${m.matched} matched, ${m.missing} not found)`),
-      taskRow('Intro detection', t.intro.running, !t.intro.available ? 'unavailable (ffmpeg without chromaprint)' : t.intro.running ? `${t.intro.done}/${t.intro.seasons} seasons · ${t.intro.current} · ${t.intro.found} found` : `idle · last run ${timeAgo(t.intro.lastRun)}`),
+      taskRow('Intro & credits detection', t.intro.running, !t.intro.available ? 'unavailable (ffmpeg without chromaprint)' : t.intro.running ? `${t.intro.done}/${t.intro.seasons} seasons · ${t.intro.current} · ${t.intro.found} intros, ${t.intro.creditsFound || 0} credits found` : `idle · last run ${timeAgo(t.intro.lastRun)}`),
       taskRow('SSD cache', !!t.cache.current, !t.cache.enabled ? 'disabled' : t.cache.current ? `copying ${t.cache.current.name} · ${Math.round((t.cache.current.done / t.cache.current.size) * 100)}% · ${fmtBytes(t.cache.current.speed)}/s${t.cache.queued.length ? ` · ${t.cache.queued.length} queued` : ''}` : `idle · ${t.cache.files} files, ${fmtBytes(t.cache.usedBytes)} of ${fmtBytes(t.cache.maxBytes)}`),
       t.trickplay ? taskRow('Seek previews', t.trickplay.running, !t.trickplay.enabled ? 'disabled' : t.trickplay.running ? `generating ${t.trickplay.current} · ${t.trickplay.pending} left` : t.trickplay.paused ? `paused while something is playing · ${t.trickplay.pending} left` : t.trickplay.pending ? `${t.trickplay.pending} waiting` : `idle · all done${t.trickplay.failed ? ` (${t.trickplay.failed} failed)` : ''}`) : '',
       h('div', { class: 'task' }, h('b', null, 'ffmpeg jobs'), `${t.remuxJobs} remux · ${t.transcodeJobs} transcode`));

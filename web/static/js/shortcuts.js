@@ -34,7 +34,7 @@ const SECTIONS = [
     [['f'], 'Fullscreen'], [['c'], 'Subtitles & audio'],
     [['g', 'h'], 'Subtitles earlier / later (0.1 s)'],
     [['n'], 'Next episode (Live TV: next channel)'], [['PgUp', 'PgDn'], 'Next / previous chapter (Live TV: channel up / down)'],
-    [['s'], 'Skip intro'], [['i'], 'Stats for nerds'],
+    [['s'], 'Skip intro / credits'], [['i'], 'Stats for nerds'],
     [['Esc'], 'Close the menu, then the player'],
   ]],
 ];

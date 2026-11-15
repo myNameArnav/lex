@@ -96,8 +96,11 @@ frames from the films.</sub>
 - **Seek previews** – thumbnail sprites generated in the background from keyframes
   at the lowest priority, shown while hovering or dragging the seek bar.
 - **Player** – resume, an Up next card that plays the next episode after a
-  countdown (Cancel stops it for that episode), an end card for movies (Back to
-  details / Play from start), subtitle/audio switching, quality & method menus,
+  countdown (Cancel stops it for that episode), starting when the end credits
+  do (detected credits, else a Credits/Ending chapter, else shortly before the
+  end), an end card for movies (Back to details / Play from start), **Skip
+  Intro** and, for movies and last episodes, **Skip Credits** buttons (`s`;
+  both can skip automatically, per device), subtitle/audio switching, quality & method menus,
   speed (kept until the player closes), PiP, Media Session keys, **chapters**
   (marks on the seek bar, the current chapter's name next to the time, a
   Chapters list in Settings, `PgUp`/`PgDn` for the next or previous one), keyboard
@@ -144,8 +147,12 @@ frames from the films.</sub>
   (quality, method, buffer ahead/behind, languages, subtitle style, single-key
   shortcuts).
 
-- **Media cache & intros** – optional disk cache with size/free-space limits,
-  next-episode prefetch, and intro detection when FFmpeg supports Chromaprint.
+- **Media cache, intros & credits** – optional disk cache with size/free-space
+  limits, next-episode prefetch, and intro and end-credits detection when FFmpeg
+  supports Chromaprint: audio fingerprints of the first and last minutes of
+  neighbouring episodes are compared to find the shared opening theme and
+  credits (chapters named Intro/Opening or Credits/Ending win). Re-detect
+  from an episode's or show's menu.
 
 ## Quick start
 
@@ -379,7 +386,7 @@ internal/stream    playback decisions, ffmpeg jobs, sessions, subtitles
 internal/subsearch OpenSubtitles.com search and download
 internal/trickplay seek-bar preview thumbnails
 internal/cache     optional media disk cache
-internal/intro     optional intro detection
+internal/intro     optional intro & end-credits detection
 internal/tv        Live TV channels and their daily schedules
 internal/sysstats  host/container statistics
 internal/api       HTTP API, auth, images, static files

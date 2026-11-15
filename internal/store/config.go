@@ -95,6 +95,11 @@ type Config struct {
 	IntroMinSecs  int  `json:"introMinSecs"`
 	IntroMaxSecs  int  `json:"introMaxSecs"`
 
+	// End-credits detection (same fingerprinting, on the end of episodes)
+	CreditsDetect   bool `json:"creditsDetect"`
+	CreditsScanSecs int  `json:"creditsScanSecs"`
+	CreditsMinSecs  int  `json:"creditsMinSecs"`
+
 	// HistoryRetentionDays is how long playback history is kept; older plays
 	// are pruned in the background. 0 keeps it forever.
 	HistoryRetentionDays int `json:"historyRetentionDays"`
@@ -162,6 +167,9 @@ func DefaultConfig() Config {
 		IntroScanSecs:      600,
 		IntroMinSecs:       12,
 		IntroMaxSecs:       130,
+		CreditsDetect:      true,
+		CreditsScanSecs:    420,
+		CreditsMinSecs:     15,
 
 		HistoryRetentionDays: 365,
 	}
@@ -256,6 +264,12 @@ func (c *Config) normalize() {
 	}
 	if c.IntroMaxSecs < c.IntroMinSecs+10 || c.IntroMaxSecs > 300 {
 		c.IntroMaxSecs = d.IntroMaxSecs
+	}
+	if c.CreditsScanSecs < 120 || c.CreditsScanSecs > 1200 {
+		c.CreditsScanSecs = d.CreditsScanSecs
+	}
+	if c.CreditsMinSecs < 5 || c.CreditsMinSecs > 120 {
+		c.CreditsMinSecs = d.CreditsMinSecs
 	}
 	if c.TrickplayInterval < 2 || c.TrickplayInterval > 60 {
 		c.TrickplayInterval = d.TrickplayInterval

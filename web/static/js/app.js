@@ -917,7 +917,7 @@ function moreItems(it, d) {
     } });
   }
   if (it.kind === 'show' || it.kind === 'episode') {
-    items.push({ label: 'Re-detect intro', icon: 'refresh', onClick: () => run(null, () => api(`/api/items/${it.id}/intro/reset`, { method: 'POST' }), 'Intro detection queued') });
+    items.push({ label: 'Re-detect intro & credits', icon: 'refresh', onClick: () => run(null, () => api(`/api/items/${it.id}/intro/reset`, { method: 'POST' }), 'Intro & credits detection queued') });
   }
   return items;
 }
@@ -964,6 +964,7 @@ function mediaView(ctx, d) {
     file ? h('span', { class: 'pill' }, [resLabel(file.width, file.height), file.hdr].filter(Boolean).join(' ') || file.container) : null,
     file?.cached ? h('span', { class: 'pill', title: 'Plays from the SSD cache' }, 'SSD') : null,
     d.segments?.find((s) => s.kind === 'intro') ? h('span', { class: 'pill', title: 'Intro detected' }, 'Intro ✓') : null,
+    d.segments?.find((s) => s.kind === 'credits') ? h('span', { class: 'pill', title: 'End credits detected' }, 'Credits ✓') : null,
   ]));
   if (it.genres?.length) info.push(h('div', { class: 'genres' }, it.genres.map((g) => h('span', null, g))));
   if (!file) info.push(h('p', { class: 'bad' }, 'No media file found for this item.'));

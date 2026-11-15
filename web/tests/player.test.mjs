@@ -769,3 +769,67 @@ test('a video decode failure on a browser remux still goes to transcode', async 
   assert.equal(g.requests[0].caps.clientAudio.length, 0);
   assert.equal(g.requests[0].caps.clientRemux, undefined);
 });
+
+test('credits come from detection, then a credits chapter late in the file, else nothing', async () => {
+  const f = await fixture();
+  f.player.plan.duration = 1400;
+  assert.equal(f.player.credits(), null);
+  // A chapter named Ending early on is not the credits.
+  f.player.file = { id: 2, info: { chapters: [{ start: 0, end: 300, title: 'Ending' }, { start: 300, end: 1300, title: 'Part B' }, { start: 1300, end: 0, title: 'Credits' }] } };
+  assert.deepEqual({ ...f.player.credits() }, { kind: 'credits', start: 1300, end: 1400, source: 'chapter' });
+  f.player.segments = [{ kind: 'intro', start: 10, end: 90 }, { kind: 'credits', start: 1290, end: 1380, source: 'fingerprint' }];
+  assert.equal(f.player.credits().start, 1290);
+});
+
+test('Skip Credits only shows without an episode up next, and runs to the end card or past the credits', async () => {
+  const f = await fixture();
+  f.player.plan.duration = 1400;
+  f.player.started = true;
+  f.player.segments = [{ kind: 'credits', start: 1300, end: 1398 }];
+  f.player.detail = { next: { id: 9 } };
+  assert.equal(f.player.skippable(1320), null);
+  f.player.upNextDismissed = true;
+  assert.equal(f.player.skippable(1320).kind, 'credits');
+  f.player.detail = {};
+  assert.equal(f.player.skippable(1299), null);
+  const s = f.player.skippable(1320);
+  f.player.skipSegment(s);
+  assert.equal(f.video.currentTime, 1399.5); // just short of the end, so 'ended' brings the end card
+  // A post-credits scene follows: skip to it.
+  f.player.segments = [{ kind: 'credits', start: 1200, end: 1300 }];
+  f.player.skipSegment(f.player.skippable(1250));
+  assert.equal(f.video.currentTime, 1300);
+});
+
+test('auto skip credits jumps once for a film, and plays the next episode without a countdown', async () => {
+  const f = await fixture({ prefValues: { autoSkipCredits: true, autoplayNext: true, countdown: 10 } });
+  const shown = [];
+  Object.assign(f.player.root, { querySelector: () => null, insertBefore: () => shown.push(f.player.skipKind) });
+  f.player.plan.duration = 1400;
+  f.player.started = true;
+  f.player.segments = [{ kind: 'credits', start: 1300, end: 1400 }];
+  f.player.detail = {};
+  f.video.currentTime = 1310;
+  f.player.checkSkip();
+  assert.equal(f.video.currentTime, 1399.5);
+  assert.deepEqual(f.toasts.at(-1), ['Skipped credits']);
+  // Seeking back into the credits doesn't skip them again: the button shows instead.
+  f.video.currentTime = 1320;
+  f.player.checkSkip();
+  assert.equal(f.video.currentTime, 1320);
+  assert.deepEqual(shown, ['credits']);
+
+  const g = await fixture({ prefValues: { autoSkipCredits: true, autoplayNext: true, countdown: 10 } });
+  let nexts = 0;
+  Object.assign(g.player, { detail: { next: { id: 9 } }, playNext() { nexts++; }, closeMenu() {} });
+  g.player.plan.duration = 1400;
+  g.player.segments = [{ kind: 'credits', start: 1300, end: 1400 }];
+  g.video.paused = false;
+  g.video.currentTime = 1250;
+  const checkUpNext = Object.getPrototypeOf(g.player).checkUpNext;
+  checkUpNext.call(g.player);
+  assert.equal(nexts, 0);
+  g.video.currentTime = 1301;
+  checkUpNext.call(g.player);
+  assert.equal(nexts, 1);
+});

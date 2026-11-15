@@ -190,6 +190,12 @@ CREATE TABLE IF NOT EXISTS intro_scans (
 	scanned_at INTEGER NOT NULL,
 	result TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS credits_scans (
+	file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+	scanned_at INTEGER NOT NULL,
+	result TEXT NOT NULL DEFAULT ''
+);
 `
 
 func Open(dataDir string) (*Store, error) {
