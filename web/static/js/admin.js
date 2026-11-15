@@ -519,7 +519,8 @@ function transcodingSection() {
       h('div', { class: 'form-section' }, h('h2', null, 'Streaming'),
         h('div', { class: 'form-grid' },
           field('Minimum fragment duration (ms)', num('fragmentMs', { min: 200, max: 10000, step: 100 }), 'Fragments start at video keyframes. Direct stream uses the source file’s keyframes.'),
-          field('Keyframe interval (s)', num('keyframeSec', { min: 1, max: 10 }), 'For transcodes. Shorter = more precise seeking.'))),
+          field('Keyframe interval (s)', num('keyframeSec', { min: 1, max: 10 }), 'For transcodes. Shorter = more precise seeking.')),
+        tg('clientRemux', 'Remux in the browser', 'For Direct Stream of MKV/WebM files, browsers read the original file and repackage it themselves, so the server only sends bytes and runs no ffmpeg.')),
     ];
   }, { check });
 }

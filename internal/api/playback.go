@@ -277,7 +277,13 @@ func (s *Server) direct(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "could not read media file")
 		return
 	}
-	sess, err := s.sessionFor(r, f, r.URL.Query().Get("sid"), "direct")
+	// The player's own remux reads the file here too (via=remux): a session
+	// re-opened after a server restart should say so.
+	method := "direct"
+	if r.URL.Query().Get("via") == "remux" {
+		method = "remux"
+	}
+	sess, err := s.sessionFor(r, f, r.URL.Query().Get("sid"), method)
 	if err != nil {
 		writeSessionErr(w, err)
 		return
