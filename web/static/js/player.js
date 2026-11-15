@@ -10,6 +10,11 @@ import { MseEngine, clock } from './mse.js';
 
 let current = null;
 
+// Firefox on macOS only starts HEVC at an IDR frame, and open-GOP encodes
+// have one only at 0:00, so it can't play them from anywhere else
+// (mse.js: DISCARD_BYTES). Without a transcode there's no way around it.
+const DISCARDED_HELP = 'This browser can only play this video from the beginning (Firefox on Mac can’t start this kind of HEVC partway through). Play it from the start, use Safari or Chrome, or ask an admin to turn transcoding on.';
+
 export function openPlayer(opts) {
   // Replacing an open player keeps its history entry, so a pending back()
   // can't pop the new one.
@@ -620,7 +625,11 @@ class Player {
     // MSE refused the stream's type (addSourceBuffer): a codec problem, so
     // fall back as for a decode error.
     else if (e.name === 'NotSupportedError' && this.plan) this.fallback(`The browser rejected the stream (${e.message})`);
-    else this.showError(e.message);
+    // The browser threw away the video after a seek and the transcode it
+    // fell back to is off: say what happened instead of the server's refusal.
+    else if (this.discarded && e.status === 422 && /transcoding is disabled/.test(e.message)) {
+      this.showError(DISCARDED_HELP, { title: "Can't play from here in this browser", retry: false });
+    } else this.showError(e.message);
   }
 
   // ---------- errors & fallback ----------
@@ -750,6 +759,7 @@ class Player {
     if (this.closed || !this.plan || this.failedPlan === this.plan || this.stopped) return;
     this.failedPlan = this.plan;
     this.startupWatch = null;
+    if (reason.startsWith('The browser discarded the video')) this.discarded = true;
     const via = [this.plan.clientRemux && 'browser remux', this.plan.clientAudio && 'browser audio'].filter(Boolean).join(', ');
     this.logEvent('fallback', `${this.plan.method}${this.plan.hls ? ' (HLS)' : ''}${via ? ` (${via})` : ''} at ${clock(this.video.currentTime)}: ${reason}${this.video.error ? ` [media error ${this.video.error.code}: ${this.video.error.message || ''}]` : ''}`);
     if (this.plan.hls && this.mode === 'hls') { this.showError(`HLS playback failed: ${reason}`, { transcode: true }); return; }

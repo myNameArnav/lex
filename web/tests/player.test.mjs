@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 // Run the actual Player methods with a native video whose play() stays
 // pending and never emits an error, as in the Firefox MKV startup hang.
-async function fixture({ method = 'direct', hls = false, blocked = false, rejectRemux = false, unsupportedRemux = false, apiGate = null, openGate = null, apiFailures = [], progressError = null, prefValues = {}, fetchImpl = null } = {}) {
+async function fixture({ method = 'direct', hls = false, blocked = false, rejectRemux = false, unsupportedRemux = false, apiGate = null, openGate = null, apiFailures = [], progressError = null, prefValues = {}, fetchImpl = null, planError = null } = {}) {
   let now = 0;
   let timerID = 0;
   const timers = new Map();
@@ -60,6 +60,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
         assert.equal(path, '/api/playback/plan');
         requests.push(body);
         if (apiGate) await apiGate;
+        if (planError) throw planError;
         if (apiFailures.length) {
           const status = apiFailures.shift();
           throw Object.assign(new Error(`HTTP ${status}`), { status });
@@ -848,4 +849,16 @@ test('video the browser discards after a seek goes to transcode, and the fallbac
   const fallback = f.events.find((e) => e.event === 'fallback');
   assert.equal(fallback.sessionId, 'session');
   assert.match(fallback.detail, /^remux \(browser remux, browser audio\) at 6000: The browser discarded the video/);
+});
+
+test('discarded video with transcoding off explains what happened instead of the server refusal', async () => {
+  const planError = Object.assign(new Error('video must be transcoded (forced transcode) but transcoding is disabled'), { status: 422 });
+  const f = await fixture({ method: 'remux', planError });
+  await f.player.onStreamError('The browser discarded the video it was sent after 50:13', 0, true, false);
+  assert.equal(f.errors.length, 1);
+  assert.match(f.errors[0], /only play this video from the beginning/);
+  // Other plan failures keep the server's message.
+  const g = await fixture({ method: 'remux', planError });
+  await g.player.onStreamError('media error 3', 0, true, false);
+  assert.match(g.errors[0], /transcoding is disabled/);
 });
