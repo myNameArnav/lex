@@ -148,18 +148,12 @@ frames from the films.</sub>
 
 ## Quick start
 
-Download the archive for your system from
-[Releases](https://github.com/myNameArnav/lex/releases/latest) (Linux amd64,
-arm64 and armv7; macOS; Windows), unpack it, install FFmpeg and FFprobe, and run:
-
-```sh
-./lex -addr 127.0.0.1:8420 -data ./data
-```
-
-Or build it yourself with Go **1.26.9 or newer**, from the repository root:
+There are no prebuilt binaries. Build Lex with Go **1.26.11 or newer**, from the
+repository root, install FFmpeg and FFprobe, and run:
 
 ```sh
 go build -trimpath -o lex ./cmd/lex
+./lex -addr 127.0.0.1:8420 -data ./data
 ```
 
 Open <http://localhost:8420>, create the first administrator, then add a library
@@ -185,8 +179,9 @@ as explicit paths. Debug logs can include private filenames and paths.
 
 ## Docker
 
-Images for `linux/amd64` and `linux/arm64` (including 64-bit Raspberry Pi OS)
-are published to GitHub Container Registry:
+A `linux/arm64` image (64-bit Raspberry Pi OS and other 64-bit ARM Linux) is
+published to GitHub Container Registry. For other platforms, build it yourself
+with `docker build -t lex .`.
 
 | Tag | Updated |
 |---|---|
@@ -313,9 +308,9 @@ and push a matching tag:
 git tag -a v0.0.12 -m "Lex v0.0.12" && git push origin v0.0.12
 ```
 
-The Release workflow checks the tag against the file, runs the tests, builds
-archives for every platform with `scripts/build-release.sh` and publishes them
-with checksums on GitHub Releases.
+The Release workflow checks the tag against the file, runs the tests and
+creates a GitHub Release (notes only); the Container image workflow publishes
+the arm64 image.
 
 ## Development and publication
 
@@ -329,8 +324,8 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
 CI runs on pull requests (merging doesn't run it again; Release re-runs the tests
 for each tag) and checks formatting, module consistency, race tests, Go vet, JavaScript/shell
-syntax, Compose configuration, publication privacy, secrets, vulnerabilities,
-release builds for every platform and the generic container build. The privacy script checks working
+syntax, Compose configuration, publication privacy, secrets and vulnerabilities.
+Pull requests that change the Dockerfile or its inputs also build the arm64 image. The privacy script checks working
 files and branch/tag history for private deployment addresses, home paths,
 runtime/configuration files and personal commit attribution. It complements
 manual review and secret scanning; it cannot detect every form of PII.

@@ -43,11 +43,3 @@ jobs:
           go run github.com/zricethezav/gitleaks/v8@v8.30.1 dir --redact --no-banner .
       - name: Vulnerability scanning
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
-      - name: Release builds (all platforms)
-        run: |
-          GOOS=windows go vet ./...
-          GOOS=darwin go vet ./...
-          bash -n scripts/build-release.sh
-          scripts/build-release.sh "v$(cat internal/version/VERSION)-ci"
-      - name: Container build
-        run: docker build --build-arg RPI_FFMPEG=no -t lex:ci .

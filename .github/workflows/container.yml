@@ -1,11 +1,10 @@
 name: Container image
-# Multi-arch image (linux/amd64 + linux/arm64) on GitHub Container Registry:
+# linux/arm64 image (the Raspberry Pi) on GitHub Container Registry:
 #   v1.2.3 tag             -> :1.2.3, :1.2, :latest
 #   manual run on main     -> :edge (an unreleased build, e.g. to try on a Pi)
 #   every pushed build     -> :sha-<commit>
-# Pull requests that touch the image's inputs build both architectures
-# without pushing (CI already builds the amd64 image for every PR); a newer
-# push to the PR cancels the older build.
+# Pull requests that touch the image's inputs build it without pushing; a
+# newer push to the PR cancels the older build.
 # The arm64 runtime layer (apt under emulation) takes most of a build, so
 # layers are kept in :buildcache. Tags and manual runs write it; pull
 # requests only read it. The cache follows debian:trixie-slim: a new base
@@ -77,7 +76,7 @@ jobs:
           else
             args+=(--push --cache-to "type=registry,ref=$CACHE,mode=max,oci-mediatypes=true,image-manifest=true")
           fi
-          docker buildx build --platform linux/amd64,linux/arm64 \
+          docker buildx build --platform linux/arm64 \
             --build-arg COMMIT="$COMMIT" \
             --label org.opencontainers.image.revision="$GITHUB_SHA" \
             --label org.opencontainers.image.version="$(cat internal/version/VERSION)" \
