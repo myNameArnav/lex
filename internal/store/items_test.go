@@ -175,17 +175,17 @@ func TestListItemsGenreMatchesExactDecodedName(t *testing.T) {
 		{"%", nil},
 		{"Dram", nil},
 	} {
-		if got := listIDs(t, st, 1, ListQuery{Genre: tc.genre}); !slices.Equal(got, tc.want) {
+		if got := listIDs(t, st, 0, ListQuery{Genre: tc.genre}); !slices.Equal(got, tc.want) {
 			t.Errorf("genre %q = %v, want %v", tc.genre, got, tc.want)
 		}
 	}
 	// Every listed genre must find its titles.
-	genres, err := st.Genres(0)
+	genres, err := st.Genres(0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, g := range genres {
-		if len(listIDs(t, st, 1, ListQuery{Genre: g})) == 0 {
+		if len(listIDs(t, st, 0, ListQuery{Genre: g})) == 0 {
 			t.Errorf("genre %q lists no titles", g)
 		}
 	}

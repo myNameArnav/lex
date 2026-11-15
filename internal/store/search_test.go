@@ -49,22 +49,22 @@ func TestSearchIndex(t *testing.T) {
 		{"broken", []int64{6}}, // invalid JSON doesn't break indexing
 		{`"star" OR jeff`, nil},
 	} {
-		if got := listIDs(t, st, 1, ListQuery{Search: tc.q}); !slices.Equal(got, tc.want) {
+		if got := listIDs(t, st, 0, ListQuery{Search: tc.q}); !slices.Equal(got, tc.want) {
 			t.Errorf("search %q = %v, want %v", tc.q, got, tc.want)
 		}
 	}
 	// Totals follow the same match, and paging keeps the title-first order.
-	if _, total, _ := st.ListItems(1, ListQuery{Search: "jeff"}); total != 3 {
+	if _, total, _ := st.ListItems(0, ListQuery{Search: "jeff"}); total != 3 {
 		t.Fatalf("total = %d, want 3", total)
 	}
-	if got := listIDs(t, st, 1, ListQuery{Search: "jeff", Limit: 1, Offset: 1}); !slices.Equal(got, []int64{4}) {
+	if got := listIDs(t, st, 0, ListQuery{Search: "jeff", Limit: 1, Offset: 1}); !slices.Equal(got, []int64{4}) {
 		t.Fatalf("page 2 = %v, want [4]", got)
 	}
 	// Kind and sort still apply.
-	if got := listIDs(t, st, 1, ListQuery{Search: "jeff", Sort: "title", Desc: true}); !slices.Equal(got, []int64{5, 3, 4}) {
+	if got := listIDs(t, st, 0, ListQuery{Search: "jeff", Sort: "title", Desc: true}); !slices.Equal(got, []int64{5, 3, 4}) {
 		t.Fatalf("jeff by title desc = %v, want [5 3 4]", got)
 	}
-	if got := listIDs(t, st, 1, ListQuery{Search: "o", Kind: "show"}); !slices.Equal(got, []int64{7}) {
+	if got := listIDs(t, st, 0, ListQuery{Search: "o", Kind: "show"}); !slices.Equal(got, []int64{7}) {
 		t.Fatalf("shows = %v", got)
 	}
 }
@@ -81,16 +81,16 @@ func TestSearchIndexFollowsItems(t *testing.T) {
 	if err := st.SaveMetadata(it); err != nil {
 		t.Fatal(err)
 	}
-	if got := listIDs(t, st, 1, ListQuery{Search: "starman"}); len(got) != 0 {
+	if got := listIDs(t, st, 0, ListQuery{Search: "starman"}); len(got) != 0 {
 		t.Fatalf("old title still found: %v", got)
 	}
-	if got := listIDs(t, st, 1, ListQuery{Search: "tron russell"}); !slices.Equal(got, []int64{3}) {
+	if got := listIDs(t, st, 0, ListQuery{Search: "tron russell"}); !slices.Equal(got, []int64{3}) {
 		t.Fatalf("new title and cast = %v", got)
 	}
 	if err := st.SetItemStructure(2, "Spider-Verse", 0, 0, 0, 0, Hint{}); err != nil {
 		t.Fatal(err)
 	}
-	if got := listIDs(t, st, 1, ListQuery{Search: "verse"}); !slices.Equal(got, []int64{2}) {
+	if got := listIDs(t, st, 0, ListQuery{Search: "verse"}); !slices.Equal(got, []int64{2}) {
 		t.Fatalf("restructured title = %v", got)
 	}
 	// Deleting a library deletes its items' index rows too.
@@ -120,7 +120,7 @@ func TestSearchIndexIsRebuiltOnOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if got := listIDs(t, st, 1, ListQuery{Search: "spider"}); !slices.Equal(got, []int64{2}) {
+	if got := listIDs(t, st, 0, ListQuery{Search: "spider"}); !slices.Equal(got, []int64{2}) {
 		t.Fatalf("after reopening: %v", got)
 	}
 	// A database from before the index: no table, no version.
@@ -132,7 +132,7 @@ func TestSearchIndexIsRebuiltOnOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if got := listIDs(t, st, 1, ListQuery{Search: "tautou"}); !slices.Equal(got, []int64{1}) {
+	if got := listIDs(t, st, 0, ListQuery{Search: "tautou"}); !slices.Equal(got, []int64{1}) {
 		t.Fatalf("after re-creating the index: %v", got)
 	}
 }
@@ -165,7 +165,7 @@ func TestListProjections(t *testing.T) {
 		(8,1,'season',7,7,'Season 1','season 1',1,'Season text','2001-01-01','[{"name":"X"}]',0,0)`); err != nil {
 		t.Fatal(err)
 	}
-	items, _, err := st.ListItems(1, ListQuery{Search: "amelie"})
+	items, _, err := st.ListItems(0, ListQuery{Search: "amelie"})
 	if err != nil || len(items) != 1 {
 		t.Fatalf("%v %v", items, err)
 	}
@@ -176,14 +176,14 @@ func TestListProjections(t *testing.T) {
 	if c.Overview != "" || c.Cast != nil || c.Studios != nil || c.ProviderIDs != nil || c.Genres != nil || c.Tagline != "" || c.OriginalTitle != "" || c.Rating != 0 {
 		t.Fatalf("card has detail fields: %+v", c)
 	}
-	ch, err := st.ChildCards(7, 1)
+	ch, err := st.ChildCards(7, 0)
 	if err != nil || len(ch) != 1 {
 		t.Fatalf("%v %v", ch, err)
 	}
 	if ch[0].Overview != "Season text" || ch[0].Premiere != "2001-01-01" || ch[0].Cast != nil {
 		t.Fatalf("child card = %+v", ch[0])
 	}
-	full, err := st.ItemForUser(1, 1)
+	full, err := st.ItemForUser(1, 0)
 	if err != nil || full.Overview == "" || len(full.Cast) != 1 || full.ProviderIDs["tmdb"] != "1" {
 		t.Fatalf("detail = %+v (%v)", full, err)
 	}
