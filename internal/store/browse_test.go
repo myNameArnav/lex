@@ -35,14 +35,6 @@ func browseFixture(t *testing.T) *Store {
 	return st
 }
 
-func itemIDs(items []*Item) []int64 {
-	ids := make([]int64, len(items))
-	for i, it := range items {
-		ids[i] = it.ID
-	}
-	return ids
-}
-
 func TestWatchlistIsPerUserAndNewestFirst(t *testing.T) {
 	st := browseFixture(t)
 	for _, id := range []int64{11, 20} {
