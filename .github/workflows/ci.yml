@@ -1,8 +1,13 @@
 name: CI
 # Pull requests only: a PR's run tests it merged into main, so the merge
-# itself needn't run again. Release runs the tests on every tag.
+# itself needn't run again. PRs that only change docs or the version
+# number (releases) skip it.
 on:
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - internal/version/VERSION
+      - LICENSE
   workflow_dispatch:
 permissions:
   contents: read

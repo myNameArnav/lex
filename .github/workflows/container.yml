@@ -1,6 +1,6 @@
 name: Container image
 # linux/arm64 image (the Raspberry Pi) on GitHub Container Registry:
-#   v1.2.3 tag             -> :1.2.3, :1.2, :latest
+#   v1.2.3 tag             -> :1.2.3, :1.2, :latest, and a GitHub Release
 #   manual run on main     -> :edge (an unreleased build, e.g. to try on a Pi)
 #   every pushed build     -> :sha-<commit>
 # Pull requests that touch the image's inputs build it without pushing; a
@@ -22,7 +22,7 @@ on:
       - .github/workflows/container.yml
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write # the GitHub Release on tags
   packages: write
 concurrency:
   group: container-${{ github.ref }}
@@ -81,3 +81,12 @@ jobs:
             --label org.opencontainers.image.revision="$GITHUB_SHA" \
             --label org.opencontainers.image.version="$(cat internal/version/VERSION)" \
             "${args[@]}" .
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "Lex $GITHUB_REF_NAME" \
+            --notes-file .github/release-notes.md --generate-notes
