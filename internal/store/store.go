@@ -90,7 +90,10 @@ CREATE TABLE IF NOT EXISTS items (
 	hint TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS items_parent ON items(parent_id);
-CREATE INDEX IF NOT EXISTS items_show ON items(show_id, kind);
+-- A show's episodes in order (episodeOrder): next up and previous/next
+-- episode read one row from it. It replaces items_show(show_id, kind).
+DROP INDEX IF EXISTS items_show;
+CREATE INDEX IF NOT EXISTS items_show_order ON items(show_id, kind, season, episode);
 CREATE INDEX IF NOT EXISTS items_lib_kind ON items(library_id, kind);
 CREATE INDEX IF NOT EXISTS items_path ON items(library_id, kind, path);
 CREATE INDEX IF NOT EXISTS items_added ON items(added_at);
@@ -230,6 +233,10 @@ func Open(dataDir string) (*Store, error) {
 	if err := migrateTokens(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate tokens: %w", err)
+	}
+	if err := migrateSearch(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate search index: %w", err)
 	}
 	s := &Store{db: db}
 	if err := s.loadConfig(); err != nil {

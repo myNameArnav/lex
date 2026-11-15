@@ -516,6 +516,11 @@ export function refreshSoft() { return route({ soft: true }); }
 
 
 // ---------- cards ----------
+// List responses (/api/items, /api/home, /api/search) carry only what cards
+// use: ids, kind, title, year, season/episode, counts, userData, duration,
+// showTitle and updatedAt (store.cardCols). /api/items/:id/children adds
+// overview and premiere for episode rows and season tabs. Anything else
+// (overview, cast, genres, studios, ratings…) comes from /api/items/:id.
 function subtitleFor(it) {
   if (it.kind === 'show') return it.childCount ? `${it.childCount} episode${it.childCount === 1 ? '' : 's'}` : (it.year || '');
   if (it.kind === 'episode') return fmtEpisode(it);

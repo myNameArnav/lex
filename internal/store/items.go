@@ -163,6 +163,19 @@ const itemCols = `i.id,i.library_id,i.kind,COALESCE(i.parent_id,0),i.show_id,i.t
 	i.overview,i.tagline,i.rating,i.content_rating,i.genres,i.cast_json,i.studios,i.runtime,i.premiere,i.poster,i.backdrop,i.thumb,
 	i.provider_ids,i.path,i.added_at,i.updated_at,i.meta_status,i.meta_locked,i.hint`
 
+// cardCols is itemCols for list responses (grids, home rows, search): just
+// what cards render. The columns cards don't use read as zero values in the
+// same positions, so scanItem reads both, and the JSON leaves them out.
+const cardCols = `i.id,i.library_id,i.kind,COALESCE(i.parent_id,0),i.show_id,i.title,i.sort_title,'',i.year,i.season,i.episode,i.episode_end,
+	'','',0,'','','','',0,'','','','',
+	'','',i.added_at,i.updated_at,i.meta_status,0,'{}'`
+
+// childCols is cardCols plus what a show's season tabs and a season's
+// episode rows show: the overview and the air date.
+const childCols = `i.id,i.library_id,i.kind,COALESCE(i.parent_id,0),i.show_id,i.title,i.sort_title,'',i.year,i.season,i.episode,i.episode_end,
+	i.overview,'',0,'','','','',0,i.premiere,'','','',
+	'','',i.added_at,i.updated_at,i.meta_status,0,'{}'`
+
 type scanner interface{ Scan(...any) error }
 
 func scanItem(r scanner, extra ...any) (*Item, error) {
@@ -382,8 +395,11 @@ func (s *Store) queryItemsUD(q string, args ...any) ([]*Item, error) {
 }
 
 // udSelect builds a select of items joined with a user's data plus aggregates.
-func udSelect(where string) string {
-	return `SELECT ` + itemCols + `,
+func udSelect(where string) string { return udSelectCols(itemCols, where) }
+
+// udSelectCols is udSelect with another projection (cardCols, childCols).
+func udSelectCols(cols, where string) string {
+	return `SELECT ` + cols + `,
 		COALESCE(ud.position,0),COALESCE(ud.played,0),COALESCE(ud.play_count,0),COALESCE(ud.last_played,0),COALESCE(ud.favorite,0),
 		CASE i.kind WHEN 'show' THEN (SELECT COUNT(*) FROM items e WHERE e.show_id=i.id AND e.kind='episode')
 		            WHEN 'season' THEN (SELECT COUNT(*) FROM items e WHERE e.parent_id=i.id AND e.kind='episode') ELSE 0 END,
@@ -406,11 +422,61 @@ func (s *Store) ItemForUser(id, uid int64) (*Item, error) {
 }
 
 func (s *Store) Children(parentID, uid int64) ([]*Item, error) {
-	return s.queryItemsUD(udSelect(`WHERE i.parent_id=:pid ORDER BY i.season, i.episode, i.sort_title`), sql.Named("uid", uid), sql.Named("pid", parentID))
+	return s.children(itemCols, parentID, uid)
 }
 
+// ChildCards is Children with only what season tabs and episode rows show
+// (childCols).
+func (s *Store) ChildCards(parentID, uid int64) ([]*Item, error) {
+	return s.children(childCols, parentID, uid)
+}
+
+func (s *Store) children(cols string, parentID, uid int64) ([]*Item, error) {
+	return s.queryItemsUD(udSelectCols(cols, `WHERE i.parent_id=:pid ORDER BY i.season, i.episode, i.sort_title`), sql.Named("uid", uid), sql.Named("pid", parentID))
+}
+
+// episodeOrder is a show's episode order: by season and episode, then id
+// so that duplicates keep a stable order. It matches the items_show index.
+const episodeOrder = `i.season, i.episode, i.id`
+
 func (s *Store) ShowEpisodes(showID, uid int64) ([]*Item, error) {
-	return s.queryItemsUD(udSelect(`WHERE i.show_id=:sid AND i.kind='episode' ORDER BY i.season, i.episode`), sql.Named("uid", uid), sql.Named("sid", showID))
+	return s.queryItemsUD(udSelect(`WHERE i.show_id=:sid AND i.kind='episode' ORDER BY `+episodeOrder), sql.Named("uid", uid), sql.Named("sid", showID))
+}
+
+// oneItemUD runs a udSelect for at most one item, or nil.
+func (s *Store) oneItemUD(q string, args ...any) (*Item, error) {
+	items, err := s.queryItemsUD(q, args...)
+	if err != nil || len(items) == 0 {
+		return nil, err
+	}
+	return items[0], nil
+}
+
+// AdjacentEpisodes returns the episodes before and after ep in its show's
+// episode order (specials included), or nil at either end.
+func (s *Store) AdjacentEpisodes(ep *Item, uid int64) (prev, next *Item, err error) {
+	// The id is found first, so the select's aggregates run for one row.
+	near := func(cmp, dir string) (*Item, error) {
+		return s.oneItemUD(udSelect(`WHERE i.id=(SELECT e.id FROM items e WHERE e.show_id=:sid AND e.kind='episode'
+			AND (e.season,e.episode,e.id) `+cmp+` (:season,:episode,:id)
+			ORDER BY e.season `+dir+`, e.episode `+dir+`, e.id `+dir+` LIMIT 1)`),
+			sql.Named("uid", uid), sql.Named("sid", ep.ShowID), sql.Named("season", ep.Season), sql.Named("episode", ep.Episode), sql.Named("id", ep.ID))
+	}
+	if prev, err = near("<", "DESC"); err != nil {
+		return nil, nil, err
+	}
+	next, err = near(">", "ASC")
+	return prev, next, err
+}
+
+// ShowNextEpisode is what "Play" on a show starts: its first unwatched
+// regular (non-special) episode, or else its first episode; nil if it has
+// none.
+func (s *Store) ShowNextEpisode(showID, uid int64) (*Item, error) {
+	return s.oneItemUD(udSelect(`WHERE i.id=(SELECT e.id FROM items e LEFT JOIN user_data u ON u.item_id=e.id AND u.user_id=:uid
+		WHERE e.show_id=:sid AND e.kind='episode'
+		ORDER BY (e.season>0 AND COALESCE(u.played,0)=0) DESC, e.season, e.episode, e.id LIMIT 1)`),
+		sql.Named("uid", uid), sql.Named("sid", showID))
 }
 
 type ListQuery struct {
@@ -426,8 +492,7 @@ type ListQuery struct {
 	Seed      int64 // sort=random: a non-zero seed gives a stable order across pages
 }
 
-var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-
+// ListItems returns a page of titles as cards (cardCols) and the total.
 func (s *Store) ListItems(uid int64, q ListQuery) ([]*Item, int, error) {
 	var conds []string
 	args := []any{sql.Named("uid", uid)}
@@ -448,10 +513,18 @@ func (s *Store) ListItems(uid int64, q ListQuery) ([]*Item, int, error) {
 		conds = append(conds, `EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(i.genres) THEN i.genres ELSE '[]' END) j WHERE j.value=:genre)`)
 		args = append(args, sql.Named("genre", q.Genre))
 	}
+	// The search index matches words by prefix; a term it can't use, or
+	// that it finds nothing for, is matched as a substring instead.
+	searchAt, fts := -1, ftsQuery(q.Search)
 	if q.Search != "" {
-		// The term is matched literally: % and _ in it are not wildcards.
-		conds = append(conds, `(i.title LIKE :q ESCAPE '\' OR i.original_title LIKE :q ESCAPE '\')`)
-		args = append(args, sql.Named("q", "%"+likeEscaper.Replace(q.Search)+"%"))
+		searchAt = len(conds)
+		if fts != "" {
+			conds = append(conds, ftsCond)
+			args = append(args, sql.Named("fts", fts), sql.Named("ftstitle", ftsTitleQuery(fts)))
+		} else {
+			conds = append(conds, likeCond)
+			args = append(args, sql.Named("q", likePattern(q.Search)))
+		}
 	}
 	switch q.Filter {
 	case "unplayed":
@@ -471,6 +544,15 @@ func (s *Store) ListItems(uid int64, q ListQuery) ([]*Item, int, error) {
 	var total int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM items i LEFT JOIN user_data ud ON ud.item_id=i.id AND ud.user_id=:uid `+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
+	}
+	if total == 0 && fts != "" {
+		fts = ""
+		conds[searchAt] = likeCond
+		args = append(args, sql.Named("q", likePattern(q.Search)))
+		where = "WHERE " + strings.Join(conds, " AND ")
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM items i LEFT JOIN user_data ud ON ud.item_id=i.id AND ud.user_id=:uid `+where, args...).Scan(&total); err != nil {
+			return nil, 0, err
+		}
 	}
 	dir := "ASC"
 	if q.Desc {
@@ -499,11 +581,15 @@ func (s *Store) ListItems(uid int64, q ListQuery) ([]*Item, int, error) {
 			order = fmt.Sprintf("%s * %s %% %d, i.id", x, x, randomPrime)
 		}
 	}
+	if fts != "" && q.Sort != "random" {
+		// Titles that match go before titles found by cast or genre.
+		order = ftsTitleFirst + ", " + order
+	}
 	if q.Limit <= 0 || q.Limit > 500 {
 		q.Limit = 500
 	}
 	where += fmt.Sprintf(" ORDER BY %s LIMIT %d OFFSET %d", order, q.Limit, q.Offset)
-	items, err := s.queryItemsUD(udSelect(where), args...)
+	items, err := s.queryItemsUD(udSelectCols(cardCols, where), args...)
 	return items, total, err
 }
 
@@ -552,65 +638,39 @@ func (s *Store) RecentlyAdded(uid int64, libID int64, kind string, limit int) ([
 
 // ContinueWatching returns items with a resume position, most recent first.
 func (s *Store) ContinueWatching(uid int64, limit int) ([]*Item, error) {
-	return s.queryItemsUD(udSelect(fmt.Sprintf(`WHERE ud.position>0 AND ud.played=0 AND i.kind IN ('movie','episode') ORDER BY ud.last_played DESC LIMIT %d`, limit)), sql.Named("uid", uid))
+	return s.queryItemsUD(udSelectCols(cardCols, fmt.Sprintf(`WHERE ud.position>0 AND ud.played=0 AND i.kind IN ('movie','episode') ORDER BY ud.last_played DESC LIMIT %d`, limit)), sql.Named("uid", uid))
 }
 
-// NextUp returns, for each recently watched show, the first unplayed episode
-// after the last played one.
+// NextUp returns, for each recently watched show, the first unwatched
+// regular episode after the episode watched last, most recent show first.
+// A show whose latest episode is only part watched is left to Continue
+// Watching. Of the shows with the 2*limit most recent activity, at most
+// limit are returned.
 func (s *Store) NextUp(uid int64, limit int) ([]*Item, error) {
-	rows, err := s.db.Query(`SELECT e.show_id, MAX(ud.last_played) lp FROM user_data ud JOIN items e ON e.id=ud.item_id
-		WHERE ud.user_id=? AND e.kind='episode' AND (ud.played=1 OR ud.position>0) GROUP BY e.show_id ORDER BY lp DESC LIMIT ?`, uid, limit*2)
-	if err != nil {
-		return nil, err
-	}
-	type sl struct {
-		id int64
-		lp int64
-	}
-	var shows []sl
-	for rows.Next() {
-		var x sl
-		rows.Scan(&x.id, &x.lp)
-		shows = append(shows, x)
-	}
-	rows.Close()
-	var out []*Item
-	for _, sh := range shows {
-		eps, err := s.ShowEpisodes(sh.id, uid)
-		if err != nil {
-			return nil, err
-		}
-		// Find the most recently played episode and pick the next unplayed after it.
-		lastIdx := -1
-		var lastTime int64
-		for i, e := range eps {
-			if e.UserData != nil && e.UserData.LastPlayed >= lastTime && (e.UserData.Played || e.UserData.Position > 0) {
-				lastTime = e.UserData.LastPlayed
-				lastIdx = i
-			}
-		}
-		if lastIdx < 0 {
-			continue
-		}
-		// An in-progress episode belongs to Continue Watching, not Next Up.
-		if !eps[lastIdx].UserData.Played {
-			continue
-		}
-		for j := lastIdx + 1; j < len(eps); j++ {
-			if eps[j].Season == 0 {
-				continue
-			}
-			if !eps[j].UserData.Played {
-				out = append(out, eps[j])
-				break
-			}
-		}
-		if len(out) >= limit {
-			break
-		}
-	}
-	return out, nil
+	return s.queryItemsUD(nextUpSQL, sql.Named("uid", uid), sql.Named("shows", limit*2), sql.Named("limit", limit))
 }
+
+// nextUpSQL: shows are the recently watched shows; last is each one's
+// latest started or watched episode (ties go to the later one in episode
+// order); nxt is the first unwatched non-special episode after it, if that
+// one was watched.
+var nextUpSQL = `WITH shows AS (
+		SELECT e.show_id sid, MAX(ud.last_played) lp FROM user_data ud JOIN items e ON e.id=ud.item_id
+		WHERE ud.user_id=:uid AND e.kind='episode' AND (ud.played=1 OR ud.position>0)
+		GROUP BY e.show_id ORDER BY lp DESC, e.show_id LIMIT :shows),
+	last AS (
+		SELECT sid, lp, (SELECT e.id FROM items e JOIN user_data u ON u.item_id=e.id AND u.user_id=:uid
+			WHERE e.show_id=sid AND e.kind='episode' AND (u.played=1 OR u.position>0)
+			ORDER BY u.last_played DESC, e.season DESC, e.episode DESC, e.id DESC LIMIT 1) lid
+		FROM shows),
+	nxt AS (
+		SELECT l.sid, l.lp, (SELECT n.id FROM items n LEFT JOIN user_data u ON u.item_id=n.id AND u.user_id=:uid
+			WHERE n.show_id=l.sid AND n.kind='episode' AND n.season<>0 AND COALESCE(u.played,0)=0
+			AND (n.season,n.episode,n.id) > (le.season,le.episode,le.id)
+			ORDER BY n.season, n.episode, n.id LIMIT 1) nid
+		FROM last l JOIN items le ON le.id=l.lid JOIN user_data lu ON lu.item_id=le.id AND lu.user_id=:uid
+		WHERE lu.played=1)
+	` + udSelectCols(cardCols, `JOIN nxt ON nxt.nid=i.id ORDER BY nxt.lp DESC, nxt.sid LIMIT :limit`)
 
 // PruneEmpty deletes seasons and shows that no longer have episodes, and
 // movies/episodes without files.
