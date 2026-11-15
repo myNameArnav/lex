@@ -221,11 +221,8 @@ func (s *Server) itemDetail(w http.ResponseWriter, r *http.Request) {
 	switch it.Kind {
 	case "movie", "episode":
 		out["files"] = s.fileViews(it.ID, u.IsAdmin)
-	case "show":
-		ch, _ := s.St.Children(it.ID, u.ID)
-		out["children"] = nonNilItems(ch)
-	case "season":
-		ch, _ := s.St.Children(it.ID, u.ID)
+	case "show", "season":
+		ch, _ := s.St.ChildCards(it.ID, u.ID)
 		out["children"] = nonNilItems(ch)
 	}
 	if it.ShowID > 0 {
@@ -237,32 +234,18 @@ func (s *Server) itemDetail(w http.ResponseWriter, r *http.Request) {
 		if season, err := s.St.Item(it.ParentID); err == nil {
 			out["season"] = season
 		}
-		eps, _ := s.St.ShowEpisodes(it.ShowID, u.ID)
-		for i, e := range eps {
-			if e.ID == it.ID {
-				if i > 0 {
-					out["prev"] = eps[i-1]
-				}
-				if i+1 < len(eps) {
-					out["next"] = eps[i+1]
-				}
+		if prev, next, err := s.St.AdjacentEpisodes(it, u.ID); err == nil {
+			if prev != nil {
+				out["prev"] = prev
+			}
+			if next != nil {
+				out["next"] = next
 			}
 		}
 	}
 	if it.Kind == "show" {
 		// "Play" on a show resumes the next unwatched episode.
-		eps, _ := s.St.ShowEpisodes(it.ID, u.ID)
-		var next *store.Item
-		for _, e := range eps {
-			if e.Season > 0 && e.UserData != nil && !e.UserData.Played {
-				next = e
-				break
-			}
-		}
-		if next == nil && len(eps) > 0 {
-			next = eps[0]
-		}
-		if next != nil {
+		if next, err := s.St.ShowNextEpisode(it.ID, u.ID); err == nil && next != nil {
 			out["nextEpisode"] = next
 		}
 	}
@@ -275,7 +258,7 @@ func (s *Server) itemChildren(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad id")
 		return
 	}
-	ch, err := s.St.Children(id, userOf(r).ID)
+	ch, err := s.St.ChildCards(id, userOf(r).ID)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return

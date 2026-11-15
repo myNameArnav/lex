@@ -38,6 +38,12 @@ var migrations = []func(*sql.Tx) error{
 	// 1: bring a database from any earlier Lex version to the schema as it
 	// was when versioning was introduced. Idempotent by construction.
 	ensureBaseSchema,
+	// 2: items_show_order (in schema) covers what items_show(show_id, kind)
+	// did, in episode order.
+	func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DROP INDEX IF EXISTS items_show`)
+		return err
+	},
 }
 
 // ErrSchemaTooNew means the database was migrated by a newer Lex than this
