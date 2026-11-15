@@ -330,9 +330,8 @@ and push a matching tag:
 git tag -a v0.0.14 -m "Lex v0.0.14" && git push origin v0.0.14
 ```
 
-The Release workflow checks the tag against the file, runs the tests and
-creates a GitHub Release (notes only); the Container image workflow publishes
-the arm64 image.
+The Container image workflow checks the tag against the file, publishes the
+arm64 image and creates a GitHub Release (notes only).
 
 ## Development and publication
 
@@ -344,8 +343,8 @@ go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --no-banner --log
 go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 ```
 
-CI runs on pull requests (merging doesn't run it again; Release re-runs the tests
-for each tag) and checks formatting, module consistency, race tests, Go vet, JavaScript/shell
+CI runs on pull requests (merging doesn't run it again, and PRs that only change
+docs or the version number skip it) and checks formatting, module consistency, race tests, Go vet, JavaScript/shell
 syntax, Compose configuration, publication privacy, secrets and vulnerabilities.
 Pull requests that change the Dockerfile or its inputs also build the arm64 image. The privacy script checks working
 files and branch/tag history for private deployment addresses, home paths,
