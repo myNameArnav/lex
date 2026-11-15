@@ -203,7 +203,7 @@ with `docker build -t lex .`.
 
 | Tag | Updated |
 |---|---|
-| `ghcr.io/mynamearnav/lex:latest`, `:<major.minor>`, `:<version>` (e.g. `:0.0.12`) | with each release |
+| `ghcr.io/mynamearnav/lex:latest`, `:<major.minor>`, `:<version>` (e.g. `:0.0.13`) | with each release |
 | `ghcr.io/mynamearnav/lex:edge` | when a maintainer builds `main` by hand (Container image workflow, Run workflow) |
 
 ```sh
@@ -322,12 +322,12 @@ working; the list then opens with `Ctrl`/`⌘` + `/`.
 ## Versions and releases
 
 The version number lives in `internal/version/VERSION`; builds add the commit
-they came from (`lex -version` prints e.g. `lex 0.0.12 (2f085af)`, and it's shown
+they came from (`lex -version` prints e.g. `lex 0.0.13 (034c581)`, and it's shown
 in Settings → About and the account menu). To release, bump that file, commit,
 and push a matching tag:
 
 ```sh
-git tag -a v0.0.12 -m "Lex v0.0.12" && git push origin v0.0.12
+git tag -a v0.0.13 -m "Lex v0.0.13" && git push origin v0.0.13
 ```
 
 The Release workflow checks the tag against the file, runs the tests and
