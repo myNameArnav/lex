@@ -20,10 +20,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const AUTO_AHEAD = 1200;
 const APPEND_BATCH_BYTES = 1 << 20;
 // A stream that has appended this much without anything buffered where it
-// started is being thrown away by the browser. Firefox 154+ on macOS
-// silently drops HEVC that starts at a CRA keyframe (Mozilla bug 2065822),
-// and open-GOP encodes have an IDR only at 0:00, so a seek into one never
-// plays and would read the whole file.
+// started is being thrown away by the browser. Firefox on macOS only
+// treats HEVC IDR frames as keyframes (MP4Demuxer, because VideoToolbox can
+// fail on a CRA as the first frame after a seek), and open-GOP encodes have
+// an IDR only at 0:00, so a seek into one never plays and would read the
+// whole file.
 const DISCARD_BYTES = 32 << 20;
 
 // m:ss or h:mm:ss, for log lines.
