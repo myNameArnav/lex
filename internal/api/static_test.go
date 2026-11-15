@@ -21,6 +21,7 @@ func TestStaticFilesAndAppShell(t *testing.T) {
 		"icons/icon-192.png":      &fstest.MapFile{Data: []byte("\x89PNG\r\n\x1a\nicon")},
 		"js/app.js":               &fstest.MapFile{Data: []byte("export {};")},
 		"vendor/jassub/font.woff": &fstest.MapFile{Data: []byte("font")},
+		"vendor/lexremux/x.wasm":  &fstest.MapFile{Data: make([]byte, 4096)},
 	}}
 	h, err := s.Handler()
 	if err != nil {
@@ -61,5 +62,14 @@ func TestStaticFilesAndAppShell(t *testing.T) {
 		if tc.code == 404 && strings.Contains(w.Body.String(), "shell") {
 			t.Errorf("%s: a missing file must not serve the app shell", tc.path)
 		}
+	}
+	// WebAssembly (the remuxer, audio converter, subtitle renderer) is
+	// several MB and compresses well.
+	r := httptest.NewRequest("GET", "http://lex.test/vendor/lexremux/x.wasm", nil)
+	r.Header.Set("Accept-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 || w.Header().Get("Content-Encoding") != "gzip" || !strings.Contains(w.Header().Get("Content-Type"), "application/wasm") || w.Body.Len() >= 4096 {
+		t.Errorf("wasm: code %d, encoding %q, type %q, %d bytes; want gzipped application/wasm", w.Code, w.Header().Get("Content-Encoding"), w.Header().Get("Content-Type"), w.Body.Len())
 	}
 }

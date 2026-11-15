@@ -443,8 +443,10 @@ func (s *Store) ListItems(uid int64, q ListQuery) ([]*Item, int, error) {
 		args = append(args, sql.Named("lib", q.LibraryID))
 	}
 	if q.Genre != "" {
-		conds = append(conds, "i.genres LIKE :genre")
-		args = append(args, sql.Named("genre", `%"`+q.Genre+`"%`))
+		// Matched decoded and exactly: stored JSON escapes e.g. "&", and a
+		// LIKE pattern would treat % and _ in the name as wildcards.
+		conds = append(conds, `EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(i.genres) THEN i.genres ELSE '[]' END) j WHERE j.value=:genre)`)
+		args = append(args, sql.Named("genre", q.Genre))
 	}
 	if q.Search != "" {
 		// The term is matched literally: % and _ in it are not wildcards.
@@ -658,51 +660,50 @@ func (s *Store) MarkPlayed(uid, itemID int64, played bool) error {
 	return err
 }
 
-// MarkTreePlayed marks a show/season (all episodes) or a single item.
+// MarkTreePlayed is the manual "Mark watched/unwatched" for a show or season
+// (all its episodes) or a single item. Unlike MarkPlayed, which records a
+// finished playback, marking something that is already watched doesn't add
+// a play or move it in Next Up. It's one statement, so a show is never left
+// half-marked.
 func (s *Store) MarkTreePlayed(uid, itemID int64, played bool) error {
 	it, err := s.Item(itemID)
 	if err != nil {
 		return err
 	}
-	var ids []int64
+	var cond string
 	switch it.Kind {
 	case "show":
-		rows, err := s.db.Query(`SELECT id FROM items WHERE show_id=? AND kind='episode'`, itemID)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var id int64
-			rows.Scan(&id)
-			ids = append(ids, id)
-		}
-		rows.Close()
+		cond = `e.show_id=:id AND e.kind='episode'`
 	case "season":
-		rows, err := s.db.Query(`SELECT id FROM items WHERE parent_id=? AND kind='episode'`, itemID)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var id int64
-			rows.Scan(&id)
-			ids = append(ids, id)
-		}
-		rows.Close()
+		cond = `e.parent_id=:id AND e.kind='episode'`
 	default:
-		ids = []int64{itemID}
+		cond = `e.id=:id`
 	}
-	for _, id := range ids {
-		if err := s.MarkPlayed(uid, id, played); err != nil {
-			return err
-		}
+	args := []any{sql.Named("uid", uid), sql.Named("id", itemID), sql.Named("now", now())}
+	if !played {
+		_, err = s.db.Exec(`UPDATE user_data SET played=0,position=0 WHERE user_id=:uid AND item_id IN (SELECT e.id FROM items e WHERE `+cond+`)`, args...)
+		return err
 	}
-	return nil
+	// "WHERE true": an upsert's SELECT needs a WHERE clause to parse.
+	_, err = s.db.Exec(`INSERT INTO user_data(user_id,item_id,played,play_count,position,last_played)
+		SELECT :uid, e.id, 1, 1, 0, :now FROM items e WHERE `+cond+` AND true
+		ON CONFLICT(user_id,item_id) DO UPDATE SET played=1, position=0,
+			play_count=play_count+CASE WHEN played=1 THEN 0 ELSE 1 END,
+			last_played=CASE WHEN played=1 THEN last_played ELSE excluded.last_played END`, args...)
+	return err
 }
 
+// SetFavorite returns ErrNotFound for an item that doesn't exist.
 func (s *Store) SetFavorite(uid, itemID int64, fav bool) error {
-	_, err := s.db.Exec(`INSERT INTO user_data(user_id,item_id,favorite) VALUES(?,?,?)
-		ON CONFLICT(user_id,item_id) DO UPDATE SET favorite=excluded.favorite`, uid, itemID, fav)
-	return err
+	res, err := s.db.Exec(`INSERT INTO user_data(user_id,item_id,favorite) SELECT ?,id,? FROM items WHERE id=?
+		ON CONFLICT(user_id,item_id) DO UPDATE SET favorite=excluded.favorite`, uid, fav, itemID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // Airable is a movie or episode with a known duration, for Live TV.
