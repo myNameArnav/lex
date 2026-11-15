@@ -217,15 +217,7 @@ func Open(dataDir string) (*Store, error) {
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(2)
 	db.SetConnMaxIdleTime(5 * time.Minute)
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate: %w", err)
-	}
-	if err := migrateDownloadedSubs(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate: %w", err)
-	}
-	if err := addLateColumns(db); err != nil {
+	if err := migrate(context.Background(), db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
@@ -243,11 +235,12 @@ func Open(dataDir string) (*Store, error) {
 
 // lateColumns were added after their table first shipped. CREATE TABLE IF
 // NOT EXISTS leaves existing tables alone, so they're added here when missing.
+// Additions only; see the comment on migrations in migrate.go.
 var lateColumns = []struct{ table, column, def string }{
 	{"files", "probe_attempts", "INTEGER NOT NULL DEFAULT 0"},
 }
 
-func addLateColumns(db *sql.DB) error {
+func addLateColumns(db dbtx) error {
 	for _, c := range lateColumns {
 		var n int
 		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, c.table, c.column).Scan(&n); err != nil {

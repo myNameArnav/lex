@@ -33,7 +33,7 @@ const downloadedSubSeq = "downloaded_subs.seq"
 
 // migrateDownloadedSubs adds columns that newer versions expect to databases
 // created before them.
-func migrateDownloadedSubs(db *sql.DB) error {
+func migrateDownloadedSubs(db dbtx) error {
 	rows, err := db.Query(`SELECT name FROM pragma_table_info('downloaded_subs')`)
 	if err != nil {
 		return err
