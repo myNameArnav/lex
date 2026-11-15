@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -432,7 +433,7 @@ func notFoundOr500(w http.ResponseWriter, err error) {
 
 func (s *Server) loadStatic() error {
 	s.static = map[string]*asset{}
-	return fs.WalkDir(s.Web, ".", func(p string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(s.Web, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
@@ -440,24 +441,87 @@ func (s *Server) loadStatic() error {
 		if err != nil {
 			return err
 		}
-		sum := sha1.Sum(b)
-		a := &asset{body: b, etag: `"` + hex.EncodeToString(sum[:8]) + `"`, ctype: mime.TypeByExtension(path.Ext(p))}
-		if a.ctype == "" {
-			a.ctype = "application/octet-stream"
-		}
-		if strings.HasPrefix(a.ctype, "text/") || strings.Contains(a.ctype, "javascript") || strings.Contains(a.ctype, "json") || strings.Contains(a.ctype, "svg") ||
-			a.ctype == "application/wasm" {
-			var buf bytes.Buffer
-			gz, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
-			gz.Write(b)
-			gz.Close()
-			if buf.Len() < len(b) {
-				a.gz = buf.Bytes()
-			}
-		}
-		s.static["/"+p] = a
+		s.static["/"+p] = newAsset(p, b)
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	return s.stampServiceWorker()
+}
+
+func newAsset(p string, b []byte) *asset {
+	sum := sha1.Sum(b)
+	a := &asset{body: b, etag: `"` + hex.EncodeToString(sum[:8]) + `"`, ctype: mime.TypeByExtension(path.Ext(p))}
+	if a.ctype == "" {
+		a.ctype = "application/octet-stream"
+	}
+	if strings.HasPrefix(a.ctype, "text/") || strings.Contains(a.ctype, "javascript") || strings.Contains(a.ctype, "json") || strings.Contains(a.ctype, "svg") ||
+		a.ctype == "application/wasm" {
+		var buf bytes.Buffer
+		gz, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+		gz.Write(b)
+		gz.Close()
+		if buf.Len() < len(b) {
+			a.gz = buf.Bytes()
+		}
+	}
+	return a
+}
+
+// swBuildMarker is replaced in sw.js with this build's version and shell list.
+const swBuildMarker = "/*LEX_BUILD*/null"
+
+// shellPaths lists the files the service worker precaches: the HTML shell
+// (as "/"), stylesheet, manifest, icons and the /js modules. The wasm vendor
+// bundles, sw.js itself and anything under /api/ are never cached.
+func (s *Server) shellPaths() []string {
+	shell := []string{"/"}
+	for p := range s.static {
+		switch {
+		case p == "/index.html", p == "/sw.js", strings.HasPrefix(p, "/vendor/"):
+		case strings.HasPrefix(p, "/js/") && path.Ext(p) == ".js",
+			strings.HasPrefix(p, "/css/"), strings.HasPrefix(p, "/icons/"),
+			p == "/favicon.svg", p == "/manifest.json", p == "/offline.html":
+			shell = append(shell, p)
+		}
+	}
+	slices.Sort(shell[1:])
+	return shell
+}
+
+// stampServiceWorker writes the build into sw.js: a version derived from the
+// server version and the shell files' hashes, so any UI change installs a
+// new worker (and cache), and the list of files to precache.
+func (s *Server) stampServiceWorker() error {
+	sw := s.static["/sw.js"]
+	if sw == nil {
+		return nil
+	}
+	if !bytes.Contains(sw.body, []byte(swBuildMarker)) {
+		return errors.New("sw.js: build marker missing")
+	}
+	shell := s.shellPaths()
+	h := sha1.New()
+	io.WriteString(h, s.Version)
+	for _, p := range shell {
+		a := s.static[p]
+		if p == "/" {
+			a = s.static["/index.html"]
+		}
+		if a != nil {
+			io.WriteString(h, "\x00"+p+"\x00"+a.etag)
+		}
+	}
+	build, err := json.Marshal(struct {
+		Version string   `json:"version"`
+		Shell   []string `json:"shell"`
+	}{hex.EncodeToString(h.Sum(nil)[:6]), shell})
+	if err != nil {
+		return err
+	}
+	s.static["/sw.js"] = newAsset("sw.js", bytes.Replace(sw.body, []byte(swBuildMarker), build, 1))
+	return nil
 }
 
 func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {

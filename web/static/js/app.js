@@ -30,6 +30,13 @@ window.addEventListener('lex:unauthorized', () => {
   renderAuth(false, 'Your session ended. Sign in again to continue.');
 });
 
+// The service worker (sw.js) shows a "Can't reach your Lex server" page
+// instead of a browser error when the installed app opens offline. Browsers
+// only allow it in a secure context (HTTPS or localhost).
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => {}); }, { once: true });
+}
+
 async function boot() {
   try {
     const info = await api('/api/public/info');
