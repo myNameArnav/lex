@@ -313,7 +313,7 @@ func (s *Server) setFavorite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.St.SetFavorite(userOf(r).ID, id, req.Favorite); err != nil {
-		writeErr(w, 500, err.Error())
+		notFoundOr500(w, err)
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})

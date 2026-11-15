@@ -445,7 +445,8 @@ func (s *Server) loadStatic() error {
 		if a.ctype == "" {
 			a.ctype = "application/octet-stream"
 		}
-		if strings.HasPrefix(a.ctype, "text/") || strings.Contains(a.ctype, "javascript") || strings.Contains(a.ctype, "json") || strings.Contains(a.ctype, "svg") {
+		if strings.HasPrefix(a.ctype, "text/") || strings.Contains(a.ctype, "javascript") || strings.Contains(a.ctype, "json") || strings.Contains(a.ctype, "svg") ||
+			a.ctype == "application/wasm" {
 			var buf bytes.Buffer
 			gz, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
 			gz.Write(b)

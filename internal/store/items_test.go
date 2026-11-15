@@ -145,3 +145,99 @@ func TestListItemsSearchMatchesWildcardsLiterally(t *testing.T) {
 		}
 	}
 }
+
+func TestListItemsGenreMatchesExactDecodedName(t *testing.T) {
+	st := testStore(t)
+	lib, err := st.CreateLibrary("Movies", "movies", []string{"/m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := func(title string, genres ...string) int64 {
+		it := &Item{LibraryID: lib.ID, Kind: "movie", Title: title, Path: "/m/" + title}
+		if _, err := st.InsertItem(it); err != nil {
+			t.Fatal(err)
+		}
+		it.Genres = genres
+		if err := st.SaveMetadata(it); err != nil {
+			t.Fatal(err)
+		}
+		return it.ID
+	}
+	scifi := add("Dune", "Sci-Fi & Fantasy", "Drama")
+	drama := add("Other", "Drama")
+	add("Plain")
+	for _, tc := range []struct {
+		genre string
+		want  []int64
+	}{
+		{"Sci-Fi & Fantasy", []int64{scifi}},
+		{"Drama", []int64{scifi, drama}},
+		{"%", nil},
+		{"Dram", nil},
+	} {
+		if got := listIDs(t, st, 1, ListQuery{Genre: tc.genre}); !slices.Equal(got, tc.want) {
+			t.Errorf("genre %q = %v, want %v", tc.genre, got, tc.want)
+		}
+	}
+	// Every listed genre must find its titles.
+	genres, err := st.Genres(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range genres {
+		if len(listIDs(t, st, 1, ListQuery{Genre: g})) == 0 {
+			t.Errorf("genre %q lists no titles", g)
+		}
+	}
+}
+
+func TestSetFavoriteMissingItem(t *testing.T) {
+	st := testStore(t)
+	u, err := st.CreateUser("one", "test-password-123", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetFavorite(u.ID, 9999, true); err != ErrNotFound {
+		t.Fatalf("SetFavorite(missing) = %v, want ErrNotFound", err)
+	}
+}
+
+func TestMarkTreePlayedDoesNotRecountWatched(t *testing.T) {
+	st := testStore(t)
+	db := st.DB()
+	u, err := st.CreateUser("one", "test-password-123", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO libraries(id,name,kind,paths,created_at) VALUES(1,'TV','shows','[]',0);
+		INSERT INTO items(id,library_id,kind,show_id,title,sort_title,added_at,updated_at) VALUES(1,1,'show',0,'S','s',0,0);
+		INSERT INTO items(id,library_id,kind,parent_id,show_id,season,title,sort_title,added_at,updated_at) VALUES(2,1,'season',1,1,1,'S1','s1',0,0);
+		INSERT INTO items(id,library_id,kind,parent_id,show_id,season,episode,title,sort_title,added_at,updated_at) VALUES
+			(3,1,'episode',2,1,1,1,'E1','e1',0,0),(4,1,'episode',2,1,1,2,'E2','e2',0,0),(5,1,'episode',2,1,1,3,'E3','e3',0,0);
+		INSERT INTO user_data(user_id,item_id,position,played,play_count,last_played) VALUES(?,3,0,1,2,100),(?,4,50,0,0,200)`, u.ID, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkTreePlayed(u.ID, 1, true); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[int64]UserData{3: {Played: true, PlayCount: 2, LastPlayed: 100}, 4: {Played: true, PlayCount: 1}, 5: {Played: true, PlayCount: 1}} {
+		ud, err := st.GetUserData(u.ID, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ud.Played || ud.Position != 0 || ud.PlayCount != want.PlayCount || (want.LastPlayed != 0 && ud.LastPlayed != want.LastPlayed) || ud.LastPlayed == 0 {
+			t.Errorf("episode %d after marking the show = %+v, want %+v", id, ud, want)
+		}
+	}
+	if err := st.MarkTreePlayed(u.ID, 2, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{3, 4, 5} {
+		if ud, _ := st.GetUserData(u.ID, id); ud.Played || ud.Position != 0 {
+			t.Errorf("episode %d after unmarking the season = %+v", id, ud)
+		}
+	}
+	if err := st.MarkTreePlayed(u.ID, 9999, true); err != ErrNotFound {
+		t.Fatalf("MarkTreePlayed(missing) = %v, want ErrNotFound", err)
+	}
+}
