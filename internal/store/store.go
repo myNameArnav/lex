@@ -91,8 +91,8 @@ CREATE TABLE IF NOT EXISTS items (
 );
 CREATE INDEX IF NOT EXISTS items_parent ON items(parent_id);
 -- A show's episodes in order (episodeOrder): next up and previous/next
--- episode read one row from it. It replaces items_show(show_id, kind).
-DROP INDEX IF EXISTS items_show;
+-- episode read one row from it. It replaced items_show(show_id, kind)
+-- (dropped by migration 2).
 CREATE INDEX IF NOT EXISTS items_show_order ON items(show_id, kind, season, episode);
 CREATE INDEX IF NOT EXISTS items_lib_kind ON items(library_id, kind);
 CREATE INDEX IF NOT EXISTS items_path ON items(library_id, kind, path);

@@ -436,7 +436,7 @@ func (s *Store) children(cols string, parentID, uid int64) ([]*Item, error) {
 }
 
 // episodeOrder is a show's episode order: by season and episode, then id
-// so that duplicates keep a stable order. It matches the items_show index.
+// so that duplicates keep a stable order. It matches the items_show_order index.
 const episodeOrder = `i.season, i.episode, i.id`
 
 func (s *Store) ShowEpisodes(showID, uid int64) ([]*Item, error) {
