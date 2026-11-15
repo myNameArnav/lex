@@ -56,7 +56,7 @@ type Config struct {
 	FFmpegNice         int    `json:"ffmpegNice"`
 	AudioChannels      int    `json:"audioChannels"` // 2 or 6
 	AudioBitrate       int    `json:"audioBitrate"`  // kbps for stereo; scaled for 5.1
-	ClientAudio        bool   `json:"clientAudio"`   // browsers convert AC-3/E-AC-3 themselves
+	ClientAudio        bool   `json:"clientAudio"`   // browsers convert AC-3/E-AC-3/DTS/TrueHD themselves
 	Tonemap            bool   `json:"tonemap"`
 	FragmentMs         int    `json:"fragmentMs"`
 	KeyframeSec        int    `json:"keyframeSec"`

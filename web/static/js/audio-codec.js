@@ -1,8 +1,11 @@
-// The WebAssembly AC-3/E-AC-3 → AAC converter (vendor/lexaudio, built from
-// wasm/audio/audio.c by scripts/build-audio-wasm.sh). audio-worker.js runs
-// it off the main thread; tests call it directly.
+// The WebAssembly AC-3/E-AC-3/DTS/TrueHD → AAC converter (vendor/lexaudio,
+// built from wasm/audio/audio.c by scripts/build-audio-wasm.sh).
+// audio-worker.js runs it off the main thread; tests call it directly.
 
 import createModule from '../vendor/lexaudio/audio.js';
+
+// la_open's codec numbers (audio.c's codecs).
+const CODECS = ['ac3', 'eac3', 'dts', 'truehd', 'mlp'];
 
 function check(r, what) {
   if (r < 0) throw new Error(`${what} failed (${r})`);
@@ -34,7 +37,7 @@ export async function loadCodec() {
   return function handle(m) {
     switch (m.op) {
       case 'open':
-        check(M._la_open(m.codec === 'ec-3' ? 1 : 0, m.timescale, m.channels, m.bitrate), 'Opening the audio decoder');
+        check(M._la_open(CODECS.indexOf(m.codec), m.timescale, m.channels, m.bitrate), 'Opening the audio decoder');
         return {};
       case 'decode': {
         let at = 0;
