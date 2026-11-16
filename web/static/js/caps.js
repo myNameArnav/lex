@@ -118,9 +118,9 @@ export function causeLabel(c, { remote = false } = {}) {
   const name = LABELS[c.key] || (c.key?.startsWith('pcm_') ? 'PCM' : (c.key || '').toUpperCase());
   const direct = c.stage === 'direct';
   switch (c.kind) {
-    case 'container': return `Browser can’t open ${name} files`;
-    case 'video': return direct ? `${name} video needs repackaging` : `Browser can’t decode ${name} video`;
-    case 'audio': return direct ? `${name} audio needs repackaging` : `${name} audio is converted by the server`;
+    case 'container': return `Browser can’t open ${name} files directly`;
+    case 'video': return direct ? `Browser can’t play ${name} video directly` : `Browser can’t decode ${name} video`;
+    case 'audio': return direct ? `Browser can’t play ${name} audio directly` : `Server converts ${name} audio`;
     case 'track': return 'Preferred audio language isn’t the default track';
     case 'bitrate': return prefs.get('quality') > 0 ? 'Above this device’s quality setting' : remote ? 'Above the server’s limit for remote streaming' : 'Above the quality limit';
     case 'hls': return `HLS can only repackage MKV files, not ${name}`;

@@ -168,7 +168,7 @@ function compatPanel() {
   const req = compatRequest();
   api('/api/admin/compat', { method: 'POST', body: req })
     // h() flattens the nested arrays and skips nulls; append() wouldn't.
-    .then((sum) => clear(body).append(h('div', null, compatSummary(sum, req))))
+    .then((sum) => clear(body).append(h('div', { class: 'compat' }, compatSummary(sum, req))))
     .catch((e) => clear(body).append(h('p', { class: 'bad', style: { margin: 0 } }, e.message)));
   return h('div', { class: 'panel compat-panel' }, h('h2', { class: 'panel-title' }, 'How it plays in this browser'), body);
 }
@@ -176,37 +176,58 @@ function compatPanel() {
 const TIER_COLOR = { direct: 'var(--method-direct)', browser: 'var(--good-ink)', remux: 'var(--method-remux)', transcode: 'var(--method-transcode)', unplayable: 'var(--bad-strong)', unknown: 'var(--bg4)' };
 const plural = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
 
+// Groups that make the server work, worst first. Plays as-is and browser
+// repackaging need nothing, so they only appear in the legend.
+const WORK_TIERS = ['unplayable', 'transcode', 'remux', 'unknown'];
+
 function compatSummary(sum, req) {
   if (!sum.files) return [h('p', { class: 'muted', style: { margin: 0 } }, 'No media files yet.')];
   const tiers = TIER_ORDER.filter((t) => sum.tiers[t]);
   const easy = (sum.tiers.direct || 0) + (sum.tiers.browser || 0) + (sum.tiers.remux || 0);
-  const pct = (n) => `${Math.round((n / sum.files) * 100)}%`;
+  const pct = (n) => { const p = (n / sum.files) * 100; return p > 0 && p < 1 ? '<1%' : `${Math.round(p)}%`; };
   const open = (tier, cause) => titlesModal(cause ? causeLabel(cause, sum) : TIERS[tier].label,
     () => api('/api/admin/compat/titles', { method: 'POST', body: { ...req, tier, cause } }),
     h('p', { class: 'small muted', style: { margin: '0 0 10px' } }, TIERS[tier].text));
   const headline = sum.tiers.transcode || sum.tiers.unplayable
-    ? `${pct(easy)} of your files play here without being converted.`
-    : 'Everything in your library plays here without being converted.';
-  // Why files aren't played as they are, worst tier first; a file can have
-  // more than one reason.
-  // For conversions only the reasons it can't just repackage count.
-  const causes = sum.causes.filter((c) => c.tier !== 'direct' && (c.stage === 'stream' || !['transcode', 'unplayable'].includes(c.tier)))
-    .sort((a, b) => TIER_ORDER.indexOf(b.tier) - TIER_ORDER.indexOf(a.tier) || (a.kind === 'audio') - (b.kind === 'audio') || b.files - a.files);
+    ? `${pct(easy)} of your files play here without being converted`
+    : 'Everything plays here without being converted';
   // Being remote only matters when the server's remote bitrate limit applies.
   const capped = !req.maxBitrate && sum.remote && sum.causes.some((c) => c.kind === 'bitrate');
   const quality = (QUALITIES.find(([v]) => v === req.maxBitrate) || [0, `${req.maxBitrate} kbps`])[1];
   const method = { auto: 'Automatic', direct: 'Prefer Direct Play', remux: 'Always Direct Stream', transcode: 'Always Transcode' }[req.mode] || 'Automatic';
+  const dot = (t) => h('i', { class: 'compat-dot', style: { background: TIER_COLOR[t] } });
+
+  // The reasons in one group. When converting would fix it, only the
+  // reasons it can't be repackaged count; "conversion is off" becomes a link.
+  const group = (t) => {
+    const converts = t === 'transcode' || t === 'unplayable';
+    const all = sum.causes.filter((c) => c.tier === t && (!converts || c.stage === 'stream'));
+    const off = all.find((c) => c.kind === 'setting' && c.key === 'transcode');
+    const reasons = all.filter((c) => c !== off).sort((a, b) => (a.kind === 'audio') - (b.kind === 'audio') || b.files - a.files);
+    return h('section', { class: 'compat-group' },
+      h('button', { type: 'button', class: 'compat-head', onclick: () => open(t) },
+        dot(t), h('b', null, TIERS[t].label), h('span', { class: 'muted' }, plural(sum.tiers[t], 'file')), h('span', { class: 'chev', 'aria-hidden': 'true', html: icons.chevR })),
+      reasons.length ? h('ul', { class: 'compat-reasons' }, reasons.map((c) => h('li', null,
+        h('button', { type: 'button', onclick: () => open(t, { stage: c.stage, kind: c.kind, key: c.key }) },
+          h('span', null, causeLabel(c, sum)), h('span', { class: 'muted nowrap' }, c.files.toLocaleString()))))) : null,
+      off ? h('p', { class: 'compat-fix small' }, 'Converting video is turned off. ', h('a', { href: '#/settings/transcoding' }, 'Turn it on'), ' to play these.') : null);
+  };
+  const work = WORK_TIERS.filter((t) => sum.tiers[t]);
+
   return [
-    h('p', { style: { margin: '0 0 10px' } }, headline),
-    h('div', { class: 'compat-bar', role: 'img', 'aria-label': tiers.map((t) => `${TIERS[t].label}: ${sum.tiers[t]}`).join(', ') },
-      tiers.map((t) => h('i', { style: { flexGrow: sum.tiers[t], background: TIER_COLOR[t] }, title: `${TIERS[t].label}: ${plural(sum.tiers[t], 'file')}` }))),
-    barList(tiers.map((t) => ({ label: TIERS[t].label, value: sum.tiers[t], tier: t, onClick: () => open(t) })), (v) => plural(v, 'file'), (it) => TIER_COLOR[it.tier]),
-    causes.length ? [h('h3', { class: 'compat-why' }, 'Why files aren’t played as they are'),
-      barList(causes.map((c) => ({ label: causeLabel(c, sum), value: c.files, tier: c.tier, onClick: () => open(c.tier, { stage: c.stage, kind: c.kind, key: c.key }) })),
-        (v) => plural(v, 'file'), (it) => TIER_COLOR[it.tier], { wrap: true })] : null,
-    h('p', { class: 'help compat-help' },
-      'This browser’s codecs with this device’s ', h('a', { href: '#/settings/preferences' }, 'playback settings'), ` (${quality} quality, ${method.toLowerCase()} method)${capped ? ' and the server’s limit for streaming from outside your network' : ''}. `,
-      'Assumes each file’s default audio track and no subtitles: picking image subtitles (PGS, VobSub) makes the server convert the video to burn them in. A file can have more than one reason. Select a row to see its titles.'),
+    h('div', { class: 'compat-overview' },
+      h('p', { class: 'compat-headline' }, headline),
+      h('div', { class: 'compat-bar', role: 'img', 'aria-label': tiers.map((t) => `${TIERS[t].label}: ${sum.tiers[t]}`).join(', ') },
+        tiers.map((t) => h('i', { style: { flexGrow: sum.tiers[t], background: TIER_COLOR[t] }, title: `${TIERS[t].label}: ${plural(sum.tiers[t], 'file')}` }))),
+      h('ul', { class: 'compat-legend' }, tiers.map((t) => h('li', null,
+        h('button', { type: 'button', onclick: () => open(t), title: TIERS[t].text },
+          dot(t), h('span', null, TIERS[t].label), h('span', { class: 'num' }, sum.tiers[t].toLocaleString()), h('span', { class: 'muted num' }, pct(sum.tiers[t])))))),
+      h('p', { class: 'help compat-help' },
+        'This browser’s codecs and this device’s ', h('a', { href: '#/settings/preferences' }, 'playback settings'), ` (${quality}, ${method.toLowerCase()})${capped ? ', with the server’s limit for streaming from outside your network' : ''}. `,
+        'Assumes the default audio track and no subtitles; image subtitles (PGS, VobSub) make the server convert the video.')),
+    h('div', { class: 'compat-work' },
+      h('h3', null, 'What needs work from the server'),
+      work.length ? work.map(group) : h('p', { class: 'muted', style: { margin: 0 } }, 'Nothing: every file plays as it is or is repackaged by this browser.')),
   ];
 }
 
