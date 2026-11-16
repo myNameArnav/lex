@@ -186,3 +186,54 @@ func TestPlaybackEventIsLogged(t *testing.T) {
 		t.Fatalf("event not logged as a warning: %+v", s.Log.Lines())
 	}
 }
+
+// A remote client can't fetch the original over the remote bitrate limit by
+// calling /direct itself; local clients still can.
+func TestDirectRespectsRemoteLimit(t *testing.T) {
+	s, h := securityServer(t)
+	s.Sess = stream.NewManager(s.St, s.Log)
+	s.Cache = cache.New(s.St, s.Log, t.TempDir())
+	cfg := s.St.Config()
+	cfg.RemoteMaxBitrate = 8000
+	cfg.LocalNetworks = "192.168.0.0/16"
+	if _, err := s.St.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	u, err := s.St.CreateInitialAdmin("admin", "test-password-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _ := s.St.CreateToken(u.ID, "Test", "127.0.0.1")
+	path := filepath.Join(t.TempDir(), "movie.mp4")
+	if err := os.WriteFile(path, []byte("not really a video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lib, _ := s.St.CreateLibrary("Movies", "movies", []string{filepath.Dir(path)})
+	itemID, _ := s.St.InsertItem(&store.Item{LibraryID: lib.ID, Kind: "movie", Title: "Movie", Path: path})
+	fileID, err := s.St.InsertFile(&store.File{ItemID: itemID, LibraryID: lib.ID, Path: path, Size: 18})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := &store.MediaInfo{Format: "mov,mp4,m4a,3gp,3g2,mj2", Duration: 1800, Bitrate: 20_000_000, Streams: []store.Stream{
+		{Index: 0, Type: "video", Codec: "h264", Width: 1920, Height: 1080},
+	}}
+	if err := s.St.SaveProbe(fileID, info, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		peer string
+		want int
+	}{
+		{"203.0.113.5:1", 403},
+		{"192.168.1.5:1", 200},
+	} {
+		r := httptest.NewRequest("GET", "http://lex.test/api/files/"+strconv.FormatInt(fileID, 10)+"/direct", nil)
+		r.RemoteAddr = tc.peer
+		r.AddCookie(&http.Cookie{Name: "lex_token", Value: token})
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != tc.want {
+			t.Fatalf("%s: got %d: %s", tc.peer, w.Code, w.Body.String())
+		}
+	}
+}

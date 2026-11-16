@@ -147,6 +147,45 @@ func ParseParams(fileID int64, q url.Values) Params {
 	}
 }
 
+// MaxTranscodeKbps is the highest bitrate a media route will encode at (the
+// top of the quality menu).
+const MaxTranscodeKbps = 40000
+
+// LimitParams applies the admin's playback limits to parameters taken from a
+// media URL, the same limits Decide applies when it makes the plan, so a
+// client calling the routes directly can't ask for more: the transcode
+// height is capped at Max transcode height and the source's own height, the
+// bitrate at MaxTranscodeKbps, and for remote clients at the remote limit,
+// with video copy refused when the source is over that limit.
+func LimitParams(p *Params, cfg store.Config, info *store.MediaInfo, remote bool) {
+	if p.Bitrate <= 0 {
+		p.Bitrate = 4000
+	}
+	p.Bitrate = min(p.Bitrate, MaxTranscodeKbps)
+	if remote && cfg.RemoteMaxBitrate > 0 {
+		p.Bitrate = min(p.Bitrate, cfg.RemoteMaxBitrate)
+		if OverRemoteLimit(cfg, info, remote) {
+			p.VideoCopy = false
+		}
+	}
+	maxH := cfg.MaxTranscodeHeight
+	if info != nil {
+		if v := info.Video(); v != nil && v.Height > 0 && (maxH <= 0 || v.Height < maxH) {
+			maxH = v.Height
+		}
+	}
+	if maxH > 0 && (p.Height <= 0 || p.Height > maxH) {
+		p.Height = maxH
+	}
+	p.Height -= p.Height % 2
+}
+
+// OverRemoteLimit reports whether serving this file untouched to a remote
+// client would exceed the admin's remote bitrate limit.
+func OverRemoteLimit(cfg store.Config, info *store.MediaInfo, remote bool) bool {
+	return remote && cfg.RemoteMaxBitrate > 0 && info != nil && int(info.Bitrate/1000) > cfg.RemoteMaxBitrate
+}
+
 // VideoKey buckets a video stream into a capability key.
 func VideoKey(s *store.Stream) string {
 	switch s.Codec {

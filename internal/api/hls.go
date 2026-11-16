@@ -49,6 +49,7 @@ func (s *Server) hlsFile(w http.ResponseWriter, r *http.Request) (*store.File, s
 		return nil, stream.Params{}, false
 	}
 	p := stream.ParseParams(f.ID, r.URL.Query())
+	stream.LimitParams(&p, s.St.Config(), f.Info, s.isRemote(s.clientIP(r)))
 	return f, p, true
 }
 

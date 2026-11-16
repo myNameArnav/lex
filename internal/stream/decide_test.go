@@ -242,3 +242,33 @@ func TestDecideClientRemux(t *testing.T) {
 		}
 	}
 }
+
+func TestLimitParams(t *testing.T) {
+	info := &store.MediaInfo{Bitrate: 20_000_000, Streams: []store.Stream{{Type: "video", Codec: "h264", Width: 1920, Height: 1080}}}
+	small := &store.MediaInfo{Bitrate: 2_000_000, Streams: []store.Stream{{Type: "video", Codec: "h264", Width: 640, Height: 480}}}
+	cfg := store.Config{MaxTranscodeHeight: 720, RemoteMaxBitrate: 8000}
+	for _, tc := range []struct {
+		name          string
+		in            Params
+		info          *store.MediaInfo
+		remote        bool
+		wantH, wantBr int
+		wantCopy      bool
+	}{
+		{"oversized height and bitrate", Params{Height: 2160, Bitrate: 80000}, info, false, 720, MaxTranscodeKbps, false},
+		{"within limits", Params{Height: 480, Bitrate: 3000}, info, false, 480, 3000, false},
+		{"above the source", Params{Height: 720, Bitrate: 4000}, small, false, 480, 4000, false},
+		{"odd and missing values", Params{Height: 0, Bitrate: -1}, info, false, 720, 4000, false},
+		{"local copy allowed", Params{Height: 720, Bitrate: 20000, VideoCopy: true}, info, false, 720, 20000, true},
+		{"remote bitrate capped, copy refused", Params{Height: 720, Bitrate: 20000, VideoCopy: true}, info, true, 720, 8000, false},
+		{"remote copy under the limit", Params{Height: 480, Bitrate: 4000, VideoCopy: true}, small, true, 480, 4000, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := tc.in
+			LimitParams(&p, cfg, tc.info, tc.remote)
+			if p.Height != tc.wantH || p.Bitrate != tc.wantBr || p.VideoCopy != tc.wantCopy {
+				t.Fatalf("got h=%d br=%d copy=%v", p.Height, p.Bitrate, p.VideoCopy)
+			}
+		})
+	}
+}
