@@ -76,29 +76,61 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	s.issueToken(w, r, u)
 }
 
-func (s *Server) loginAllowed(ip string) bool {
-	s.loginMu.Lock()
-	defer s.loginMu.Unlock()
-	f := s.loginFail[ip]
-	if f == nil || time.Since(f.start) > 10*time.Minute {
-		return true
+// Failed sign-ins are counted per client address and, with a higher
+// threshold, per username, so guesses spread over many addresses are still
+// slowed. Keys starting with "name:" are usernames.
+const (
+	loginWindow       = 10 * time.Minute
+	loginLimit        = 10
+	accountLoginLimit = 20
+)
+
+func loginKeyLimit(key string) int {
+	if strings.HasPrefix(key, "name:") {
+		return accountLoginLimit
 	}
-	return f.n < 10
+	return loginLimit
 }
 
-func (s *Server) loginFailed(ip string) {
+// loginNameKey case-folds a username the way the users.name column compares.
+func loginNameKey(name string) string {
+	return "name:" + strings.ToLower(strings.TrimSpace(name))
+}
+
+func (s *Server) loginAllowed(key string) bool {
 	s.loginMu.Lock()
 	defer s.loginMu.Unlock()
-	f := s.loginFail[ip]
-	if f == nil || time.Since(f.start) > 10*time.Minute {
+	f := s.loginFail[key]
+	if f == nil || time.Since(f.start) > loginWindow {
+		return true
+	}
+	return f.n < loginKeyLimit(key)
+}
+
+// loginCleared forgets failures for these keys after a successful sign-in.
+func (s *Server) loginCleared(keys ...string) {
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	for _, k := range keys {
+		delete(s.loginFail, k)
+	}
+}
+
+// loginFailed records a failure and reports whether it just reached the limit.
+func (s *Server) loginFailed(key string) bool {
+	s.loginMu.Lock()
+	defer s.loginMu.Unlock()
+	f := s.loginFail[key]
+	if f == nil || time.Since(f.start) > loginWindow {
 		f = &failWindow{start: time.Now()}
-		s.loginFail[ip] = f
+		s.loginFail[key] = f
 	}
 	f.n++
+	reached := f.n == loginKeyLimit(key)
 	// Keep the map bounded.
 	if len(s.loginFail) > 1000 {
 		for k, v := range s.loginFail {
-			if time.Since(v.start) > 10*time.Minute {
+			if time.Since(v.start) > loginWindow {
 				delete(s.loginFail, k)
 			}
 		}
@@ -115,6 +147,7 @@ func (s *Server) loginFailed(ip string) {
 			delete(s.loginFail, oldest)
 		}
 	}
+	return reached
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
@@ -128,13 +161,23 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad request")
 		return
 	}
+	// Unknown names are counted too, so the response never reveals which exist.
+	account := loginNameKey(req.Name)
+	if !s.loginAllowed(account) {
+		writeErr(w, 429, "too many failed attempts; try again in a few minutes")
+		return
+	}
 	u, err := s.St.Authenticate(req.Name, req.Password)
 	if err != nil {
 		s.loginFailed(ip)
+		if s.loginFailed(account) {
+			s.Log.Warnf("sign-in for %q paused for %s after %d failed attempts", req.Name, loginWindow, accountLoginLimit)
+		}
 		s.Log.Warnf("failed login for %q from %s", req.Name, ip)
 		writeErr(w, 401, "invalid username or password")
 		return
 	}
+	s.loginCleared(ip, account)
 	s.Log.Infof("login: %s from %s", u.Name, ip)
 	s.issueToken(w, r, u)
 }

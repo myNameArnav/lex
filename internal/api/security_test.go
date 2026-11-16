@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"hash/crc32"
 	"image"
 	"image/png"
@@ -247,6 +248,62 @@ func TestLoginLimiterIsBounded(t *testing.T) {
 	}
 	if s.loginAllowed("127.0.0.1") {
 		t.Fatal("failed logins were not limited")
+	}
+}
+
+func TestLoginIsLimitedPerAccount(t *testing.T) {
+	s, h := securityServer(t)
+	if _, err := s.St.CreateInitialAdmin("admin", "test-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	login := func(name, password string, peer int) int {
+		body := `{"name":"` + name + `","password":"` + password + `"}`
+		r := httptest.NewRequest("POST", "http://lex.test/api/auth/login", strings.NewReader(body))
+		r.RemoteAddr = fmt.Sprintf("192.0.2.%d:1", peer)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	// Spread guesses over many addresses, never more than a few per address.
+	for i := 0; i < accountLoginLimit; i++ {
+		if code := login("Admin", "wrong-guess", 1+i/3); code != 401 {
+			t.Fatalf("guess %d returned %d", i, code)
+		}
+	}
+	if code := login("admin", "test-password-123", 100); code != 429 {
+		t.Fatalf("limited account returned %d", code)
+	}
+	// Unknown names are limited the same way.
+	for i := 0; i < accountLoginLimit; i++ {
+		login("nobody", "wrong-guess", 1+i/3)
+	}
+	if code := login("nobody", "wrong-guess", 101); code != 429 {
+		t.Fatalf("unknown name returned %d", code)
+	}
+}
+
+func TestSuccessfulLoginClearsFailures(t *testing.T) {
+	s, h := securityServer(t)
+	if _, err := s.St.CreateInitialAdmin("admin", "test-password-123"); err != nil {
+		t.Fatal(err)
+	}
+	login := func(password string) int {
+		body := `{"name":"admin","password":"` + password + `"}`
+		r := httptest.NewRequest("POST", "http://lex.test/api/auth/login", strings.NewReader(body))
+		r.RemoteAddr = "192.0.2.1:1"
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Code
+	}
+	for round := 0; round < 3; round++ {
+		for i := 0; i < loginLimit-1; i++ {
+			if code := login("wrong-guess"); code != 401 {
+				t.Fatalf("round %d guess %d returned %d", round, i, code)
+			}
+		}
+		if code := login("test-password-123"); code != 200 {
+			t.Fatalf("round %d sign-in returned %d", round, code)
+		}
 	}
 }
 
