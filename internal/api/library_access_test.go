@@ -415,6 +415,25 @@ func TestRestrictedUserListsHideOtherLibraries(t *testing.T) {
 		t.Fatalf("admin genres: %v", genres)
 	}
 
+	// Letter counts cover only what /api/items lists.
+	for _, q := range []string{"", "?library=2", "?kind=movie", "?genre=Noir"} {
+		var counts map[string]int
+		f.getJSON(t, f.kid, "/api/letters"+q, &counts)
+		f.getJSON(t, f.kid, "/api/items"+q, &list)
+		n := 0
+		for _, c := range counts {
+			n += c
+		}
+		if n != list.Total {
+			t.Errorf("letters%s: %v counts %d titles, items lists %d", q, counts, n, list.Total)
+		}
+	}
+	var adminCounts map[string]int
+	f.getJSON(t, f.admin, "/api/letters?library=2", &adminCounts)
+	if len(adminCounts) == 0 {
+		t.Fatalf("admin letters for the private library: %v", adminCounts)
+	}
+
 	var search map[string][]*store.Item
 	f.getJSON(t, f.kid, "/api/search?q=e", &search)
 	for k, v := range search {

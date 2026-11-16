@@ -176,6 +176,8 @@ func BenchmarkLibraryEndpoints(b *testing.B) {
 		{"favorites", "/api/favorites"},
 		{"items-movies-page", "/api/items?library=1&sort=title&limit=120"},
 		{"items-shows", "/api/items?library=2&sort=latest&desc=1&limit=120"},
+		{"letters-movies", "/api/letters?library=1"},
+		{"letters-movies-unplayed", "/api/letters?library=1&filter=unplayed"},
 		{"search-common", "/api/search?q=star"},
 		{"search-two-words", "/api/search?q=dark+river"},
 		{"search-rare", "/api/search?q=empire+ghost+house"},

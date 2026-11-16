@@ -160,6 +160,21 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"items": nonNilItems(items), "total": total})
 }
 
+// letters counts the titles of a title-sorted /api/items listing by first
+// letter (store.LetterCounts), for the library grid's A–Z rail. It takes
+// the same library, kind, genre and filter parameters.
+func (s *Server) letters(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	lq := store.ListQuery{Kind: q.Get("kind"), Genre: q.Get("genre"), Filter: q.Get("filter")}
+	lq.LibraryID, _ = strconv.ParseInt(q.Get("library"), 10, 64)
+	counts, err := s.St.LetterCounts(userOf(r).ID, lq)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, counts)
+}
+
 func (s *Server) genres(w http.ResponseWriter, r *http.Request) {
 	lib, _ := strconv.ParseInt(r.URL.Query().Get("library"), 10, 64)
 	g, err := s.St.Genres(userOf(r).ID, lib)
