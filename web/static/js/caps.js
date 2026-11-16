@@ -3,6 +3,7 @@
 
 import { CLIENT_AUDIO, clientAudioSupported } from './client-audio.js';
 import { CLIENT_REMUX, clientRemuxSupported } from './client-remux.js';
+import { prefs } from './prefs.js';
 
 let cached = null;
 
@@ -69,6 +70,10 @@ const LABELS = {
   aac: 'AAC', mp3: 'MP3', ac3: 'Dolby Digital (AC-3)', eac3: 'Dolby Digital Plus (E-AC-3)', opus: 'Opus', flac: 'FLAC', alac: 'ALAC', vorbis: 'Vorbis',
   dts: 'DTS', truehd: 'Dolby TrueHD',
   mp4: 'MP4', webm: 'WebM', mkv: 'MKV',
+  // Only in library files, for the compatibility report.
+  mpeg4: 'MPEG-4 (DivX/Xvid)', mpeg2video: 'MPEG-2', mpeg1video: 'MPEG-1', vc1: 'VC-1', wmv3: 'WMV', msmpeg4v3: 'DivX 3',
+  mp2: 'MP2', wmav2: 'WMA', dts_hd: 'DTS-HD',
+  avi: 'AVI', ts: 'MPEG-TS', m2ts: 'Blu-ray (M2TS)', mpg: 'MPEG', wmv: 'WMV', flv: 'FLV',
 };
 
 export function capsSummary(c = detectCaps()) {
@@ -83,4 +88,56 @@ export function capsSummary(c = detectCaps()) {
     'Audio converted in the browser': c.clientAudio.map((k) => LABELS[k] || k).join(', ') || 'none',
     'Remuxed in the browser': c.clientRemux.map((k) => LABELS[k] || k).join(', ') || 'none',
   };
+}
+
+// compatRequest is what /api/compat and /api/items/{id}/compat need: this
+// browser's codecs and this device's playback settings, as the player sends
+// them (player.js loadPlan).
+export function compatRequest() {
+  let mode = prefs.get('mode');
+  const forceHls = mode === 'hls' && document.createElement('video').canPlayType('application/vnd.apple.mpegurl') !== '';
+  if (mode === 'hls') mode = 'auto';
+  return { caps: detectCaps(), mode, forceHls, maxBitrate: prefs.get('quality'), audioLang: prefs.get('audioLang') };
+}
+
+// How well a file plays here, from least to most work (stream/compat.go).
+export const TIERS = {
+  direct: { label: 'Plays as-is', text: 'The browser reads the file unchanged.' },
+  browser: { label: 'Browser repackages', text: 'This browser repackages the file itself. No work for the server.' },
+  remux: { label: 'Server repackages', text: 'The video is copied unchanged. Light work for the server.' },
+  transcode: { label: 'Server converts', text: 'The video is re-encoded: heavy work for the server, and lower quality.' },
+  unplayable: { label: 'Won’t play', text: 'No way to play it with the current settings.' },
+  unknown: { label: 'Not analysed yet', text: 'The file hasn’t been probed yet.' },
+};
+export const TIER_ORDER = ['direct', 'browser', 'remux', 'transcode', 'unplayable', 'unknown'];
+
+// causeLabel says one part of a verdict in plain words. Stage "direct" is why
+// the file can't play as it is; "stream" is why the server does more than
+// repackage it.
+export function causeLabel(c, { remote = false } = {}) {
+  const name = LABELS[c.key] || (c.key?.startsWith('pcm_') ? 'PCM' : (c.key || '').toUpperCase());
+  const direct = c.stage === 'direct';
+  switch (c.kind) {
+    case 'container': return `Browser can’t open ${name} files`;
+    case 'video': return direct ? `${name} video needs repackaging` : `Browser can’t decode ${name} video`;
+    case 'audio': return direct ? `${name} audio needs repackaging` : `${name} audio is converted by the server`;
+    case 'track': return 'Preferred audio language isn’t the default track';
+    case 'bitrate': return prefs.get('quality') > 0 ? 'Above this device’s quality setting' : remote ? 'Above the server’s limit for remote streaming' : 'Above the quality limit';
+    case 'hls': return `HLS can only repackage MKV files, not ${name}`;
+    case 'mode': return `“Always ${c.key === 'transcode' ? 'Transcode' : 'Direct Stream'}” is set on this device`;
+    case 'setting': return { directplay: 'Direct Play is turned off on the server', remux: 'Remuxing is turned off on the server', transcode: 'Converting video is turned off on the server' }[c.key] || `${c.key} is turned off on the server`;
+    case 'error': return c.key ? c.key[0].toUpperCase() + c.key.slice(1) : 'No playback method works';
+  }
+  return `${c.kind} ${c.key}`;
+}
+
+// verdictCauses picks the causes worth saying for a tier: when the server
+// converts, why it can't just repackage; otherwise why it isn't played as is
+// (plus audio the server converts).
+export function verdictCauses(tier, causes) {
+  if (tier === 'transcode' || tier === 'unplayable') {
+    const s = causes.filter((c) => c.stage === 'stream');
+    return s.length ? s : causes;
+  }
+  return causes;
 }

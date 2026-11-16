@@ -187,3 +187,34 @@ func BenchmarkLibraryEndpoints(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkCompat times the library-wide compatibility summary over the
+// benchmark library's ~5,000 files, each probed as a typical MKV (one video
+// stream, three audio tracks, eight subtitles).
+func BenchmarkCompat(b *testing.B) {
+	s, h := cacheServer(b)
+	token, _, _, _ := benchLibrary(b, s)
+	info := &store.MediaInfo{Format: "matroska,webm", Duration: 2700, Bitrate: 9_000_000, Streams: []store.Stream{
+		{Index: 0, Type: "video", Codec: "hevc", Profile: "Main 10", BitDepth: 10, Width: 3840, Height: 2160, HDR: "HDR10", CodecString: "hvc1.2.4.L153.B0"},
+		{Index: 1, Type: "audio", Codec: "eac3", Channels: 6, Language: "eng", Default: true, CodecString: "ec-3"},
+		{Index: 2, Type: "audio", Codec: "aac", Channels: 2, Language: "eng", CodecString: "mp4a.40.2"},
+		{Index: 3, Type: "audio", Codec: "ac3", Channels: 6, Language: "fra", CodecString: "ac-3"},
+	}}
+	for i := range 8 {
+		info.Streams = append(info.Streams, store.Stream{Index: 4 + i, Type: "subtitle", Codec: "subrip", Language: "eng", TextSub: true, Title: "Full"})
+	}
+	j, _ := json.Marshal(info)
+	if _, err := s.St.DB().Exec(`UPDATE files SET info=?, path=replace(path,'.mp4','.mkv')`, string(j)); err != nil {
+		b.Fatal(err)
+	}
+	body := `{"caps":{"mse":true,"direct":{"mp4":true},"video":{"h264":true,"hevc":true},"nativeVideo":{"h264":true},"audio":{"aac":true},"nativeAudio":{"aac":true}},"mode":"auto"}`
+	for b.Loop() {
+		r := httptest.NewRequest("POST", "http://lex.test/api/compat", strings.NewReader(body))
+		r.AddCookie(&http.Cookie{Name: "lex_token", Value: token})
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != 200 {
+			b.Fatalf("%d %s", w.Code, w.Body)
+		}
+	}
+}

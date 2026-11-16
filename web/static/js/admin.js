@@ -2,7 +2,7 @@ import { h, clear, icons, toast, modal, confirmDialog, spinner, toggle, fmtBytes
 import { api, img } from './api.js';
 import { state, loadLibraries, refreshSoft, setLeaveGuard, focusAfterRoute, renderNav } from './app.js';
 import { prefs, DEFAULTS, QUALITIES } from './prefs.js';
-import { capsSummary } from './caps.js';
+import { capsSummary, compatRequest, TIERS, TIER_ORDER, causeLabel } from './caps.js';
 import { lineChart, columnChart, barList, axisHours, axisBitrate } from './charts.js';
 
 // Pollers owned by the current admin view. Each stops at its next tick once
@@ -120,7 +120,11 @@ function select(value, options, onchange) {
 let capsOpen = false; // stays open across re-renders
 function prefsSection() {
   const p = prefs.all();
-  const set = (k, conv = (x) => x) => (v) => { prefs.set(k, conv(v)); toast('Saved on this device', 'ok'); };
+  const set = (k, conv = (x) => x) => (v) => {
+    prefs.set(k, conv(v));
+    toast('Saved on this device', 'ok');
+    if (['quality', 'mode', 'audioLang'].includes(k)) refreshCompat();
+  };
   const langs = [['', 'File default'], ...LANG_OPTIONS];
   const caps = capsSummary();
   return h('div', { class: 'form cols' },
@@ -152,9 +156,65 @@ function prefsSection() {
         field('Autoplay countdown', select(p.countdown, [[5, '5 seconds'], [10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds']], set('countdown', Number))),
         field('Skip back', select(p.skipBack, [[5, '5 seconds'], [10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds']], set('skipBack', Number))),
         field('Skip forward', select(p.skipFwd, [[10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds'], [60, '60 seconds']], set('skipFwd', Number))))),
+    compatSection(),
     h('div', { class: 'form-section' }, h('details', { class: 'caps', open: capsOpen, ontoggle: (e) => { capsOpen = e.target.open; } }, h('summary', null, h('h2', null, 'Technical: this browser’s codecs')),
       h('dl', { class: 'kv' }, Object.entries(caps).map(([k, v]) => [h('dt', null, k), h('dd', null, v)])))),
     h('div', null, h('button', { class: 'btn', dataset: { focusKey: 'prefs-reset' }, onclick: resetPrefs }, 'Reset to defaults')));
+}
+
+// compatSection shows how the user's library plays in this browser with
+// this device's settings: how many files play as they are, how many the
+// server must repackage or convert, and why. It fills in once the server
+// has checked every file.
+let refreshCompat = () => {};
+function compatSection() {
+  const body = h('div', { 'aria-live': 'polite' });
+  let gen = 0;
+  refreshCompat = () => {
+    const mine = ++gen, req = compatRequest();
+    clear(body).append(h('div', { class: 'row' }, h('div', { class: 'spinner sm' }), h('span', { class: 'muted small' }, 'Checking your library…')));
+    api('/api/compat', { method: 'POST', body: req }).then((sum) => {
+      // h() flattens the nested arrays and skips nulls; append() wouldn't.
+      if (mine === gen) clear(body).append(h('div', null, compatSummary(sum, req)));
+    }).catch((e) => { if (mine === gen) clear(body).append(h('p', { class: 'bad', style: { margin: 0 } }, e.message)); });
+  };
+  refreshCompat();
+  return h('div', { class: 'form-section' }, h('h2', null, 'How your library plays here'), body);
+}
+
+const TIER_COLOR = { direct: 'var(--method-direct)', browser: 'var(--good-ink)', remux: 'var(--method-remux)', transcode: 'var(--method-transcode)', unplayable: 'var(--bad-strong)', unknown: 'var(--bg4)' };
+const plural = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
+
+function compatSummary(sum, req) {
+  if (!sum.files) return [h('p', { class: 'muted', style: { margin: 0 } }, 'No media files yet.')];
+  const tiers = TIER_ORDER.filter((t) => sum.tiers[t]);
+  const easy = (sum.tiers.direct || 0) + (sum.tiers.browser || 0) + (sum.tiers.remux || 0);
+  const pct = (n) => `${Math.round((n / sum.files) * 100)}%`;
+  const open = (tier, cause) => titlesModal(cause ? causeLabel(cause, sum) : TIERS[tier].label,
+    () => api('/api/compat/titles', { method: 'POST', body: { ...req, tier, cause } }),
+    h('p', { class: 'small muted', style: { margin: '0 0 10px' } }, TIERS[tier].text));
+  const headline = sum.tiers.transcode || sum.tiers.unplayable
+    ? `${pct(easy)} of your files play here without being converted.`
+    : 'Everything in your library plays here without being converted.';
+  // Why files aren't played as they are, worst tier first; a file can have
+  // more than one reason.
+  // For conversions only the reasons it can't just repackage count.
+  const causes = sum.causes.filter((c) => c.tier !== 'direct' && (c.stage === 'stream' || !['transcode', 'unplayable'].includes(c.tier)))
+    .sort((a, b) => TIER_ORDER.indexOf(b.tier) - TIER_ORDER.indexOf(a.tier) || (a.kind === 'audio') - (b.kind === 'audio') || b.files - a.files);
+  // Being remote only matters when the server's remote bitrate limit applies.
+  const capped = !req.maxBitrate && sum.remote && sum.causes.some((c) => c.kind === 'bitrate');
+  const notes = [req.maxBitrate ? 'this device’s quality setting' : null, req.mode !== 'auto' ? 'this device’s playback method' : null, capped ? 'the server’s limit for streaming from outside your network' : null].filter(Boolean);
+  return [
+    h('p', { style: { margin: '0 0 10px' } }, headline),
+    h('div', { class: 'compat-bar', role: 'img', 'aria-label': tiers.map((t) => `${TIERS[t].label}: ${sum.tiers[t]}`).join(', ') },
+      tiers.map((t) => h('i', { style: { flexGrow: sum.tiers[t], background: TIER_COLOR[t] }, title: `${TIERS[t].label}: ${plural(sum.tiers[t], 'file')}` }))),
+    barList(tiers.map((t) => ({ label: TIERS[t].label, value: sum.tiers[t], tier: t, onClick: () => open(t) })), (v) => plural(v, 'file'), (it) => TIER_COLOR[it.tier]),
+    causes.length ? [h('h3', { class: 'compat-why' }, 'Why files aren’t played as they are'),
+      barList(causes.map((c) => ({ label: causeLabel(c, sum), value: c.files, tier: c.tier, onClick: () => open(c.tier, { stage: c.stage, kind: c.kind, key: c.key }) })),
+        (v) => plural(v, 'file'), (it) => TIER_COLOR[it.tier], { wrap: true })] : null,
+    h('p', { class: 'help', style: { margin: '10px 0 0' } },
+      `For your libraries in this browser${notes.length ? `, taking into account ${notes.join(' and ')}` : ''}. Assumes each file’s default audio track and no subtitles. Picking image subtitles (PGS, VobSub) means the server converts the video so it can burn them in. A file can have more than one reason. Select a row to see its titles.`),
+  ];
 }
 
 // Volume and the stats panel's compact state aren't shown on this page, so a
@@ -1511,11 +1571,16 @@ async function libraryTab() {
 const DIM_LABEL = { library: 'Library', resolution: 'Resolution', hdr: 'HDR', video: 'Video codec', audio: 'Audio track', container: 'Container' };
 
 // libraryTitles shows the movies and shows in one Library-stats category.
-async function libraryTitles(dim, key, label) {
+function libraryTitles(dim, key, label) {
+  return titlesModal(label, () => api(`/api/admin/stats/library/titles?dim=${encodeURIComponent(dim)}&key=${encodeURIComponent(key)}`));
+}
+
+// titlesModal lists the movies and shows load() resolves to (LibraryTitle).
+async function titlesModal(label, load, intro = null) {
   const list = h('div', { class: 'title-list' }, spinner());
-  const m = modal({ title: label, body: list, wide: true });
+  const m = modal({ title: label, body: [intro, list], wide: true });
   try {
-    const rows = await api(`/api/admin/stats/library/titles?dim=${encodeURIComponent(dim)}&key=${encodeURIComponent(key)}`);
+    const rows = await load();
     const total = rows.reduce((a, r) => a + r.bytes, 0);
     clear(list).append(
       h('div', { class: 'small muted' }, `${rows.length} title${rows.length === 1 ? '' : 's'} · ${fmtBytes(total)}`),
