@@ -212,9 +212,10 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 				writeErr(w, 500, "internal error")
 			}
 		}()
-		// JSON API responses get gzip; media and images don't.
+		// API responses may get gzip; gzipWriter only compresses text-like
+		// content types, so images and media pass through untouched.
 		if strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/api/files/") &&
-			!strings.Contains(r.URL.Path, "/image/") && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 			gw := &gzipWriter{ResponseWriter: w}
 			defer gw.Close()
 			w = gw
@@ -235,7 +236,8 @@ type gzipWriter struct {
 func (g *gzipWriter) WriteHeader(code int) {
 	if !g.started {
 		g.started = true
-		if code == http.StatusNoContent || code == http.StatusNotModified || g.Header().Get("Content-Encoding") != "" {
+		if code == http.StatusNoContent || code == http.StatusNotModified || code == http.StatusPartialContent ||
+			g.Header().Get("Content-Encoding") != "" || !compressible(g.Header().Get("Content-Type")) {
 			g.skip = true
 		} else {
 			g.Header().Del("Content-Length")
@@ -248,8 +250,25 @@ func (g *gzipWriter) WriteHeader(code int) {
 	g.ResponseWriter.WriteHeader(code)
 }
 
+// compressible reports whether a response of this Content-Type is worth
+// gzipping: JSON and text yes, images and media (already compressed) no.
+func compressible(contentType string) bool {
+	ct, _, _ := strings.Cut(contentType, ";")
+	ct = strings.ToLower(strings.TrimSpace(ct))
+	switch {
+	case strings.HasPrefix(ct, "text/"), strings.HasSuffix(ct, "json"), strings.HasSuffix(ct, "+xml"),
+		ct == "application/javascript", ct == "application/xml",
+		ct == "application/vnd.apple.mpegurl", ct == "application/x-mpegurl":
+		return true
+	}
+	return false
+}
+
 func (g *gzipWriter) Write(b []byte) (int, error) {
 	if !g.started {
+		if g.Header().Get("Content-Type") == "" {
+			g.Header().Set("Content-Type", http.DetectContentType(b))
+		}
 		g.WriteHeader(200)
 	}
 	if g.skip || g.gz == nil {
