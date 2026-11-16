@@ -395,7 +395,7 @@ async function configForm(build, { check } = {}) {
 
 // The webhook URL carries a secret token: offer a copy button, falling back
 // to selecting the text where the clipboard API is unavailable (plain http).
-function webhookHelp(url) {
+function copyableUrl(url) {
   const code = h('code', { class: 'mono' }, url);
   const copy = async () => {
     try {
@@ -406,8 +406,21 @@ function webhookHelp(url) {
       toast('Press Ctrl+C (⌘C) to copy the selected URL');
     }
   };
-  return h('div', { class: 'help' }, 'Sonarr/Radarr: add a Webhook connection pointing at ', code, ' to rescan instantly after imports. ',
-    h('button', { class: 'btn sm', type: 'button', onclick: copy }, 'Copy URL'));
+  return h('div', { class: 'webhook-url' }, code, ' ', h('button', { class: 'btn sm', type: 'button', onclick: copy }, 'Copy'));
+}
+
+// Radarr/Sonarr usually run in a container, which often can't reach the
+// address this browser uses (a Tailscale serve name, a reverse proxy), so
+// also list the server's direct LAN addresses.
+function webhookHelp(path, lanBases) {
+  const lan = (lanBases || []).filter(b => b !== location.origin).map(b => copyableUrl(b + path));
+  return h('div', { class: 'help' },
+    'Sonarr/Radarr: add a Webhook connection (method POST or PUT) to rescan instantly after imports. URL as this browser reaches Lex:',
+    copyableUrl(location.origin + path),
+    lan.length ? [
+      'If the Test button fails with “connection refused” or a timeout (common when Radarr runs in Docker/Podman and this address is a Tailscale or proxy name), use a direct LAN address instead:',
+      ...lan,
+    ] : null);
 }
 
 // titlePicker edits a list of movies and shows (item ids): chips for the
@@ -549,7 +562,7 @@ async function serverSection() {
         field('Rescan every (minutes)', num('scanIntervalMin', { min: 0 }), '0 disables periodic scans. Scans only stat files, so they are cheap.'),
         field('Probe workers', num('probeWorkers', { min: 1, max: 8 }), 'Parallel ffprobe processes for new files. 1 is best on a Pi.')),
       tg('scanOnStartup', 'Scan on startup'),
-      webhookHelp(`${location.origin}${info.webhookUrl}`)),
+      webhookHelp(info.webhookUrl, info.webhookLanUrls)),
     h('div', { class: 'form-section' }, h('h2', null, 'Playback history'),
       field('Keep history for (days)', num('historyRetentionDays', { min: 0, max: 36500 }), '0 keeps it forever. Older plays are deleted hourly, and the Playback dashboard only covers what is kept.')),
     h('div', { class: 'form-section' }, h('h2', null, 'Network & remote access'),

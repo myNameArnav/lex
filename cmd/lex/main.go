@@ -137,6 +137,7 @@ func main() {
 	srv := &api.Server{
 		Version: version, DataDir: abs, St: st, Log: log, Scanner: scanner, Agent: agent, Images: images,
 		Subs: subs, Sess: sessions, Stats: sampler, FF: ff, Web: web.FS(), Cache: mediaCache, Intro: intros, Trick: tricks, HLS: hls,
+		ListenAddr: *addr,
 	}
 	handler, err := srv.Handler()
 	if err != nil {
