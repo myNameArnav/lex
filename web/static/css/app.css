@@ -353,9 +353,11 @@ a.az:focus-visible { outline-offset: 0; }
 .hero-info h1 { font-size: 40px; line-height: 1.1; margin: 4px 0 8px; letter-spacing: -.025em; font-weight: 800; }
 .hero-info .kicker { color: var(--accent); font-weight: 700; font-size: 14px; }
 .facts { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--text2); font-weight: 600; margin-bottom: 10px; align-items: center; }
-.facts .pill.compat[data-tier="direct"], .facts .pill.compat[data-tier="browser"] { border-color: var(--method-direct); color: var(--method-direct); }
-.facts .pill.compat[data-tier="remux"] { border-color: var(--method-remux); color: var(--method-remux); }
-.facts .pill.compat[data-tier="transcode"], .facts .pill.compat[data-tier="unplayable"] { border-color: var(--method-transcode); color: var(--method-transcode); }
+/* How the file plays here: the same chip as the rating and resolution, with
+   warning text only when the server has to convert it or can't play it.
+   (Not .compat: that's the Library dashboard's two-column grid.) */
+.facts .play-tier { cursor: help; }
+.facts .play-tier[data-tier="transcode"], .facts .play-tier[data-tier="unplayable"] { color: var(--method-transcode); }
 .compat-note { color: var(--text3); margin: 4px 0 0; }
 .facts .pill { border: 1px solid rgba(255,255,255,.25); border-radius: 4px; padding: 0 6px; font-size: 12px; }
 .facts .star { color: var(--accent); }

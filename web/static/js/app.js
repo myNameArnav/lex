@@ -1156,11 +1156,11 @@ function mediaView(ctx, d) {
 }
 
 // compatBadge says how the file the Play button plays (the first) plays in
-// this browser: a pill next to the resolution, and the reasons below the
+// this browser: a chip next to the resolution, and the reasons below the
 // file summary when the server has to do the work. Both stay empty until the
 // server answers, and on error.
 function compatBadge(it, file) {
-  const pill = h('span', { class: 'pill compat', hidden: true });
+  const pill = h('span', { class: 'pill play-tier', hidden: true });
   const note = h('p', { class: 'small compat-note', hidden: true });
   api(`/api/items/${it.id}/compat`, { method: 'POST', body: compatRequest() }).then((r) => {
     const v = r.files.find((f) => f.fileId === file.id);
