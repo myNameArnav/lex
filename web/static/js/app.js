@@ -1,4 +1,4 @@
-import { h, $, clear, icons, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrate, toast, modal, spinner, lazyImg, popupMenu, closePopupMenu, streamLabel, langName, channelName, confirmDialog, run, fmtEpisode, fmtClock, motionOK, emptyState } from './ui.js';
+import { h, $, clear, icons, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrate, toast, modal, spinner, lazyImg, popupMenu, closePopupMenu, streamLabel, langName, channelName, confirmDialog, run, fmtEpisode, fmtAirDate, fmtClock, motionOK, emptyState } from './ui.js';
 import { api, img, castImg } from './api.js';
 import { openPlayer, isPlayerOpen, closePlayer } from './player.js';
 import { installShortcuts, showShortcuts, MOD } from './shortcuts.js';
@@ -849,7 +849,7 @@ function heroPoster(it, kind, land) {
 function facts(it, extra = []) {
   const f = [];
   if (it.year && it.kind !== 'episode') f.push(h('span', null, it.year));
-  if (it.premiere && it.kind === 'episode') f.push(h('span', null, new Date(it.premiere).toLocaleDateString(undefined, { dateStyle: 'medium' })));
+  if (it.premiere && it.kind === 'episode') f.push(h('span', null, fmtAirDate(it.premiere)));
   if (it.duration) f.push(h('span', null, fmtDuration(it.duration)));
   else if (it.runtime) f.push(h('span', null, `${it.runtime}m`));
   if (it.contentRating) f.push(h('span', { class: 'pill' }, it.contentRating));
@@ -1335,7 +1335,7 @@ function episodeRow(e, onChange) {
     art,
     h('a', { class: 'episode-info', href: `#/item/${e.id}`, 'aria-labelledby': `${id}-t`, 'aria-describedby': e.overview ? `${id}-m ${id}-o` : `${id}-m` },
       h('h3', { id: `${id}-t` }, h('span', { class: 'num' }, `${e.episode}${e.episodeEnd ? '–' + e.episodeEnd : ''}.`), ' ', e.title),
-      h('div', { class: 'dim small', id: `${id}-m` }, [e.premiere ? new Date(e.premiere).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '', e.duration ? fmtDuration(e.duration) : '', ud.position > 0 && !ud.played ? `${fmtDuration(e.duration - ud.position)} left` : ''].filter(Boolean).join(' · ')),
+      h('div', { class: 'dim small', id: `${id}-m` }, [e.premiere ? fmtAirDate(e.premiere) : '', e.duration ? fmtDuration(e.duration) : '', ud.position > 0 && !ud.played ? `${fmtDuration(e.duration - ud.position)} left` : ''].filter(Boolean).join(' · ')),
       e.overview ? h('p', { id: `${id}-o` }, e.overview) : null),
     h('div', { class: 'side' }, wbtn));
 }

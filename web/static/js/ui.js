@@ -66,6 +66,16 @@ export function fmtDate(ts) {
   return new Date(ts * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
+// Air dates are date-only strings ("2024-03-05"), which Date parses as UTC
+// midnight; format them in UTC so they don't shift a day west of Greenwich.
+export function fmtAirDate(d) {
+  if (!d) return '';
+  const date = new Date(d);
+  if (Number.isNaN(date.getTime())) return '';
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(d);
+  return date.toLocaleDateString(undefined, { dateStyle: 'medium', ...(dateOnly && { timeZone: 'UTC' }) });
+}
+
 export function timeAgo(ts) {
   if (!ts) return 'never';
   const s = Date.now() / 1000 - ts;
