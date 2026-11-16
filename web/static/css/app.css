@@ -134,6 +134,7 @@ select { padding-right: 28px; appearance: none; background-image: url("data:imag
 .field select, .field input { width: 100%; }
 .field > span { color: var(--text2); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 .help { color: var(--text3); font-size: 12px; }
+.help .webhook-url { margin: 4px 0 8px; }
 
 .switch { position: relative; display: inline-block; width: 40px; height: 22px; flex: none; }
 .switch input { opacity: 0; width: 0; height: 0; }
