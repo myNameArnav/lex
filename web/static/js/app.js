@@ -2,6 +2,7 @@ import { h, $, clear, icons, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrat
 import { api, img, castImg } from './api.js';
 import { openPlayer, isPlayerOpen, closePlayer } from './player.js';
 import { installShortcuts, showShortcuts, MOD } from './shortcuts.js';
+import { seasonMenuItems, seasonConfirm } from './season.js';
 import { compatRequest, TIERS, causeLabel, verdictCauses } from './caps.js';
 
 // caps: { subtitleSearch, cacheEnabled, liveTv } from the server (see /api/me).
@@ -1240,6 +1241,11 @@ async function showView(ctx, d) {
   const episodeChanged = (s, played) => {
     s.unplayedCount = Math.max(0, (s.unplayedCount || 0) + (played ? -1 : 1));
     seasonTabLabel(tabFor(s), s);
+    refetchShow(400);
+  };
+  // refetchShow updates the play button, Up next and every season count
+  // after a change in the list (debounced: toggles come in bursts).
+  const refetchShow = (delay) => {
     clearTimeout(refetch);
     const mine = ++seq;
     refetch = setTimeout(async () => {
@@ -1256,12 +1262,37 @@ async function showView(ctx, d) {
       cta.replaceWith(n);
       cta = n;
       if (key) n.querySelector(`[data-focus-key="${key}"]`)?.focus({ preventScroll: true });
-    }, 400);
+    }, delay);
   };
   const wanted = +ctx.query.get('season');
   let active = seasons.find((s) => s.id === wanted) || (next && seasons.find((s) => s.id === next.parentId)) || seasons.find((s) => s.season > 0) || seasons[0];
+  const renderEpisodes = (s, eps) => clear(list).append(...(s.overview ? [h('p', { class: 'muted', style: { maxWidth: '760px', margin: '0 0 8px' } }, s.overview)] : []), ...eps.map((e) => episodeRow(e, (played) => episodeChanged(s, played))));
+  // The selected season's ⋯ menu: mark it watched/unwatched, shuffle it.
+  // Always shown at a fixed size beside the tabs, so switching seasons or
+  // acting on one never moves the layout; the menu is built on open.
+  const markSeason = async (s, played, btn) => {
+    if (!(await confirmDialog(seasonConfirm(s, it.title, played)))) return;
+    if (!(await run(btn, () => api(`/api/items/${s.id}/played`, { method: 'POST', body: { played } }), played ? 'Marked watched' : 'Marked unwatched'))) return;
+    s.unplayedCount = played ? 0 : s.childCount || 0;
+    seasonTabLabel(tabFor(s), s);
+    refetchShow(0);
+    // Redraw the checks and progress bars in place (no spinner, no jump).
+    if (active !== s) return;
+    let eps;
+    try { eps = await api(`/api/items/${s.id}/children`); } catch { return; }
+    if (active !== s || !ctx.isCurrent()) return;
+    const key = list.contains(document.activeElement) ? document.activeElement.dataset.focusKey : null;
+    renderEpisodes(s, eps);
+    if (key) list.querySelector(`[data-focus-key="${key}"]`)?.focus({ preventScroll: true });
+  };
+  const more = seasons.length ? h('button', { class: 'btn icon ghost sm season-more', type: 'button', title: 'Season actions', 'aria-label': 'Season actions', 'aria-haspopup': 'menu', dataset: { focusKey: `season-more-${it.id}` }, html: icons.more, onclick: (e) => {
+    const btn = e.currentTarget, s = active;
+    if (!s) return;
+    popupMenu(btn, seasonMenuItems(s, { mark: (played) => markSeason(s, played, btn), shuffle: () => playShuffle(s, btn) }));
+  } }) : null;
   const showSeason = async (s) => {
     active = s;
+    more?.setAttribute('aria-label', `Actions for ${s.title}`);
     for (const b of tabs.children) {
       const selected = +b.dataset.id === s.id;
       b.classList.toggle('active', selected);
@@ -1272,7 +1303,7 @@ async function showView(ctx, d) {
     try {
       const eps = await api(`/api/items/${s.id}/children`);
       if (active !== s || !ctx.isCurrent()) return;
-      clear(list).append(...(s.overview ? [h('p', { class: 'muted', style: { maxWidth: '760px', margin: '0 0 8px' } }, s.overview)] : []), ...eps.map((e) => episodeRow(e, (played) => episodeChanged(s, played))));
+      renderEpisodes(s, eps);
       replaceHash(`#/item/${it.id}?season=${s.id}`);
     } catch (e) {
       if (active === s && ctx.isCurrent()) clear(list).append(h('p', { class: 'bad', role: 'alert' }, e.message), h('button', { class: 'btn', onclick: () => showSeason(s) }, 'Retry'));
@@ -1286,7 +1317,7 @@ async function showView(ctx, d) {
     tabs.appendChild(tab);
   }
   const page = h('div', null, hero(it, poster, info),
-    h('div', { class: 'page', style: { paddingTop: 0 } }, h('h2', { class: 'sr-only' }, 'Episodes'), tabs, list),
+    h('div', { class: 'page', style: { paddingTop: 0 } }, h('h2', { class: 'sr-only' }, 'Episodes'), h('div', { class: 'season-bar' }, tabs, more), list),
     castRow(it));
   if (active) await showSeason(active);
   // Many seasons: bring the selected tab into view once the page is laid out.
