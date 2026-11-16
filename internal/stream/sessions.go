@@ -75,6 +75,7 @@ type Session struct {
 	lastTick  time.Time
 	job       *Job
 	playedSet bool
+	wasPlayed bool // the item's watched state before this session marked it
 	lastPos   float64
 	lastBeat  time.Time
 	active    int         // open HTTP responses
@@ -308,7 +309,7 @@ func (m *Manager) Heartbeat(id string, uid int64, pos float64, paused bool, cs C
 	stuck, resumed := s.watchProgress(now, pos, paused)
 	s.lastPos, s.lastBeat = pos, now
 	s.Position, s.Paused, s.Client_, s.LastSeen = pos, paused, cs, now.Unix()
-	itemID, dur, playedSet, live := s.ItemID, s.Duration, s.playedSet, s.Live
+	itemID, dur, playedSet, live, watched := s.ItemID, s.Duration, s.playedSet, s.Live, s.Watched
 	user, title, method, client := s.UserName, s.Title, s.Method, s.Client
 	m.mu.Unlock()
 	if stuck != "" {
@@ -320,20 +321,41 @@ func (m *Manager) Heartbeat(id string, uid int64, pos float64, paused bool, cs C
 
 	switch {
 	case live:
-	case dur > 0 && pos/dur >= 0.92 || (dur > 1200 && dur-pos < 120 && pos > 0):
-		if !playedSet {
+	case nearEnd(pos, dur):
+		// Reaching the end by scrubbing isn't watching it: wait until the
+		// session has some real playback behind it.
+		if !playedSet && watched >= minWatchedToMark {
+			prev, _ := m.st.GetUserData(uid, itemID)
 			m.st.MarkPlayed(uid, itemID, true)
 			m.mu.Lock()
-			s.playedSet = true
+			s.playedSet, s.wasPlayed = true, prev.Played
 			m.mu.Unlock()
 		}
-	case !playedSet && pos >= 30:
+	case playedSet:
+		// The viewer went back after the mark: undo it and keep the resume
+		// point, as if the end had never been reached.
+		m.mu.Lock()
+		wasPlayed := s.wasPlayed
+		s.playedSet = false
+		m.mu.Unlock()
+		m.st.UndoPlayed(uid, itemID, wasPlayed, pos)
+	case pos >= 30:
 		m.st.SaveProgress(uid, itemID, pos)
 	}
 	m.mu.Lock()
 	copy := *s
 	m.mu.Unlock()
 	return &copy, nil
+}
+
+// minWatchedToMark is how much real playback a session needs before reaching
+// the end marks the title watched.
+const minWatchedToMark = 30
+
+// nearEnd reports whether a position counts as finished: past 92%, or within
+// the last two minutes of anything longer than 20 minutes.
+func nearEnd(pos, dur float64) bool {
+	return dur > 0 && pos/dur >= 0.92 || (dur > 1200 && dur-pos < 120 && pos > 0)
 }
 
 // A session whose position hasn't moved for stuckAfter while unpaused, with

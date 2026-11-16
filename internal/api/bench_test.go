@@ -193,7 +193,12 @@ func BenchmarkLibraryEndpoints(b *testing.B) {
 // stream, three audio tracks, eight subtitles).
 func BenchmarkCompat(b *testing.B) {
 	s, h := cacheServer(b)
-	token, _, _, _ := benchLibrary(b, s)
+	benchLibrary(b, s)
+	admin, err := s.St.CreateUser("benchadmin", "test-password-123", true)
+	if err != nil {
+		b.Fatal(err)
+	}
+	token, _ := s.St.CreateToken(admin.ID, "Bench", "127.0.0.1")
 	info := &store.MediaInfo{Format: "matroska,webm", Duration: 2700, Bitrate: 9_000_000, Streams: []store.Stream{
 		{Index: 0, Type: "video", Codec: "hevc", Profile: "Main 10", BitDepth: 10, Width: 3840, Height: 2160, HDR: "HDR10", CodecString: "hvc1.2.4.L153.B0"},
 		{Index: 1, Type: "audio", Codec: "eac3", Channels: 6, Language: "eng", Default: true, CodecString: "ec-3"},
@@ -209,7 +214,7 @@ func BenchmarkCompat(b *testing.B) {
 	}
 	body := `{"caps":{"mse":true,"direct":{"mp4":true},"video":{"h264":true,"hevc":true},"nativeVideo":{"h264":true},"audio":{"aac":true},"nativeAudio":{"aac":true}},"mode":"auto"}`
 	for b.Loop() {
-		r := httptest.NewRequest("POST", "http://lex.test/api/compat", strings.NewReader(body))
+		r := httptest.NewRequest("POST", "http://lex.test/api/admin/compat", strings.NewReader(body))
 		r.AddCookie(&http.Cookie{Name: "lex_token", Value: token})
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)

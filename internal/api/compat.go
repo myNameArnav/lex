@@ -56,7 +56,8 @@ func (s *Server) assessLibrary(r *http.Request, req compatReq, fn func(*store.Fi
 	return remote, nil
 }
 
-// compat summarises how the user's library plays in the requesting browser.
+// compat summarises how the library plays in the requesting browser (the
+// Library dashboard).
 func (s *Server) compat(w http.ResponseWriter, r *http.Request) {
 	var req compatReq
 	if err := readJSON(r, &req); err != nil {

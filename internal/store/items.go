@@ -741,6 +741,15 @@ func (s *Store) MarkPlayed(uid, itemID int64, played bool) error {
 	return err
 }
 
+// UndoPlayed reverses a MarkPlayed made moments ago by a playback session
+// whose viewer then went back: the play is uncounted, the watched state
+// restored and the resume point set to where the viewer is now.
+func (s *Store) UndoPlayed(uid, itemID int64, wasPlayed bool, position float64) error {
+	_, err := s.db.Exec(`UPDATE user_data SET played=?,play_count=MAX(play_count-1,0),position=? WHERE user_id=? AND item_id=?`,
+		wasPlayed, position, uid, itemID)
+	return err
+}
+
 // MarkTreePlayed is the manual "Mark watched/unwatched" for a show or season
 // (all its episodes) or a single item. Unlike MarkPlayed, which records a
 // finished playback, marking something that is already watched doesn't add

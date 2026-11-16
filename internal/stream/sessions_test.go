@@ -171,8 +171,90 @@ func TestLiveSessionSavesNoProgress(t *testing.T) {
 	if ud, _ := st.GetUserData(u.ID, 1); ud != (store.UserData{}) {
 		t.Fatalf("live session saved %+v", ud)
 	}
-	if ud, _ := st.GetUserData(u.ID, 2); !ud.Played {
-		t.Fatalf("on-demand session saved %+v, want played", ud)
+	// Jumping to the end without playing it saves the last real position.
+	if ud, _ := st.GetUserData(u.ID, 2); ud.Played || ud.Position != 600 {
+		t.Fatalf("on-demand session saved %+v, want position 600", ud)
+	}
+}
+
+func TestSeekingToTheEndDoesNotFinishTitle(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	u, err := st.CreateUser("viewer", "test-password-123", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO libraries(id,name,kind,paths,created_at) VALUES(1,'Movies','movies','[]',0)`,
+		`INSERT INTO items(id,library_id,kind,title,sort_title,added_at,updated_at) VALUES(1,1,'movie','A','a',0,0),(2,1,'movie','B','b',0,0)`,
+	} {
+		if _, err := st.DB().Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := NewManager(st, logx.New(10, false))
+	// beat reports a position as if 10 s of wall time passed since the last one.
+	beat := func(id string, pos float64) {
+		t.Helper()
+		m.mu.Lock()
+		m.m[id].lastBeat = time.Now().Add(-10 * time.Second)
+		m.mu.Unlock()
+		if _, err := m.Heartbeat(id, u.ID, pos, false, ClientStats{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data := func(item int64) store.UserData {
+		ud, err := st.GetUserData(u.ID, item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ud
+	}
+
+	if _, err := m.Open(&Session{ID: "a", UserID: u.ID, ItemID: 1, FileID: 1, Duration: 3000}); err != nil {
+		t.Fatal(err)
+	}
+	beat("a", 100)
+	beat("a", 2950) // scrubbed to the end: one heartbeat there isn't enough
+	if ud := data(1); ud.Played || ud.Position != 100 {
+		t.Fatalf("after scrubbing to the end: %+v", ud)
+	}
+	beat("a", 2960) // ...but playing the ending for a while is
+	if ud := data(1); !ud.Played || ud.PlayCount != 1 {
+		t.Fatalf("after playing the ending: %+v", ud)
+	}
+	beat("a", 1500) // went back: the mark is undone and progress resumes
+	if ud := data(1); ud.Played || ud.PlayCount != 0 || ud.Position != 1500 {
+		t.Fatalf("after seeking back: %+v", ud)
+	}
+	beat("a", 1510)
+	if ud := data(1); ud.Played || ud.Position != 1510 {
+		t.Fatalf("progress after seeking back: %+v", ud)
+	}
+	beat("a", 2990)
+	if ud := data(1); !ud.Played || ud.PlayCount != 1 {
+		t.Fatalf("after finishing: %+v", ud)
+	}
+
+	// A rewatch keeps the earlier watched mark when the viewer goes back.
+	if err := st.MarkPlayed(u.ID, 2, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Open(&Session{ID: "b", UserID: u.ID, ItemID: 2, FileID: 2, Duration: 3000}); err != nil {
+		t.Fatal(err)
+	}
+	beat("b", 2900)
+	beat("b", 2910)
+	beat("b", 2920)
+	if ud := data(2); !ud.Played || ud.PlayCount != 2 {
+		t.Fatalf("rewatch finished: %+v", ud)
+	}
+	beat("b", 400)
+	if ud := data(2); !ud.Played || ud.PlayCount != 1 || ud.Position != 400 {
+		t.Fatalf("rewatch after seeking back: %+v", ud)
 	}
 }
 
