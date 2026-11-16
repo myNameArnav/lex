@@ -101,6 +101,20 @@ test('timeAgo falls back to a medium date after 30 days', async () => {
   assert.equal(ui.timeAgo(Date.now() / 1000 - 7200), '2h ago');
 });
 
+test('fmtAirDate keeps date-only air dates on their day west of UTC', async () => {
+  const { ui } = await loadUI();
+  const tz = process.env.TZ;
+  process.env.TZ = 'America/New_York';
+  try {
+    const want = new Date(2024, 2, 5).toLocaleDateString(undefined, { dateStyle: 'medium' });
+    assert.equal(ui.fmtAirDate('2024-03-05'), want);
+    assert.equal(ui.fmtAirDate(''), '');
+    assert.equal(ui.fmtAirDate('not a date'), '');
+  } finally {
+    if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz;
+  }
+});
+
 test('toasts are a live region, capitalised, deduplicated, keyed and capped', async () => {
   const { ui, dom, timers, flushFrames } = await loadUI();
   ui.toast('saved on this device', 'ok');
