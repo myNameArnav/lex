@@ -261,6 +261,9 @@ var lateColumns = []struct{ table, column, def string }{
 	// 1: the user sees every library (existing users keep that); 0: only
 	// those in user_libraries. Admins always see every library.
 	{"users", "all_libraries", "INTEGER NOT NULL DEFAULT 1"},
+	// When the item was last made a favorite (0 for favorites from before
+	// this column), so the Favorites row lists the newest first.
+	{"user_data", "favorited_at", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 func addLateColumns(db dbtx) error {

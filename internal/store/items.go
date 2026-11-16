@@ -785,8 +785,11 @@ func (s *Store) MarkTreePlayed(uid, itemID int64, played bool) error {
 
 // SetFavorite returns ErrNotFound for an item that doesn't exist.
 func (s *Store) SetFavorite(uid, itemID int64, fav bool) error {
-	res, err := s.db.Exec(`INSERT INTO user_data(user_id,item_id,favorite) SELECT ?,id,? FROM items WHERE id=?
-		ON CONFLICT(user_id,item_id) DO UPDATE SET favorite=excluded.favorite`, uid, fav, itemID)
+	// favorited_at keeps the time it first became a favorite while it stays one.
+	res, err := s.db.Exec(`INSERT INTO user_data(user_id,item_id,favorite,favorited_at) SELECT ?,id,?,? FROM items WHERE id=?
+		ON CONFLICT(user_id,item_id) DO UPDATE SET favorite=excluded.favorite,
+			favorited_at=CASE WHEN excluded.favorite=0 THEN 0 WHEN user_data.favorite=1 THEN user_data.favorited_at ELSE excluded.favorited_at END`,
+		uid, fav, favoritedAt(fav), itemID)
 	if err != nil {
 		return err
 	}
@@ -794,6 +797,28 @@ func (s *Store) SetFavorite(uid, itemID int64, fav bool) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+func favoritedAt(fav bool) int64 {
+	if fav {
+		return now()
+	}
+	return 0
+}
+
+// Favorites returns the movies and shows a user marked as favorites, across
+// the libraries they may see, most recently added first; limit <= 0 returns
+// all of them.
+func (s *Store) Favorites(uid int64, limit int) ([]*Item, error) {
+	q := `WHERE i.kind IN ('movie','show') AND i.id IN (SELECT item_id FROM user_data WHERE user_id=:uid AND favorite=1)
+		ORDER BY ud.favorited_at DESC, i.id DESC`
+	args := []any{sql.Named("uid", uid)}
+	if limit > 0 {
+		q += ` LIMIT :lim`
+		args = append(args, sql.Named("lim", limit))
+	}
+	// Cards only, like ListItems: the Home row and page show posters.
+	return s.queryItemsUD(udSelectCols(cardCols, q), args...)
 }
 
 // Airable is a movie or episode with a known duration, for Live TV.

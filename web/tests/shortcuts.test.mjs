@@ -104,3 +104,13 @@ test('g then t opens Live TV only while it is turned on', async () => {
   on.press('g'); on.press('t');
   assert.deepEqual(on.calls.go, ['#/tv']);
 });
+
+test('g then w or f opens the Watchlist or Favorites, and the sheet lists them', async () => {
+  const f = await fixture();
+  f.press('g'); f.press('w');
+  f.press('g'); f.press('f');
+  assert.deepEqual(f.calls.go, ['#/watchlist', '#/favorites']);
+  f.press('?');
+  const goTo = f.sheet().rows[f.sheet().sections.indexOf('Go to')];
+  assert.ok(goTo.includes('Watchlist') && goTo.includes('Favorites'), goTo.join(', '));
+});

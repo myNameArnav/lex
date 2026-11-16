@@ -158,3 +158,63 @@ func TestPersonItemsMatchWholeNames(t *testing.T) {
 		t.Fatalf("blank name = %v", itemIDs(got))
 	}
 }
+
+func TestFavoritesArePerUserNewestFirstAndTitlesOnly(t *testing.T) {
+	st := browseFixture(t)
+	for _, id := range []int64{11, 20, 12, 22} {
+		if err := st.SetFavorite(1, id, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// favorited_at has one-second resolution: spread them out (12 newest).
+	for id, at := range map[int64]int64{11: 100, 20: 200, 12: 300, 22: 400} {
+		st.DB().Exec(`UPDATE user_data SET favorited_at=? WHERE user_id=1 AND item_id=?`, at, id)
+	}
+	// Favoriting again keeps the original time; a favorite from before the
+	// column (favorited_at 0) sorts last.
+	if err := st.SetFavorite(1, 11, true); err != nil {
+		t.Fatal(err)
+	}
+	st.DB().Exec(`INSERT INTO user_data(user_id,item_id,favorite) VALUES(1,13,1)`)
+	if err := st.SetFavorite(2, 10, true); err != nil {
+		t.Fatal(err)
+	}
+	favIDs := func(uid int64, limit int) []int64 {
+		t.Helper()
+		items, err := st.Favorites(uid, limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []int64
+		for _, it := range items {
+			if !it.UserData.Favorite {
+				t.Errorf("item %d: favorite flag off", it.ID)
+			}
+			out = append(out, it.ID)
+		}
+		return out
+	}
+	// The episode (22) is not a title of its own.
+	if got := favIDs(1, 0); !slices.Equal(got, []int64{12, 20, 11, 13}) {
+		t.Fatalf("user 1 favorites = %v", got)
+	}
+	if got := favIDs(1, 2); !slices.Equal(got, []int64{12, 20}) {
+		t.Fatalf("limited = %v", got)
+	}
+	if got := favIDs(2, 0); !slices.Equal(got, []int64{10}) {
+		t.Fatalf("user 2 favorites = %v", got)
+	}
+	// Unfavoriting drops it; favoriting again makes it the newest.
+	if err := st.SetFavorite(1, 11, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := favIDs(1, 0); !slices.Equal(got, []int64{12, 20, 13}) {
+		t.Fatalf("after removal = %v", got)
+	}
+	if err := st.SetFavorite(1, 11, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := favIDs(1, 1); !slices.Equal(got, []int64{11}) {
+		t.Fatalf("re-favorited = %v", got)
+	}
+}
