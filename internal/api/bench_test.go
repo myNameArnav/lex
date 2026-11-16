@@ -136,6 +136,17 @@ func benchLibrary(b *testing.B, s *Server) (token string, showID, seasonID, epis
 			t++
 		}
 	}
+	// Favorites: every 50th movie (ids 1-2000) and every 6th show.
+	for id := int64(50); id <= 2000; id += 50 {
+		if err := s.St.SetFavorite(u.ID, id, true); err != nil {
+			b.Fatal(err)
+		}
+	}
+	for i := 0; i < len(shows); i += 6 {
+		if err := s.St.SetFavorite(u.ID, shows[i], true); err != nil {
+			b.Fatal(err)
+		}
+	}
 	token, _ = s.St.CreateToken(u.ID, "Bench", "127.0.0.1")
 	return token, shows[0], seasons[0], eps[0][25]
 }
@@ -162,6 +173,7 @@ func BenchmarkLibraryEndpoints(b *testing.B) {
 	token, show, season, ep := benchLibrary(b, s)
 	for _, tc := range []struct{ name, path string }{
 		{"home", "/api/home"},
+		{"favorites", "/api/favorites"},
 		{"items-movies-page", "/api/items?library=1&sort=title&limit=120"},
 		{"items-shows", "/api/items?library=2&sort=latest&desc=1&limit=120"},
 		{"search-common", "/api/search?q=star"},

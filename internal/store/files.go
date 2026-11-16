@@ -285,14 +285,15 @@ func carryOver(tx *sql.Tx, fileID, oldItem, newItem int64) error {
 		q    string
 		args []any
 	}{
-		{`INSERT INTO user_data(user_id,item_id,position,played,play_count,last_played,favorite)
-			SELECT user_id,?,position,played,play_count,last_played,favorite FROM user_data WHERE item_id=?
+		{`INSERT INTO user_data(user_id,item_id,position,played,play_count,last_played,favorite,favorited_at)
+			SELECT user_id,?,position,played,play_count,last_played,favorite,favorited_at FROM user_data WHERE item_id=?
 			ON CONFLICT(user_id,item_id) DO UPDATE SET
 				position=CASE WHEN excluded.last_played>user_data.last_played THEN excluded.position ELSE user_data.position END,
 				last_played=MAX(user_data.last_played,excluded.last_played),
 				played=MAX(user_data.played,excluded.played),
 				play_count=MAX(user_data.play_count,excluded.play_count),
-				favorite=MAX(user_data.favorite,excluded.favorite)`, []any{newItem, oldItem}},
+				favorite=MAX(user_data.favorite,excluded.favorite),
+				favorited_at=MAX(user_data.favorited_at,excluded.favorited_at)`, []any{newItem, oldItem}},
 		{`INSERT OR IGNORE INTO segments(item_id,kind,start,end,source) SELECT ?,kind,start,end,source FROM segments WHERE item_id=?`, []any{newItem, oldItem}},
 		{`UPDATE history SET item_id=? WHERE item_id=? AND (file_id=? OR NOT EXISTS (SELECT 1 FROM files WHERE item_id=?))`, []any{newItem, oldItem, fileID, oldItem}},
 		{`UPDATE items SET title=o.title,sort_title=o.sort_title,original_title=o.original_title,year=o.year,overview=o.overview,tagline=o.tagline,

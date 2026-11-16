@@ -259,6 +259,9 @@ function leaveSearch() {
 
 function userMenu(anchor) {
   const items = [
+    { label: 'Watchlist', icon: 'bookmark', onClick: () => { location.hash = '#/watchlist'; } },
+    { label: 'Favorites', icon: 'heart', onClick: () => { location.hash = '#/favorites'; } },
+    '-',
     { label: 'Settings', icon: 'gear', onClick: () => { location.hash = '#/settings'; } },
   ];
   if (state.me.isAdmin) items.push({ label: 'Dashboard & stats', icon: 'stats', onClick: () => { location.hash = '#/dashboard'; } });
@@ -404,6 +407,7 @@ export async function route({ soft = false } = {}) {
       case 'item': view = await itemView(ctx, +id); break;
       case 'search': view = await searchView(ctx, query.get('q') || ''); break;
       case 'watchlist': view = await watchlistView(ctx); break;
+      case 'favorites': view = await favoritesView(ctx); break;
       case 'collection': view = await collectionView(ctx, +id); break;
       case 'person': view = await personView(ctx, query.get('name') || ''); break;
       case 'tv': view = await tvView(ctx); break;
@@ -549,7 +553,7 @@ export function posterCard(it, { sub } = {}) {
   const left = ud.position > 0 && it.duration ? `${fmtDuration(it.duration - ud.position)} left` : '';
   if (left) art.appendChild(progressBar(ud.position, it.duration));
   const line = sub ?? subtitleFor(it);
-  const label = [it.title, line, parent && it.unplayedCount > 0 ? `${it.unplayedCount} unwatched` : watched ? 'watched' : '', ud.watchlist ? 'on your watchlist' : '', left].filter(Boolean).join(', ');
+  const label = [it.title, line, parent && it.unplayedCount > 0 ? `${it.unplayedCount} unwatched` : watched ? 'watched' : '', ud.watchlist ? 'on your watchlist' : '', ud.favorite ? 'a favorite' : '', left].filter(Boolean).join(', ');
   const link = h('a', { class: 'card-link', href: `#/item/${it.id}`, 'aria-label': label, dataset: { focusKey: `card-${it.id}` } },
     art, h('div', { class: 'meta' }, h('div', { class: 't', title: it.title }, it.title), h('div', { class: 's' }, line)));
   const more = it.kind === 'movie' || it.kind === 'show' ? posterMenuButton(it) : null;
@@ -564,13 +568,24 @@ async function setWatchlist(it, on) {
   return !!ok;
 }
 
-// The ⋯ on a movie or show poster: Watchlist and watched toggles. The view
-// re-renders in place afterwards (Watchlist rows and filters change).
+// setFavorite marks a title as a favorite or not, like setWatchlist.
+async function setFavorite(it, on) {
+  const ok = await run(null, () => api(`/api/items/${it.id}/favorite`, { method: 'POST', body: { favorite: on } }), on ? 'Added to Favorites' : 'Removed from Favorites');
+  if (ok) (it.userData ||= {}).favorite = on;
+  return !!ok;
+}
+
+// The ⋯ on a movie or show poster: Watchlist, Favorites and watched
+// toggles. The view re-renders in place afterwards (Watchlist and Favorites
+// rows and filters change).
 function posterMenuButton(it) {
   const ud = it.userData || {};
   const items = [ud.watchlist
     ? { label: 'Remove from Watchlist', icon: 'bookmarkFill', onClick: async () => { if (await setWatchlist(it, false)) refreshSoft(); } }
-    : { label: 'Add to Watchlist', icon: 'bookmark', onClick: async () => { if (await setWatchlist(it, true)) refreshSoft(); } }];
+    : { label: 'Add to Watchlist', icon: 'bookmark', onClick: async () => { if (await setWatchlist(it, true)) refreshSoft(); } },
+  ud.favorite
+    ? { label: 'Remove from Favorites', icon: 'heartFill', onClick: async () => { if (await setFavorite(it, false)) refreshSoft(); } }
+    : { label: 'Add to Favorites', icon: 'heart', onClick: async () => { if (await setFavorite(it, true)) refreshSoft(); } }];
   if (it.kind === 'movie') {
     items.push(ud.played
       ? { label: 'Mark unwatched', icon: 'check', onClick: async () => { if (await run(null, () => api(`/api/items/${it.id}/played`, { method: 'POST', body: { played: false } }), 'Marked unwatched')) refreshSoft(); } }
@@ -686,10 +701,13 @@ async function homeView(ctx) {
     }
   }
   for (const row of data.rows) {
-    wrap.appendChild(shelf(row.title, row.items, row.kind, row.libraryId ? `#/library/${row.libraryId}?sort=latest&desc=1` : row.id === 'watchlist' ? '#/watchlist' : null));
+    wrap.appendChild(shelf(row.title, row.items, row.kind, row.libraryId ? `#/library/${row.libraryId}?sort=latest&desc=1` : HOME_ROW_PAGES[row.id] || null));
   }
   return wrap;
 }
+
+// The Home rows with a page of their own behind "See all".
+const HOME_ROW_PAGES = { watchlist: '#/watchlist', favorites: '#/favorites' };
 
 // ---------- library ----------
 async function libraryView(ctx, id) {
@@ -784,7 +802,7 @@ async function libraryView(ctx, id) {
         if (!filtered && !scanned) { await loadLibraries(); scanned = state.libraries.find((l) => l.id === id)?.lastScan; }
         grid.replaceWith(emptyState({ level: 'h2',
           title: favs ? 'No favorites yet' : wl ? 'Your Watchlist is empty' : filtered ? 'Nothing here' : scanned ? 'No titles found' : 'Still scanning',
-          text: favs ? 'Open a title and select the heart to add it to your favorites.' : wl ? WATCHLIST_HINT : filtered ? 'No titles match these filters.' : scanned ? 'No titles found in this library.' : 'This library is still being scanned.',
+          text: favs ? FAVORITES_HINT : wl ? WATCHLIST_HINT : filtered ? 'No titles match these filters.' : scanned ? 'No titles found in this library.' : 'This library is still being scanned.',
           actions: filtered ? [h('button', { class: 'btn', onclick: () => setQ({ filter: '', genre: '' }, 'filter-select') }, 'Clear filters')] : [] }));
       }
     } finally {
@@ -894,6 +912,7 @@ function favButton(it) {
     show();
     try {
       await api(`/api/items/${it.id}/favorite`, { method: 'POST', body: { favorite: fav } });
+      (it.userData ||= {}).favorite = fav;
     } catch (ex) {
       fav = !fav;
       show();
@@ -1342,6 +1361,7 @@ function episodeRow(e, onChange) {
 
 // ---------- watchlist, collections, people ----------
 const WATCHLIST_HINT = 'Open a movie or show and select the bookmark, or use a poster’s ⋯ menu, to save it for later.';
+const FAVORITES_HINT = 'Open a movie or show and select the heart, or use a poster’s ⋯ menu, to add it to your favorites.';
 
 // titlesPage: a heading block over a grid of posters (or an empty state).
 function titlesPage({ kicker, title, count, head, items, sub, empty }) {
@@ -1358,6 +1378,11 @@ function titlesPage({ kicker, title, count, head, items, sub, empty }) {
 async function watchlistView() {
   const r = await api('/api/watchlist');
   return titlesPage({ title: 'Watchlist', items: r.items, empty: { title: 'Your Watchlist is empty', text: WATCHLIST_HINT, actions: [h('a', { class: 'btn primary', href: '#/' }, 'Browse titles')] } });
+}
+
+async function favoritesView() {
+  const r = await api('/api/favorites');
+  return titlesPage({ title: 'Favorites', items: r.items, empty: { title: 'No favorites yet', text: FAVORITES_HINT, actions: [h('a', { class: 'btn primary', href: '#/' }, 'Browse titles')] } });
 }
 
 async function collectionView(ctx, id) {

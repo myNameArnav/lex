@@ -116,6 +116,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("POST /api/items/{id}/favorite", u(s.setFavorite))
 	mux.Handle("POST /api/items/{id}/watchlist", u(s.setWatchlist))
 	mux.Handle("GET /api/watchlist", u(s.watchlist))
+	mux.Handle("GET /api/favorites", u(s.favorites))
 	mux.Handle("GET /api/collections/{id}", u(s.collection))
 	mux.Handle("GET /api/person", u(s.person))
 	mux.Handle("GET /api/tv", u(s.liveTV(s.tvGuide)))

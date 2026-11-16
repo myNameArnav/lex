@@ -124,6 +124,53 @@ func TestWatchlistEndpoints(t *testing.T) {
 	}
 }
 
+func TestFavoritesEndpoint(t *testing.T) {
+	s, c, id := browseServer(t)
+	homeRow := func() map[string]any {
+		t.Helper()
+		_, home := c.do("GET", "/api/home", "")
+		for _, r := range home["rows"].([]any) {
+			if r.(map[string]any)["id"] == "favorites" {
+				return r.(map[string]any)
+			}
+		}
+		return nil
+	}
+	if row := homeRow(); row != nil {
+		t.Fatalf("home favorites row with no favorites = %v", row)
+	}
+	if code, out := c.do("GET", "/api/favorites", ""); code != 200 || out["items"] == nil || len(ids(out["items"])) != 0 {
+		t.Fatalf("empty favorites: %d %v", code, out)
+	}
+	for _, k := range []string{"first", "show"} {
+		if code, out := c.do("POST", "/api/items/"+itoa(id[k])+"/favorite", `{"favorite":true}`); code != 200 {
+			t.Fatalf("favorite %s: %d %v", k, code, out)
+		}
+	}
+	c.do("POST", "/api/items/"+itoa(id["show"])+"/watchlist", `{"watchlist":true}`)
+	// Newest first; both landed in the same second, so make "first" newer.
+	s.St.DB().Exec(`UPDATE user_data SET favorited_at=favorited_at+10 WHERE item_id=?`, id["first"])
+
+	_, favs := c.do("GET", "/api/favorites", "")
+	if !equalIDs(ids(favs["items"]), id["first"], id["show"]) {
+		t.Fatalf("favorites = %v", favs)
+	}
+	for _, x := range favs["items"].([]any) {
+		it := x.(map[string]any)
+		ud := it["userData"].(map[string]any)
+		if ud["favorite"] != true || (ud["watchlist"] == true) != (int64(it["id"].(float64)) == id["show"]) {
+			t.Fatalf("favorites userData = %v", it)
+		}
+	}
+	if row := homeRow(); row == nil || !equalIDs(ids(row["items"]), id["first"], id["show"]) {
+		t.Fatalf("home favorites row = %v", row)
+	}
+	c.do("POST", "/api/items/"+itoa(id["first"])+"/favorite", `{"favorite":false}`)
+	if _, favs := c.do("GET", "/api/favorites", ""); !equalIDs(ids(favs["items"]), id["show"]) {
+		t.Fatalf("after removal = %v", favs)
+	}
+}
+
 func TestCollectionEndpoint(t *testing.T) {
 	s, c, id := browseServer(t)
 	col := &store.Collection{ID: 555, Name: "Saga"}

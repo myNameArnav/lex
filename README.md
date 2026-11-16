@@ -73,7 +73,7 @@ and ffmpeg pauses when the browser's buffer is full. Browsers without MSE
   instant rescans.
 - **Metadata**: TMDB (free key), TVmaze for shows, or a local Radarr. Artwork
   is cached and served by Lex. Collections, cast pages, genres, a per-user
-  Watchlist, and manual "Fix match".
+  Watchlist and Favorites, and manual "Fix match".
 - **Player**: resume, Up next, Skip Intro / Skip Credits (detected with audio
   fingerprints), chapters, seek-bar thumbnails, speed, PiP, keyboard and touch
   controls, and **stats for nerds** (codecs in/out, reasons, buffer, bandwidth,

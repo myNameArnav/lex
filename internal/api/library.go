@@ -117,6 +117,9 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	if wl, err := s.St.Watchlist(uid, 24); err == nil && len(wl) > 0 {
 		rows = append(rows, homeRow{ID: "watchlist", Title: "Watchlist", Kind: "poster", Items: wl})
 	}
+	if fav, err := s.St.Favorites(uid, 24); err == nil && len(fav) > 0 {
+		rows = append(rows, homeRow{ID: "favorites", Title: "Favorites", Kind: "poster", Items: fav})
+	}
 	libs, _ := s.St.Libraries()
 	libs = visibleLibraries(libs, u)
 	for _, l := range libs {
