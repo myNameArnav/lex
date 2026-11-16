@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -329,8 +330,32 @@ func normLang(l string) string {
 	return l
 }
 
-// ExternalSubs finds sidecar subtitle files for a video. Indexes start at
-// 1000 so they never collide with embedded stream indexes.
+// External subtitle indexes live in [ExternalSubBase, store.DownloadedSubBase),
+// above any embedded stream index and below downloaded subtitles.
+const ExternalSubBase = 1000
+
+// externalSubIndex picks a stable index for a sidecar from its name relative
+// to the video's folder, so adding or removing another sidecar doesn't make
+// an index (and whatever a client remembered under it) point at a different
+// file. Collisions, which are rare, take the next free slot.
+func externalSubIndex(rel string, used map[int]bool) int {
+	h := fnv.New32a()
+	h.Write([]byte(rel))
+	n := store.DownloadedSubBase - ExternalSubBase
+	slot := int(h.Sum32() % uint32(n))
+	for i := 0; i < n; i++ {
+		idx := ExternalSubBase + (slot+i)%n
+		if !used[idx] {
+			used[idx] = true
+			return idx
+		}
+	}
+	return -1
+}
+
+// ExternalSubs finds sidecar subtitle files for a video. Each gets a stable
+// index in [ExternalSubBase, store.DownloadedSubBase) derived from its file
+// name (see externalSubIndex); the list is sorted by path.
 func ExternalSubs(videoPath string) []store.Stream {
 	dir := filepath.Dir(videoPath)
 	base := strings.TrimSuffix(filepath.Base(videoPath), filepath.Ext(videoPath))
@@ -376,11 +401,20 @@ func ExternalSubs(videoPath string) []store.Stream {
 	}
 	sort.Strings(cands)
 	var out []store.Stream
-	for i, p := range cands {
+	used := map[int]bool{}
+	for _, p := range cands {
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			rel = filepath.Base(p)
+		}
+		idx := externalSubIndex(filepath.ToSlash(rel), used)
+		if idx < 0 {
+			break
+		}
 		n := strings.TrimSuffix(filepath.Base(p), filepath.Ext(p))
 		n = strings.TrimPrefix(n, base)
 		tokens := strings.FieldsFunc(n, func(r rune) bool { return r == '.' || r == '_' || r == '-' || r == ' ' })
-		s := store.Stream{Index: 1000 + i, Type: "subtitle", Codec: strings.TrimPrefix(strings.ToLower(filepath.Ext(p)), "."), TextSub: true, External: true, ExternalPath: p}
+		s := store.Stream{Index: idx, Type: "subtitle", Codec: strings.TrimPrefix(strings.ToLower(filepath.Ext(p)), "."), TextSub: true, External: true, ExternalPath: p}
 		if s.Codec == "srt" {
 			s.Codec = "subrip"
 		}
