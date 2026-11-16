@@ -316,3 +316,47 @@ func TestEventAllowedRateLimits(t *testing.T) {
 		t.Fatal("budget didn't refill")
 	}
 }
+
+func TestShutdownRecordsOpenSessions(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	u, err := st.CreateUser("viewer", "test-password-123", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(st, logx.New(10, false))
+	var ended []string
+	m.OnEnd = func(id string) { ended = append(ended, id) }
+	s, err := m.Open(&Session{ID: "playing", UserID: u.ID, UserName: "viewer", ItemID: 1, FileID: 1, Title: "A", Duration: 3000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	s.Watched = 600
+	m.mu.Unlock()
+	m.Shutdown()
+	select {
+	case <-s.Ended():
+	default:
+		t.Fatal("session's media responses were not told to end")
+	}
+	if len(ended) != 1 || ended[0] != "playing" {
+		t.Fatalf("OnEnd ran for %q", ended)
+	}
+	h, err := st.History(10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h) != 1 || h[0].Title != "A" || h[0].Watched != 600 {
+		t.Fatalf("history = %+v", h)
+	}
+	if m.Active() != 0 {
+		t.Fatal("sessions left open")
+	}
+	if _, err := m.Open(&Session{ID: "late", UserID: u.ID, ItemID: 1, FileID: 1}); !errors.Is(err, ErrShuttingDown) {
+		t.Fatalf("open after shutdown: %v", err)
+	}
+}

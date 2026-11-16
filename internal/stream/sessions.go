@@ -116,7 +116,11 @@ type Manager struct {
 	// request or heartbeat can't quietly re-open them.
 	killed map[string]time.Time
 	jobSeq int
+	closed bool // Shutdown ran: the server is going away
 }
+
+// ErrShuttingDown is returned when a session is opened during shutdown.
+var ErrShuttingDown = errors.New("server is shutting down")
 
 // ErrUnknownSession is returned for a heartbeat whose session isn't open,
 // e.g. after a server restart.
@@ -149,6 +153,9 @@ func (m *Manager) Open(s *Session) (*Session, error) {
 	defer m.mu.Unlock()
 	if _, ok := m.killed[s.ID]; ok {
 		return nil, ErrStopped
+	}
+	if m.closed {
+		return nil, ErrShuttingDown
 	}
 	now := time.Now()
 	if old, ok := m.m[s.ID]; ok {
@@ -441,10 +448,39 @@ func (m *Manager) Stop(id string, uid int64) {
 	m.finish(s)
 }
 
+// Shutdown ends every open session the way a closed player would: jobs
+// stopped, OnEnd run (synchronously, so HLS encoders are stopped before the
+// process exits) and a history row written. Sessions can't be opened after.
+func (m *Manager) Shutdown() {
+	m.mu.Lock()
+	m.closed = true
+	open := make([]*Session, 0, len(m.m))
+	for id, s := range m.m {
+		delete(m.m, id)
+		s.end()
+		open = append(open, s)
+	}
+	m.mu.Unlock()
+	for _, s := range open {
+		if s.job != nil {
+			s.job.Stop()
+		}
+		if m.OnEnd != nil {
+			m.OnEnd(s.ID)
+		}
+		m.record(s)
+	}
+}
+
 func (m *Manager) finish(s *Session) {
 	if m.OnEnd != nil {
 		go m.OnEnd(s.ID)
 	}
+	m.record(s)
+}
+
+// record logs an ended session and writes its history row.
+func (m *Manager) record(s *Session) {
 	m.mu.Lock()
 	copy := *s
 	m.mu.Unlock()
