@@ -11,8 +11,8 @@ export const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
 
 const SECTIONS = [
   ['General', [
-    [[MOD, 'K'], 'Search', '+'],
-    [['/'], 'Search'],
+    [[MOD, 'K'], 'Search (in Settings: search settings; press again for the app search)', '+'],
+    [['/'], 'Search (in Settings: search settings)'],
     [['?'], 'Show keyboard shortcuts'],
     [['Esc'], 'Close a dialog or menu, clear the search box'],
   ]],

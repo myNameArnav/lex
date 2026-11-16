@@ -12,7 +12,13 @@ let routeToken = 0;
 
 // ---------- boot ----------
 installShortcuts({
-  focusSearch: () => { if (searchInput?.isConnected) { searchInput.focus(); searchInput.select(); } },
+  // A page with its own search box (Settings) takes the shortcut first; pressed
+  // again from there, it goes to the app's search.
+  focusSearch: () => {
+    const local = mainEl?.querySelector('[data-page-search]');
+    const box = local && document.activeElement !== local ? local : searchInput;
+    if (box?.isConnected) { box.focus(); box.select(); }
+  },
   go: (hash) => { location.hash = hash; },
   libraries: () => state.libraries,
   liveTv: () => !!state.caps.liveTv,
@@ -395,7 +401,11 @@ export async function route({ soft = false } = {}) {
   const focusWasInMain = mainEl.contains(active) && active !== mainEl;
   pendingFocusKey = null;
   const ctx = { token, query, restore, isCurrent: () => token === routeToken };
-  const spin = soft ? 0 : setTimeout(() => { if (ctx.isCurrent()) clear(mainEl).appendChild(spinner()); }, 200);
+  // A view can stay up while the next one loads (Settings keeps its side
+  // column and dims its page) instead of being swapped for a spinner.
+  const shown = mainEl.firstElementChild;
+  const kept = !soft && typeof shown?.pendingRoute === 'function' && shown.pendingRoute(section, id);
+  const spin = soft || kept ? 0 : setTimeout(() => { if (ctx.isCurrent()) clear(mainEl).appendChild(spinner()); }, 200);
   let view;
   try {
     switch (section) {
