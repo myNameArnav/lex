@@ -43,10 +43,11 @@ type Scanner struct {
 	OnDone func()
 	// OnProbed is invoked after each file is probed.
 	OnProbed func(f *store.File, info *store.MediaInfo)
-	// OnFileChanged is invoked with the id of a file that was removed from
-	// the library or whose contents changed, so copies derived from it (the
-	// SSD cache) can be dropped.
-	OnFileChanged func(id int64)
+	// OnFileChanged is invoked with a file that was removed from the
+	// library or whose contents changed (as it was before the change), so
+	// copies derived from it (the SSD cache, subtitles, seek previews, the
+	// item's thumbnail) can be dropped.
+	OnFileChanged func(f *store.File)
 
 	run    sync.Mutex // one scan at a time
 	mu     sync.Mutex
@@ -277,7 +278,7 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 		if f := byPath[e.path]; f != nil {
 			if f.Size != e.size || f.Mtime != e.mtime {
 				s.st.MarkFileChanged(f.ID, e.size, e.mtime)
-				s.fileChanged(f.ID)
+				s.fileChanged(f)
 				s.update(func(st *Status) { st.Changed++ })
 			}
 			if f.ItemID != itemID {
@@ -331,7 +332,7 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 				s.log.Errorf("scan: remove %s: %v", p, err)
 				continue
 			}
-			s.fileChanged(f.ID)
+			s.fileChanged(f)
 			removed++
 		}
 	}
@@ -342,9 +343,9 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 	return s.st.SetLibraryScanned(lib.ID)
 }
 
-func (s *Scanner) fileChanged(id int64) {
+func (s *Scanner) fileChanged(f *store.File) {
 	if s.OnFileChanged != nil {
-		s.OnFileChanged(id)
+		s.OnFileChanged(f)
 	}
 }
 

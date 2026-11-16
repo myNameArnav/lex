@@ -164,3 +164,21 @@ func (s *Store) DeleteDownloadedSub(id int64) (pathFree bool, err error) {
 	})
 	return pathFree, err
 }
+
+// DownloadedSubPaths returns the paths of all recorded downloaded subtitles.
+func (s *Store) DownloadedSubPaths() (map[string]bool, error) {
+	rows, err := s.db.Query(`SELECT path FROM downloaded_subs`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out[p] = true
+	}
+	return out, rows.Err()
+}

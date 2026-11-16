@@ -109,7 +109,6 @@ func main() {
 	subs.Resolve = mediaCache.Peek
 	intros := intro.New(st, log, *ffmpeg)
 	intros.Resolve = mediaCache.Peek
-	scanner.OnFileChanged = mediaCache.Remove
 	hls := stream.NewHLS(filepath.Join(abs, "hls"), *ffmpeg, log)
 	sessions.OnEnd = hls.Stop
 	hls.Slots = sessions.Slots // one transcode limit across MSE and HLS
@@ -117,11 +116,6 @@ func main() {
 	tricks.Resolve = mediaCache.Peek
 	tricks.Busy = func() bool { return sessions.Active() > 0 }
 	tricks.HWDecode = func() bool { return st.Config().HWDecode && ff.HEVCHWDecode }
-	scanner.OnDone = func() {
-		agent.Trigger()
-		intros.Trigger()
-		tricks.Trigger()
-	}
 	sampler := sysstats.New(3*time.Second, time.Hour, func() []string {
 		paths := []string{abs, mediaCache.Dir()}
 		if libs, err := st.Libraries(); err == nil {
@@ -137,6 +131,16 @@ func main() {
 	srv := &api.Server{
 		Version: version, DataDir: abs, St: st, Log: log, Scanner: scanner, Agent: agent, Images: images,
 		Subs: subs, Sess: sessions, Stats: sampler, FF: ff, Web: web.FS(), Cache: mediaCache, Intro: intros, Trick: tricks, HLS: hls,
+	}
+	// Derived files (subtitles, previews, thumbnails) of removed or replaced
+	// media go right away, and a sweep after each scan (and daily) catches
+	// whatever that missed.
+	scanner.OnFileChanged = srv.FileChanged
+	scanner.OnDone = func() {
+		srv.SweepDerived()
+		agent.Trigger()
+		intros.Trigger()
+		tricks.Trigger()
 	}
 	handler, err := srv.Handler()
 	if err != nil {
@@ -185,6 +189,21 @@ func main() {
 				if iv > 0 && time.Since(last) >= time.Duration(iv)*time.Minute {
 					last = time.Now()
 					scanner.Trigger(0)
+				}
+			}
+		}
+	}()
+
+	go func() {
+		t := time.NewTicker(24 * time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if !scanner.Status().Running {
+					srv.SweepDerived()
 				}
 			}
 		}

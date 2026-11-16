@@ -65,9 +65,17 @@ func (s *Server) adminInfo(w http.ResponseWriter, r *http.Request) {
 		"ffmpeg":     s.FF,
 		"imageCache": sysstats.DirSize(s.Images.Dir),
 		"subsCache":  sysstats.DirSize(filepath.Join(s.DataDir, "subs")),
+		"trickplay":  trickplaySize(s),
 		"dbSize":     fileSize(filepath.Join(s.DataDir, "lex.db")) + fileSize(filepath.Join(s.DataDir, "lex.db-wal")),
 		"webhookUrl": "/api/webhook/scan?token=" + cfg.WebhookToken,
 	})
+}
+
+func trickplaySize(s *Server) int64 {
+	if s.Trick == nil {
+		return 0
+	}
+	return sysstats.DirSize(s.Trick.Dir())
 }
 
 func fileSize(p string) int64 {
