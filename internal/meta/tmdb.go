@@ -2,8 +2,10 @@ package meta
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -287,4 +289,79 @@ func (t *TMDB) Season(ctx context.Context, id string, season int) (*SeasonMeta, 
 		})
 	}
 	return sm, nil
+}
+
+// tmdbSeason is a season in TMDB's show details.
+type tmdbSeason struct {
+	Number  int    `json:"season_number"`
+	AirDate string `json:"air_date"`
+}
+
+// EpisodesByDate finds the regular episodes that aired on the given dates
+// (YYYY-MM-DD). TMDB lists episodes per season, so each date is looked up
+// in the season that started last on or before it, then in the next one
+// (season start dates are sometimes later than their first episode).
+func (t *TMDB) EpisodesByDate(ctx context.Context, id string, dates []string) (map[string]EpisodeMeta, error) {
+	var m struct {
+		Seasons []tmdbSeason `json:"seasons"`
+	}
+	if err := t.get(ctx, "/tv/"+url.PathEscape(id), nil, &m); err != nil {
+		return nil, err
+	}
+	fetched := map[int]map[string]EpisodeMeta{}
+	season := func(n int) (map[string]EpisodeMeta, error) {
+		if byDate, ok := fetched[n]; ok {
+			return byDate, nil
+		}
+		byDate := map[string]EpisodeMeta{}
+		sm, err := t.Season(ctx, id, n)
+		if err != nil && !errors.Is(err, ErrNoMatch) {
+			return nil, err
+		}
+		if sm != nil {
+			for _, e := range sm.Episodes {
+				if cur, ok := byDate[e.Premiere]; e.Premiere != "" && (!ok || e.Episode < cur.Episode) {
+					byDate[e.Premiere] = e
+				}
+			}
+		}
+		fetched[n] = byDate
+		return byDate, nil
+	}
+	out := map[string]EpisodeMeta{}
+	for _, d := range dates {
+		for _, n := range tmdbSeasonsFor(m.Seasons, d) {
+			byDate, err := season(n)
+			if err != nil {
+				return out, err
+			}
+			if e, ok := byDate[d]; ok {
+				out[d] = e
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+// tmdbSeasonsFor returns the regular seasons an episode aired on date most
+// likely belongs to: the one that started last on or before it, then the
+// one after that.
+func tmdbSeasonsFor(seasons []tmdbSeason, date string) []int {
+	regular := make([]tmdbSeason, 0, len(seasons))
+	for _, s := range seasons {
+		if s.Number > 0 && s.AirDate != "" {
+			regular = append(regular, s)
+		}
+	}
+	sort.Slice(regular, func(i, j int) bool { return regular[i].AirDate < regular[j].AirDate })
+	i := sort.Search(len(regular), func(i int) bool { return regular[i].AirDate > date })
+	var out []int
+	if i > 0 {
+		out = append(out, regular[i-1].Number)
+	}
+	if i < len(regular) {
+		out = append(out, regular[i].Number)
+	}
+	return out
 }

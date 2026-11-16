@@ -1,4 +1,4 @@
-import { h, $, clear, icons, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrate, toast, modal, spinner, lazyImg, popupMenu, closePopupMenu, streamLabel, langName, channelName, confirmDialog, run, fmtEpisode, fmtAirDate, fmtClock, motionOK, emptyState } from './ui.js';
+import { h, $, clear, icons, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrate, toast, modal, spinner, lazyImg, popupMenu, closePopupMenu, streamLabel, langName, channelName, confirmDialog, run, fmtEpisode, datedEpisode, fmtAirDate, fmtClock, motionOK, emptyState } from './ui.js';
 import { api, img, castImg } from './api.js';
 import { openPlayer, isPlayerOpen, closePlayer } from './player.js';
 import { installShortcuts, showShortcuts, MOD } from './shortcuts.js';
@@ -1035,7 +1035,7 @@ function mediaView(ctx, d) {
   }
   info.push(h('h1', null, it.title));
   info.push(facts(it, [
-    isEp ? h('span', null, fmtEpisode(it)) : null,
+    isEp && !datedEpisode(it) ? h('span', null, fmtEpisode(it)) : null, // a dated one's code is its air date, already shown
     file ? h('span', { class: 'pill' }, [resLabel(file.width, file.height), file.hdr].filter(Boolean).join(' ') || file.container) : null,
     compat?.pill,
     file?.cached ? h('span', { class: 'pill', title: 'Plays from the SSD cache' }, 'SSD') : null,
@@ -1301,7 +1301,10 @@ async function showView(ctx, d) {
 function episodeRow(e, onChange) {
   const ud = e.userData || {};
   let busy = false;
-  const art = h('button', { class: 'art', type: 'button', dataset: { focusKey: `episode-play-${e.id}` }, 'aria-label': `${ud.position > 0 && !ud.played ? 'Resume' : 'Play'} episode ${e.episode}: ${e.title}`, onclick: () => play(e.id) }, lazyImg(img(e, 'thumb', 480), ''), h('span', { class: 'ep-play', 'aria-hidden': 'true', html: icons.play }));
+  // Unplaced daily-show episodes go by air date, which the line below the title shows.
+  const dated = datedEpisode(e);
+  const epName = dated ? fmtAirDate(e.premiere) : `episode ${e.episode}`;
+  const art = h('button', { class: 'art', type: 'button', dataset: { focusKey: `episode-play-${e.id}` }, 'aria-label': `${ud.position > 0 && !ud.played ? 'Resume' : 'Play'} ${epName}: ${e.title}`, onclick: () => play(e.id) }, lazyImg(img(e, 'thumb', 480), ''), h('span', { class: 'ep-play', 'aria-hidden': 'true', html: icons.play }));
   if (ud.position > 0 && e.duration) art.appendChild(progressBar(ud.position, e.duration));
   const badge = h('div', { class: 'badge check', 'aria-hidden': 'true', title: 'Watched', html: icons.check });
   const wbtn = h('button', { class: 'watched-btn', type: 'button', html: icons.check, dataset: { focusKey: `episode-watched-${e.id}` }, onclick: async (ev) => {
@@ -1325,7 +1328,7 @@ function episodeRow(e, onChange) {
     const action = ud.played ? 'Mark unwatched' : 'Mark watched';
     wbtn.classList.toggle('on', !!ud.played);
     wbtn.title = action;
-    wbtn.setAttribute('aria-label', `${action}: episode ${e.episode}, ${e.title}`);
+    wbtn.setAttribute('aria-label', `${action}: ${epName}, ${e.title}`);
     if (ud.played) art.appendChild(badge); else badge.remove();
   };
   show();
@@ -1334,7 +1337,7 @@ function episodeRow(e, onChange) {
   return h('div', { class: 'episode' },
     art,
     h('a', { class: 'episode-info', href: `#/item/${e.id}`, 'aria-labelledby': `${id}-t`, 'aria-describedby': e.overview ? `${id}-m ${id}-o` : `${id}-m` },
-      h('h3', { id: `${id}-t` }, h('span', { class: 'num' }, `${e.episode}${e.episodeEnd ? '–' + e.episodeEnd : ''}.`), ' ', e.title),
+      h('h3', { id: `${id}-t` }, dated ? null : h('span', { class: 'num' }, `${e.episode}${e.episodeEnd ? '–' + e.episodeEnd : ''}.`), dated ? null : ' ', e.title),
       h('div', { class: 'dim small', id: `${id}-m` }, [e.premiere ? fmtAirDate(e.premiere) : '', e.duration ? fmtDuration(e.duration) : '', ud.position > 0 && !ud.played ? `${fmtDuration(e.duration - ud.position)} left` : ''].filter(Boolean).join(' · ')),
       e.overview ? h('p', { id: `${id}-o` }, e.overview) : null),
     h('div', { class: 'side' }, wbtn));
