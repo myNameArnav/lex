@@ -336,11 +336,28 @@ func ExternalSubs(videoPath string) []store.Stream {
 	base := strings.TrimSuffix(filepath.Base(videoPath), filepath.Ext(videoPath))
 	var cands []string
 	if ents, err := os.ReadDir(dir); err == nil {
+		// Other videos in the folder: a sidecar that matches a longer stem
+		// ("Aliens" vs "Alien") belongs to that video, not this one.
+		var others []string
+		for _, e := range ents {
+			if n := e.Name(); !e.IsDir() && IsVideo(n) {
+				if stem := strings.TrimSuffix(n, filepath.Ext(n)); stem != base && len(stem) > len(base) {
+					others = append(others, stem)
+				}
+			}
+		}
+	files:
 		for _, e := range ents {
 			n := e.Name()
-			if !e.IsDir() && IsSubtitle(n) && strings.HasPrefix(n, base) {
-				cands = append(cands, filepath.Join(dir, n))
+			if e.IsDir() || !IsSubtitle(n) || !sidecarOf(n, base) {
+				continue
 			}
+			for _, o := range others {
+				if sidecarOf(n, o) {
+					continue files
+				}
+			}
+			cands = append(cands, filepath.Join(dir, n))
 		}
 		// Subs/ folders (common in scene/YTS releases) only when the folder
 		// holds a single video, otherwise we can't tell which video they belong to.
@@ -390,6 +407,24 @@ func ExternalSubs(videoPath string) []store.Stream {
 		out = append(out, s)
 	}
 	return out
+}
+
+// sidecarOf reports whether subtitle file name belongs to a video with the
+// given stem: the stem itself, or the stem followed by a separator and tokens
+// ("Movie.en.srt", "Movie_forced.srt"), never a longer word ("Movies.srt").
+func sidecarOf(name, stem string) bool {
+	n := strings.TrimSuffix(name, filepath.Ext(name))
+	if !strings.HasPrefix(n, stem) {
+		return false
+	}
+	if len(n) == len(stem) {
+		return true
+	}
+	switch n[len(stem)] {
+	case '.', '_', '-', ' ':
+		return true
+	}
+	return false
 }
 
 func countVideos(ents []os.DirEntry) int {
