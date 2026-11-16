@@ -227,6 +227,10 @@ func main() {
 	}()
 	<-ctx.Done()
 	log.Infof("shutting down")
+	// End open playback first: it writes history rows, stops encoders and
+	// closes media responses that would otherwise hold up the HTTP shutdown.
+	sessions.Shutdown()
+	hls.Close()
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	httpSrv.Shutdown(shutCtx)

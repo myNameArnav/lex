@@ -229,6 +229,36 @@ func (h *HLS) dropLocked(j *hlsJob) {
 	}()
 }
 
+// Close stops every HLS encoder (resuming any the janitor paused, so they
+// can exit) and waits briefly for them and their segment folders to go.
+func (h *HLS) Close() {
+	h.mu.Lock()
+	var jobs []*hlsJob
+	for _, j := range h.jobs {
+		jobs = append(jobs, j)
+	}
+	h.mu.Unlock()
+	deadline := time.After(3 * time.Second)
+	for _, j := range jobs {
+		h.mu.Lock()
+		if h.jobs[j.key] == j {
+			delete(h.jobs, j.key)
+		}
+		h.mu.Unlock()
+		j.mu.Lock()
+		j.removed = true
+		done := j.stopAsync()
+		j.mu.Unlock()
+		if done != nil {
+			select {
+			case <-done:
+			case <-deadline:
+			}
+		}
+		os.RemoveAll(j.dir)
+	}
+}
+
 // Stop ends every HLS job for a playback session.
 func (h *HLS) Stop(sid string) {
 	h.mu.Lock()
