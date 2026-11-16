@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -250,6 +251,15 @@ func (s *Server) webhookScan(w http.ResponseWriter, r *http.Request) {
 	got := r.URL.Query().Get("token")
 	if want == "" || subtle.ConstantTimeCompare([]byte(want), []byte(got)) != 1 {
 		writeErr(w, 403, "bad token")
+		return
+	}
+	// Sonarr/Radarr's Test button (and Lex's own Connect) send a Test
+	// event: answer it without starting a scan.
+	var ev struct {
+		EventType string `json:"eventType"`
+	}
+	if json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&ev) == nil && ev.EventType == "Test" {
+		writeJSON(w, map[string]bool{"ok": true})
 		return
 	}
 	s.Log.Infof("webhook: scan requested from %s", s.clientIP(r))

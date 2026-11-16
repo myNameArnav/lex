@@ -284,11 +284,22 @@ func folderOf(it *store.Item, filePath string) string {
 // DetectRadarr looks for a local Radarr install and returns its API URL and
 // key, verified with a status request. Empty strings if none is found.
 func DetectRadarr(ctx context.Context) (string, string) {
+	return detectArr(ctx, "radarr", "Radarr", 7878)
+}
+
+// DetectSonarr finds a local Sonarr the same way as DetectRadarr.
+func DetectSonarr(ctx context.Context) (string, string) {
+	return detectArr(ctx, "sonarr", "Sonarr", 8989)
+}
+
+// detectArr reads a Servarr app's config.xml from the usual install
+// locations and returns its local address and API key once the API answers.
+func detectArr(ctx context.Context, name, title string, port int) (string, string) {
 	home, _ := os.UserHomeDir()
 	cands := []string{
-		"/opt/podman/radarr/config/config.xml", "/opt/docker/radarr/config/config.xml", "/opt/radarr/config/config.xml",
-		"/var/lib/radarr/config.xml", "/mnt/dietpi_userdata/radarr/config.xml", "/config/radarr/config.xml",
-		filepath.Join(home, ".config/Radarr/config.xml"),
+		"/opt/podman/" + name + "/config/config.xml", "/opt/docker/" + name + "/config/config.xml", "/opt/" + name + "/config/config.xml",
+		"/var/lib/" + name + "/config.xml", "/mnt/dietpi_userdata/" + name + "/config.xml", "/config/" + name + "/config.xml",
+		filepath.Join(home, ".config/"+title+"/config.xml"),
 	}
 	for _, p := range cands {
 		b, err := os.ReadFile(p)
@@ -304,10 +315,10 @@ func DetectRadarr(ctx context.Context) (string, string) {
 			continue
 		}
 		if c.Port == 0 {
-			c.Port = 7878
+			c.Port = port
 		}
 		u := fmt.Sprintf("http://127.0.0.1:%d%s", c.Port, strings.TrimRight(c.URLBase, "/"))
-		r := NewRadarr()
+		r := NewRadarr() // the status endpoint is the same in every Servarr app
 		r.SetEndpoint(u, c.APIKey)
 		var st struct {
 			Version string `json:"version"`

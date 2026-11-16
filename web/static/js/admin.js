@@ -429,18 +429,79 @@ function copyableUrl(url) {
   return h('div', { class: 'webhook-url' }, code, ' ', h('button', { class: 'btn sm', type: 'button', onclick: copy }, 'Copy'));
 }
 
-// Radarr/Sonarr usually run in a container, which often can't reach the
-// address this browser uses (a Tailscale serve name, a reverse proxy), so
-// also list the server's direct LAN addresses.
-function webhookHelp(path, lanBases) {
-  const lan = (lanBases || []).filter(b => b !== location.origin).map(b => copyableUrl(b + path));
-  return h('div', { class: 'help' },
-    'Sonarr/Radarr: add a Webhook connection (method POST or PUT) to rescan instantly after imports. URL as this browser reaches Lex:',
-    copyableUrl(location.origin + path),
-    lan.length ? [
-      'If the Test button fails with “connection refused” or a timeout (common when Radarr runs in Docker/Podman and this address is a Tailscale or proxy name), use a direct LAN address instead:',
-      ...lan,
-    ] : null);
+// One Sonarr/Radarr: its connection status and a Connect button. Lex adds
+// the rescan webhook through the app's API, trying each of its addresses
+// until the app's own Test passes, so nobody has to copy URLs between apps.
+// urlKey/keyKey are the config fields holding the app's address and API key;
+// the unsaved form values are used, so Connect works before Save.
+function arrRow(name, draft, urlKey, keyKey, missing) {
+  const app = name.toLowerCase();
+  const status = h('span', { class: 'arr-status muted', role: 'status' });
+  const btn = h('button', { class: 'btn sm', type: 'button' }, 'Connect');
+  const show = (text, cls = 'muted') => { status.className = `arr-status ${cls}`; status.replaceChildren(...[text].flat()); };
+  const body = () => ({ url: draft[urlKey] || '', key: draft[keyKey] || '', origin: location.origin });
+  const ready = () => !!(draft[urlKey] && draft[keyKey]);
+  const connected = (st) => {
+    btn.textContent = 'Reconnect';
+    show(['Connected', h('span', { class: 'muted' }, ` · ${st.app || name} calls ${st.url}`)], 'good');
+  };
+  let seq = 0;
+  const check = async () => {
+    const n = ++seq;
+    if (!ready()) { btn.disabled = true; btn.textContent = 'Connect'; show(missing); return; }
+    btn.disabled = false;
+    show('Checking…');
+    try {
+      const st = await api(`/api/admin/arr/${app}/status`, { method: 'POST', body: body() });
+      if (n !== seq) return;
+      if (st.connected) connected(st);
+      else { btn.textContent = 'Connect'; show('Not connected'); }
+    } catch (e) {
+      if (n === seq) show(`Can’t check ${name}: ${e.message}`, 'bad');
+    }
+  };
+  btn.onclick = () => run(btn, async () => {
+    ++seq;
+    show(`Connecting… ${name} is testing each address Lex has`);
+    try {
+      const st = await api(`/api/admin/arr/${app}/connect`, { method: 'POST', body: body() });
+      connected(st);
+      toast(`${name} will now tell Lex when it imports something`, 'ok');
+    } catch (e) {
+      show(`${e.message}. Try setting it up by hand below.`, 'bad');
+    }
+  });
+  const row = h('div', { class: 'arr-row' }, h('b', null, name), status, btn);
+  row.recheck = check;
+  check();
+  return row;
+}
+
+// The by-hand fallback for apps Lex can't reach (or other tools): one URL
+// to copy, plus the LAN addresses for apps in containers.
+function webhookManual(path, lanBases) {
+  const lan = (lanBases || []).filter((b) => b !== location.origin);
+  return h('details', { class: 'arr-manual' },
+    h('summary', null, 'Set it up by hand'),
+    h('div', { class: 'help' },
+      'In Sonarr or Radarr, add Settings → Connect → Webhook with this URL (method POST or PUT):',
+      copyableUrl(location.origin + path),
+      lan.length ? ['If its Test fails (common when the app runs in Docker or Podman), use a LAN address instead:', ...lan.map((b) => copyableUrl(b + path))] : null));
+}
+
+function arrSection(draft, text, info) {
+  const radarr = arrRow('Radarr', draft, 'radarrUrl', 'radarrKey',
+    ['Add Radarr’s address and API key under ', h('a', { href: '#/settings/metadata' }, 'Metadata'), ' first']);
+  const sonarr = arrRow('Sonarr', draft, 'sonarrUrl', 'sonarrKey', 'Enter Sonarr’s address and API key above');
+  let t = 0;
+  const recheck = () => { clearTimeout(t); t = setTimeout(sonarr.recheck, 600); };
+  return h('div', { class: 'form-section', dataset: { searchSection: 'Sonarr & Radarr' } }, h('h2', null, 'Sonarr & Radarr'),
+    h('p', { class: 'help', style: { margin: 0 } }, 'Connect them so Lex rescans the moment they import, upgrade, rename or delete something, instead of waiting for the next scheduled scan.'),
+    h('div', { class: 'form-grid', oninput: recheck },
+      field('Sonarr URL', text('sonarrUrl', { placeholder: 'http://127.0.0.1:8989' })),
+      field('Sonarr API key', text('sonarrKey', { type: 'password', autocomplete: 'off' }), 'Sonarr → Settings → General → API Key')),
+    h('div', { class: 'arr-rows' }, radarr, sonarr),
+    webhookManual(info.webhookUrl, info.webhookLanUrls));
 }
 
 // titlePicker edits a list of movies and shows (item ids): chips for the
@@ -581,8 +642,8 @@ async function serverSection() {
       h('div', { class: 'form-grid' },
         field('Rescan every (minutes)', num('scanIntervalMin', { min: 0 }), '0 disables periodic scans. Scans only stat files, so they are cheap.'),
         field('Probe workers', num('probeWorkers', { min: 1, max: 8 }), 'Parallel ffprobe processes for new files. 1 is best on a Pi.')),
-      tg('scanOnStartup', 'Scan on startup'),
-      webhookHelp(info.webhookUrl, info.webhookLanUrls)),
+      tg('scanOnStartup', 'Scan on startup')),
+    arrSection(draft, text, info),
     h('div', { class: 'form-section' }, h('h2', null, 'Playback history'),
       field('Keep history for (days)', num('historyRetentionDays', { min: 0, max: 36500 }), '0 keeps it forever. Older plays are deleted hourly, and the Playback dashboard only covers what is kept.')),
     h('div', { class: 'form-section' }, h('h2', null, 'Network & remote access'),
