@@ -21,7 +21,7 @@ func TestMeReportsCaps(t *testing.T) {
 	adminToken, _ := s.St.CreateToken(admin.ID, "Test", "127.0.0.1")
 	viewerToken, _ := s.St.CreateToken(viewer.ID, "Test", "127.0.0.1")
 
-	caps := func(t *testing.T, token string) map[string]bool {
+	caps := func(t *testing.T, token string) map[string]any {
 		t.Helper()
 		r := httptest.NewRequest("GET", "http://lex.test/api/me", nil)
 		r.AddCookie(&http.Cookie{Name: "lex_token", Value: token})
@@ -30,14 +30,18 @@ func TestMeReportsCaps(t *testing.T) {
 		if w.Code != 200 {
 			t.Fatalf("GET /api/me: %d %s", w.Code, w.Body.String())
 		}
-		var body struct{ Caps map[string]bool }
+		var body struct{ Caps map[string]any }
 		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 			t.Fatal(err)
 		}
 		return body.Caps
 	}
-	want := func(t *testing.T, got map[string]bool, subs, cache, live bool) {
+	want := func(t *testing.T, got map[string]any, subs, cache, live bool) {
 		t.Helper()
+		// The quality menu labels resolutions from the server's transcode cap.
+		if v, ok := got["maxTranscodeHeight"].(float64); !ok || int(v) != s.St.Config().MaxTranscodeHeight || v <= 0 {
+			t.Errorf("maxTranscodeHeight = %v, want %d", got["maxTranscodeHeight"], s.St.Config().MaxTranscodeHeight)
+		}
 		if v, ok := got["liveTv"]; !ok || v != live {
 			t.Errorf("liveTv = %v (present %v), want %v", v, ok, live)
 		}
@@ -79,7 +83,7 @@ func TestMeReportsCaps(t *testing.T) {
 	if w.Code != 200 {
 		t.Fatalf("login: %d %s", w.Code, w.Body.String())
 	}
-	var login struct{ Caps map[string]bool }
+	var login struct{ Caps map[string]any }
 	if err := json.Unmarshal(w.Body.Bytes(), &login); err != nil {
 		t.Fatal(err)
 	}

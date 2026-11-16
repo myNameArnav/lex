@@ -1,7 +1,7 @@
 import { h, clear, icons, toast, modal, confirmDialog, spinner, toggle, fmtBytes, fmtBitrate, fmtTime, fmtDate, timeAgo, fmtUptime, fmtDuration, LANG_OPTIONS, $, run, staleBanner, motionOK, KIND_LABELS, METHOD_LABEL, reasonLabel, emptyState } from './ui.js';
 import { api, img } from './api.js';
 import { state, loadLibraries, refreshSoft, setLeaveGuard, focusAfterRoute, renderNav } from './app.js';
-import { prefs, DEFAULTS, QUALITIES } from './prefs.js';
+import { prefs, DEFAULTS, QUALITIES, qualityOptions } from './prefs.js';
 import { capsSummary, compatRequest, TIERS, TIER_ORDER, causeLabel } from './caps.js';
 import { lineChart, columnChart, barList, axisHours, axisBitrate } from './charts.js';
 
@@ -127,7 +127,7 @@ function prefsSection() {
     h('div', { class: 'form-section' }, h('h2', null, 'Quality & method'),
       h('p', { class: 'help', style: { margin: 0 } }, 'These settings are stored in this browser, so each device can have its own (e.g. lower quality on your phone).'),
       h('div', { class: 'form-grid' },
-        field('Streaming quality', select(p.quality, QUALITIES, set('quality', Number)), 'Max bitrate. "Original" direct-plays when the browser supports the file.'),
+        field('Streaming quality', select(p.quality, qualityOptions({ maxHeight: state.caps.maxTranscodeHeight}), set('quality', Number)), 'Max bitrate. "Original" direct-plays when the browser supports the file. The resolution is the most a transcode delivers on this server.'),
         field('Playback method', select(p.mode, [['auto', 'Automatic (recommended)'], ['direct', 'Prefer Direct Play'], ['remux', 'Always Direct Stream (remux)'], ['transcode', 'Always Transcode']], set('mode')), 'Automatic picks the lightest method that works here. Try “Always Transcode” if a video stutters or won’t play.'))),
     h('div', { class: 'form-section' }, h('h2', null, 'Buffering'),
       h('div', { class: 'form-grid' },
