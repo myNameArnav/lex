@@ -1,416 +1,170 @@
 # Lex
 
-A lightweight, self-hosted media server in the spirit of Plex / Emby / Jellyfin,
-built for small Linux hosts, including Raspberry Pi. A Go binary with SQLite,
-`ffmpeg`/`ffprobe` for media processing, and a dependency-free web UI embedded
-in the binary, with optional Live TV channels that play your library at random.
-macOS can be used for local development.
+A lightweight, self-hosted media server for small Linux hosts such as a
+Raspberry Pi: one Go binary with SQLite, FFmpeg for media work, and a web UI
+with no build step.
 
 > [!NOTE]
-> **Built by AI.** Lex was written by large language models (LLM coding
-> agents) under human direction: the code, UI, tests, documentation and
-> screenshots. See [AI disclosure](#ai-disclosure).
+> **Built by AI.** Lex was written by LLM coding agents under human direction.
+> See [AI disclosure](#ai-disclosure).
 
 ![Lex home screen](docs/screenshots/home.webp)
 
-## Screenshots
+## Why Lex
 
-**Details** – artwork, overview, and the file's video, audio and subtitle tracks.
+Most media servers decide on their own to transcode, and you find out when the
+fan spins up. Lex is built around knowing **how each file will play in the
+browser you're using, and why**:
 
-![Movie details](docs/screenshots/movie.webp)
-
-**Player** – subtitles & audio menu with timing offset, size and position (left);
-player settings for quality, playback method and speed (right).
-
-<p>
-  <img src="docs/screenshots/player-subtitles.webp" width="49%" alt="Subtitles and audio menu">
-  <img src="docs/screenshots/player-settings.webp" width="49%" alt="Player settings menu">
-</p>
-
-**Stats for nerds** – why a file is remuxed, buffer health and the server's
-ffmpeg state (left); seek-bar thumbnails (right).
-
-<p>
-  <img src="docs/screenshots/player-stats.webp" width="49%" alt="Player with stats for nerds">
-  <img src="docs/screenshots/seek-preview.webp" width="49%" alt="Seek-bar preview">
-</p>
-
-**Admin** – live dashboard with host load and what each stream costs (left);
-transcoding settings (right).
+- **It asks the browser.** The player reports exactly which containers and
+  codecs this browser plays, and the server picks the cheapest way that works:
+  play the file as it is, repackage it, or re-encode it.
+- **It says why.** Every play records the reason it isn't a Direct Play
+  ("container mkv not supported", "audio codec eac3 converted in the browser",
+  "video codec mpeg4 not supported", "bitrate 18000 kbps over 8000 kbps
+  limit"…). You see it in the player's stats, on the dashboard for live
+  streams, and in the playback history and charts.
+- **You choose where the work happens.** Repackaging MKV/WebM and converting
+  Dolby/DTS audio can run **in the browser** (WebAssembly) so the server only
+  sends bytes, or **on the server** with FFmpeg. Video is re-encoded only when
+  the browser really can't decode it, and you can force any method from the
+  player.
 
 <p>
-  <img src="docs/screenshots/dashboard.webp" width="49%" alt="Dashboard">
-  <img src="docs/screenshots/settings.webp" width="49%" alt="Transcoding settings">
+  <img src="docs/screenshots/player-stats.webp" width="49%" alt="Stats for nerds: the playback method, why, and what the browser and server are doing">
+  <img src="docs/screenshots/browser-caps.webp" width="49%" alt="What this browser can play directly, convert and remux">
 </p>
+<p>
+  <img src="docs/screenshots/settings.webp" width="49%" alt="Transcoding settings: convert audio and remux in the browser or on the server">
+  <img src="docs/screenshots/dashboard.webp" width="49%" alt="Dashboard: live streams and why each one is converted">
+</p>
+
+The same file can play differently from one browser to the next, and the
+history shows it. Below, *Tears of Steel* (HEVC 10-bit, E-AC-3, MKV) is a
+Direct Stream repackaged by Chrome itself, but a server transcode in a Firefox
+that reported no HEVC 10-bit support; the Xvid AVI of *Elephants Dream* needs a transcode
+everywhere.
+
+![Playback history with the method and reason for every play](docs/screenshots/history.webp)
 
 <sub>Screenshots use the Blender Foundation's open movies *Sintel*, *Tears of
 Steel*, *Big Buck Bunny*, *Elephants Dream* and *Caminandes: Gran Dillama*
-(© Blender Foundation, [blender.org](https://www.blender.org/about/projects/)),
-released under Creative Commons Attribution licenses. Posters and backdrops are
-frames from the films.</sub>
+(© Blender Foundation, [blender.org](https://www.blender.org/about/projects/),
+CC BY). Posters and backdrops are frames from the films.</sub>
+
+## How playback works
+
+| Method | What happens | Cost |
+| --- | --- | --- |
+| **Direct Play** | The browser plays the original file with range requests. | None |
+| **Direct Stream (in the browser)** | The browser reads the MKV/WebM and repackages it to fragmented MP4 itself; AC-3, E-AC-3, DTS and TrueHD audio is converted to AAC in the browser. | None on the server |
+| **Direct Stream (on the server)** | FFmpeg repackages the file without touching the video; unsupported audio becomes AAC. | Low |
+| **Transcode** | FFmpeg re-encodes to H.264 (libx264 or `h264_v4l2m2m`), for unsupported video, image subtitles, bitrate caps or HDR→SDR. | High |
+
+If a method fails in the browser, the player falls back to the next one on its
+own. Streams are fed through Media Source Extensions with no temporary files,
+and ffmpeg pauses when the browser's buffer is full. Browsers without MSE
+(older iOS, some TVs, AirPlay) get HLS.
 
 ## Features
 
-- **Libraries** – Movies, TV Shows, or Mixed (auto-detects episodes vs films, good
-  for anime folders). Release-style names (`Dune.Part.Two.2024.1080p...`,
-  `The Office (US) - S06E17-E18 - ...`, `www.site.com - Title 2021 ...`) are parsed,
-  plus `.plexmatch` / `.nfo` ids and local `poster.jpg` / `fanart.jpg` / `-thumb.jpg`.
-  Periodic rescans only `stat` files; a Sonarr/Radarr webhook triggers instant rescans.
-  Library names must be unique. A file belongs to one library: a library nested in
-  another's folder lists only files the other doesn't already have, and Settings →
-  Libraries says where the rest are. Editing or deleting a library rescans the
-  libraries that overlap it.
-- **Metadata** – TMDB (with a free API key), TVmaze for shows (no key), and a local
-  **Radarr** as a keyless TMDB source for movies (auto-detected). Artwork is fetched
-  lazily, cached on disk and resized for the grid. Cast portraits use the same
-  server cache, so browsers do not contact image providers directly. Manual "Fix match" and refresh.
-- **Browse** – a per-user **Watchlist** ("Watch later") for movies and shows: the
-  bookmark on a title's page or a poster's ⋯ menu adds it, Home shows a Watchlist
-  row, and library grids can filter to it. Movies in a series are grouped into
-  **collections** from TMDB's or Radarr's collection info (read with the movie's
-  own details, so nothing extra is fetched, and nothing at all without a TMDB key or
-  Radarr): a movie's page says "Part of …" and links to the collection in release
-  order. Already-matched movies pick up their collection on the next metadata refresh.
-  Cast and crew link to a page of every title in the library they appear in, and
-  genre chips open the library filtered by that genre.
-- **Playback**
-  - **Direct Play**: the original file with HTTP range requests (zero CPU).
-  - **Direct Stream (remux)**: ffmpeg repackages to fragmented MP4 without touching
-    video; unsupported audio (EAC3, DTS, TrueHD…) becomes AAC. Performance depends on the file and hardware.
-    Dolby (AC-3, E-AC-3, TrueHD) and DTS (including DTS-HD MA/HRA) audio that the browser
-    can't play (Firefox, Chrome) is copied as-is and converted to AAC in the browser with
-    WebAssembly, so the server never decodes it.
-  - **Transcode**: H.264 via libx264 (or `h264_v4l2m2m`), bitrate/resolution caps,
-    image-subtitle (PGS/VobSub) burn-in, optional HDR→SDR tone mapping.
-  - The browser reports its codecs; the server picks the cheapest method and records
-    *why* (e.g. "audio codec eac3 not supported"). If the browser fails anyway, the
-    player falls back Direct Play → Direct Stream → Transcode automatically.
-  - Remux/transcode output keeps the file's own timestamps and is fed to the browser
-    via Media Source Extensions: seeking restarts ffmpeg at the target, and once the
-    client's forward buffer is full it stops reading, TCP backpressure pauses ffmpeg,
-    and nothing is written to disk.
-  - **Direct Stream without ffmpeg**: for MKV/WebM files whose codecs the browser plays
-    (or converts), the browser reads the original file with range requests and remuxes
-    it to the same fragmented MP4 itself (WebAssembly, in a worker), so the server only
-    sends bytes. Settings → Transcoding → Streaming → "Remux in the browser" (on by
-    default). If that fails, the server remuxes instead.
-  - **HLS** for browsers without Media Source Extensions (older iOS, some TVs,
-    AirPlay) or on request: 6-second segments written to the data folder and
-    deleted as playback moves on.
-- **Subtitles** – embedded, external and downloaded text subtitles with size,
-  position, background and timing offset (`g`/`h`); styled ASS/SSA (anime fansubs)
-  rendered with libass in the browser using the file's attached fonts; search and
-  download from OpenSubtitles.com (free API key); image subtitles are burned in.
-  Large subtitle tracks load progressively while they're extracted.
-- **Seek previews** – thumbnail sprites generated in the background from keyframes
-  at the lowest priority, shown while hovering or dragging the seek bar.
-- **Player** – resume, an Up next card that plays the next episode after a
-  countdown (Cancel stops it for that episode), starting when the end credits
-  do (detected credits, else a Credits/Ending chapter, else shortly before the
-  end), an end card for movies (Back to details / Play from start), **Skip
-  Intro** and, for movies and last episodes, **Skip Credits** buttons (`s`;
-  both can skip automatically, per device), subtitle/audio switching, quality & method menus,
-  speed (kept until the player closes), PiP, Media Session keys, **chapters**
-  (marks on the seek bar, the current chapter's name next to the time, a
-  Chapters list in Settings, `PgUp`/`PgDn` for the next or previous one), keyboard
-  shortcuts (`space/k`, `←/→` or `j/l`, `↑/↓`, `f`, `m`, `c`, `i`, `n`, `s`, `g/h`, `0-9`, `PgUp/PgDn`),
-  touch controls (tap to show or hide the controls, double-tap the sides to seek),
-  a reconnecting notice when the server drops out, and a **stats for nerds**
-  overlay (codecs in/out, reasons, buffer health graph, download speed, dropped
-  frames, stalls, server ffmpeg speed/fps/CPU/throttling).
-- **Shuffle** – play a show's episodes in random order from its page; Next and
-  Up next follow the shuffled order.
-- **Live TV** – channels that play the library at random like broadcast TV: All
-  (with more than one library), one per library and one per common genre. Each
-  day's schedule is fixed per channel, so tuning in joins whatever is on part-way
-  through, and the guide shows what's on now and next. The player moves on with
-  the schedule, has Go live after a pause and channel up/down (`n`, `PgUp`/`PgDn`).
-  Live TV saves no resume points or watched marks. It's off by default: an admin
-  turns it on in Settings → Server, where they can also make channels of their
-  own, listed first: either hand-picked movies and shows, or any libraries,
-  genres and movies/shows, minus titles to leave out.
-- **Interface** – a two-row player toolbar on narrow screens, keyboard-accessible
-  episode playback and seek controls, labeled settings, and dialogs that contain
-  focus and return it when closed. Playback actions appear before long synopses;
-  empty filtered libraries offer a clear-filters action. Continue Watching cards
-  have a ⋯ menu (Mark watched, Remove from Continue Watching), library grids show
-  three posters a row on phones, and Random opens a random title's page. Safe-area
-  insets keep controls clear of notches and home bars.
-- **Dashboard** – live CPU (per core), RAM/swap, SoC temperature, clock, Pi
-  under-voltage/throttle flags, network & disk I/O, storage, process memory, and every
-  active stream with client buffer, bandwidth, stalls and ffmpeg state, on the Live
-  tab. **Stop** ends a stream and tells the viewer it was stopped by the admin; the player does not reconnect on its own.
-  The Playback tab has analytics for 7 to 365 days (watch time per day, or per week
-  for long ranges; methods, stall rate by method, top titles, users, clients,
-  conversion reasons, time of day; each chart's values can be shown as a table)
-  and the paged play history (kept 365 days by default; change it, or keep it forever,
-  in Settings → Server). The Library tab breaks the library down by codec,
-  resolution, HDR, container and size.
-- **Users** – multiple accounts, per-user watch state, admin roles (an admin can't
-  change their own role), per-user library access (Settings → Users → **Libraries**:
-  all libraries, the default, or only some; admins always see everything), device sign-out, login rate limiting, bcrypt passwords, session tokens stored only as hashes, HttpOnly cookies, and cross-origin
-  protection for browser mutations.
-- **Settings** – everything above is toggleable: methods, transcode limits, encoder,
-  preset/CRF/threads/nice, audio channels/bitrate, tone mapping, fragment & keyframe
-  sizes, remote bitrate cap, local networks, scanning, metadata providers. Forms
-  show unsaved changes and ask before you leave them. Per-device playback prefs
-  (quality, method, buffer ahead/behind, languages, subtitle style, single-key
-  shortcuts).
-
-- **Media cache, intros & credits** – optional disk cache with size/free-space
-  limits, next-episode prefetch, and intro and end-credits detection when FFmpeg
-  supports Chromaprint: audio fingerprints of the first and last minutes of
-  neighbouring episodes are compared to find the shared opening theme and
-  credits (chapters named Intro/Opening or Credits/Ending win). Re-detect
-  from an episode's or show's menu.
+- **Libraries**: Movies, TV Shows or Mixed. Parses release-style names,
+  `.plexmatch`/`.nfo` ids and local artwork; Sonarr/Radarr webhooks trigger
+  instant rescans.
+- **Metadata**: TMDB (free key), TVmaze for shows, or a local Radarr. Artwork
+  is cached and served by Lex. Collections, cast pages, genres, a per-user
+  Watchlist, and manual "Fix match".
+- **Player**: resume, Up next, Skip Intro / Skip Credits (detected with audio
+  fingerprints), chapters, seek-bar thumbnails, speed, PiP, keyboard and touch
+  controls, and **stats for nerds** (codecs in/out, reasons, buffer, bandwidth,
+  dropped frames, server ffmpeg speed).
+- **Subtitles**: embedded, external and OpenSubtitles.com downloads; styled
+  ASS/SSA rendered with libass in the browser; timing, size and position
+  controls.
+- **Live TV**: optional channels that play your library at random on a fixed
+  daily schedule, with a guide.
+- **Dashboard**: host CPU, memory, temperature, network and disk; every live
+  stream with its method, reason, buffer and ffmpeg state; playback analytics
+  and history; a library breakdown by codec, resolution and HDR.
+- **Users**: multiple accounts, per-user watch state and library access, admin
+  roles, bcrypt passwords, hashed session tokens.
+- **Raspberry Pi friendly**: hardware HEVC decoding and H.264 encoding when
+  available, an optional media cache, and transcode limits you control.
 
 ## Quick start
 
-There are no prebuilt binaries. Build Lex with Go **1.26.11 or newer**, from the
-repository root, install FFmpeg and FFprobe, and run:
+Build with Go **1.26.11 or newer** and install FFmpeg/FFprobe:
 
 ```sh
 go build -trimpath -o lex ./cmd/lex
 ./lex -addr 127.0.0.1:8420 -data ./data
 ```
 
-Open <http://localhost:8420>, create the first administrator, then add a library
-in Settings → Libraries. Library paths must be absolute and readable by Lex.
-New passwords must be 12–72 bytes. Use your own media files.
-
-The default address is loopback. To allow trusted LAN clients, explicitly use
-`-addr :8420` and configure a firewall. Complete setup before allowing other
-clients to connect. See [security and privacy](SECURITY.md) before remote access.
+Open <http://localhost:8420>, create the first administrator, and add a library
+(an absolute path) in Settings → Libraries. Lex listens on loopback by default;
+use `-addr :8420` for LAN access behind a firewall, and read
+[security and privacy](SECURITY.md) before exposing it further.
 
 | Flag | Environment | Default |
 | --- | --- | --- |
 | `-addr` | `LEX_ADDR` | `127.0.0.1:8420` |
 | `-data` | `LEX_DATA` | `./data` |
-| `-ffmpeg` | `LEX_FFMPEG` | `ffmpeg` |
-| `-ffprobe` | `LEX_FFPROBE` | `ffprobe` |
+| `-ffmpeg` / `-ffprobe` | `LEX_FFMPEG` / `LEX_FFPROBE` | from `PATH` |
 | `-debug` | `LEX_DEBUG=1` | off |
-| `-version` | — | print version and exit |
-| `-healthcheck` | — | probe `/api/public/info` on `-addr` and exit |
-
-Flags override environment settings. FFmpeg/FFprobe must be on `PATH` or supplied
-as explicit paths. Debug logs can include private filenames and paths.
+| `-version`, `-healthcheck` | — | print version / probe the server and exit |
 
 ## Docker
 
-A `linux/arm64` image (64-bit Raspberry Pi OS and other 64-bit ARM Linux) is
-published to GitHub Container Registry. For other platforms, build it yourself
-with `docker build -t lex .`.
-
-| Tag | Updated |
-|---|---|
-| `ghcr.io/mynamearnav/lex:latest`, `:<major.minor>`, `:<version>` (e.g. `:0.0.15`) | with each release |
-| `ghcr.io/mynamearnav/lex:edge` | when a maintainer builds `main` by hand (Container image workflow, Run workflow) |
+A `linux/arm64` image is published to GitHub Container Registry
+(`:latest`, `:<major.minor>`, `:<version>`, and `:edge` for manual builds of
+`main`). On other platforms, `docker build -t lex .`.
 
 ```sh
 docker run -d --name lex -p 127.0.0.1:8420:8420 --user 1000:1000 \
   -v lex-data:/data -v /path/to/media:/media:ro ghcr.io/mynamearnav/lex:latest
 ```
 
-### Docker Compose
+Or edit the media path in `docker-compose.yml` and run `docker compose up -d`.
+Add `/media` as the library path in Lex. On a Raspberry Pi, add
+`-f docker-compose.rpi.yml` to pass the hardware codec devices through; for
+other arm64 boards build with `--build-arg RPI_FFMPEG=no`.
 
-Edit `/path/to/media` in `docker-compose.yml` to your media directory:
+## Running as a service
 
-```sh
-docker compose up -d            # published image
-docker compose up -d --build    # or build from this checkout
-```
+`deploy/` has a systemd unit for the binary, a Podman Quadlet unit that follows
+`:latest` with `podman auto-update`, `lex-hwcodec.service` for Raspberry Pi
+codec modules, and `deploy.sh` to install either over SSH. Review paths, users
+and device group IDs for your host first.
 
-The UI is available at <http://localhost:8420>. Compose publishes port 8420 only
-on loopback, mounts media read-only at `/media`, and stores application data in a
-named `lex-data` volume owned by UID 1000. In Lex, add `/media` as a library path.
-Back up the volume; `docker compose down -v` deletes it.
+For remote access, put Lex behind an HTTPS reverse proxy or a VPN. If you
+enable **Trust reverse-proxy headers**, list every proxy in **Trusted proxy
+peers**. Clients outside **Local networks** get the **Remote bitrate limit**.
+The Sonarr/Radarr webhook URL in Settings → Server carries its own token; keep
+it private.
 
-To allow LAN access, explicitly change the port mapping to `8420:8420`. Docker
-uses bridge networking, so local Radarr is not available at `127.0.0.1` inside
-this container: configure a reachable Radarr URL and API key in Settings.
-Host network/disk statistics reflect the container's environment.
-
-The multi-stage Dockerfile builds a static Go binary and runs as UID 1000 in
-Debian trixie with FFmpeg. The container has a `lex -healthcheck` health check.
-On arm64, it uses the Raspberry Pi archive for hardware-capable FFmpeg by default.
-For other arm64 boards or generic software decoding:
-
-```sh
-docker build --build-arg RPI_FFMPEG=no -t lex:latest .
-```
-
-On a Raspberry Pi, review the hardware devices and group IDs in the override,
-then run:
-
-```sh
-docker compose -f docker-compose.yml -f docker-compose.rpi.yml up -d
-```
-
-The override requires the listed devices to exist. Use the base configuration
-for software playback if your kernel does not expose them.
-
-## Linux service deployment
-
-`deploy/lex.service` is a binary systemd example; `deploy/lex.container` is a
-Podman Quadlet example that runs the published image with `AutoUpdate=registry`,
-so Podman's daily `podman-auto-update.timer` installs new releases (enable it
-with `systemctl enable --now podman-auto-update.timer`). Both bind to loopback. Review paths, permissions, device
-availability, and the `video`/`render` group IDs for your host. Quadlet mounts
-`/srv/media` at `/media` and `/var/lib/lex` at `/data`. Binary mode runs as the
-`lex` system user and stores data in `/var/lib/lex`.
-
-The optional deployment script requires an **explicit SSH target with root
-privileges** and systemd on the destination. Container modes need Podman with
-Quadlet support there; `container-local` builds the image locally with Docker
-(for unreleased changes) and binary mode needs Go. It replaces the destination's existing Lex service; back up
-its data and adapt the templates before using it.
-
-```sh
-# Replace the example SSH target with your configured host.
-deploy/deploy.sh root@media-host arm64 container        # published image
-deploy/deploy.sh root@media-host arm64 container-local  # build here and copy
-deploy/deploy.sh root@media-host amd64 binary
-```
-
-The helper `deploy/lex-hwcodec.service` attempts to load Raspberry Pi codec
-modules, then reloads systemd so the Quadlet unit picks up the codec devices
-(Quadlet generates the unit early in boot, before they exist). Hardware configuration varies by board, kernel and distribution;
-consult the board's documentation before modifying boot settings. Lex tests
-available hardware at startup and can use hardware HEVC decoding and
-`h264_v4l2m2m` encoding when supported. Software fallback and transcode settings
-are available in the UI. Performance depends on codec, resolution and hardware.
-
-## Remote access and webhooks
-
-Use an HTTPS reverse proxy or a private VPN. Lex itself speaks HTTP. Keep direct
-access to the backend restricted. If you enable **Trust reverse-proxy headers**,
-set **Trusted proxy peers** to the proxy's exact addresses/CIDRs. The proxy must
-append the client address to `X-Forwarded-For` (nginx
-`$proxy_add_x_forwarded_for`, Caddy, Traefik and Cloudflare do this by default),
-set `X-Forwarded-Proto`, and preserve the public `Host` header. Lex reads
-`X-Forwarded-For` from the right and uses the first address that isn't a trusted
-proxy peer, so list every proxy hop in a chain. `X-Real-IP` and
-`CF-Connecting-IP` are ignored. Proxy trust is disabled for new installations
-and its allowlist defaults to loopback.
-
-Clients outside **Local networks** receive the configured **Remote bitrate
-limit** during playback planning. By default every signed-in user can access
-every library; an admin can limit a regular user to some libraries in Settings →
-Users. Everything in other libraries, including Live TV channels that air them,
-is then hidden from that user and answers 404 like an id that doesn't exist.
-Admin roles control server settings and account management, and admins always
-see every library.
-
-For Sonarr/Radarr, configure a POST webhook using the URL shown in Settings →
-Server. It carries a separate scan token; keep the URL private and redact query
-strings in proxy logs. GET webhooks are unsupported. API authentication accepts
-cookies, `Authorization: Bearer`, or `X-Lex-Token`; URL authentication tokens are
-unsupported.
-
-## Keyboard shortcuts
-
-Press `?` (or `Ctrl`/`⌘` + `/`) anywhere for the full list. The main ones:
-`Ctrl`/`⌘` + `K` or `/` to search, `g` then `h` / `t` / `1`–`9` / `s` / `d` to go to
-home, Live TV, a library, settings or the dashboard, `p` to play the title you're
-viewing, and in the player `space`, `←`/`→`, `f`, `m`, `c` and `i`. The list is
-also in the account menu on devices with a mouse.
-
-Single-key shortcuts can be turned off per device in Settings → Playback
-(useful with speech input). `Ctrl`/`⌘` shortcuts and the player's keys keep
-working; the list then opens with `Ctrl`/`⌘` + `/`.
-
-## Versions and releases
-
-The version number lives in `internal/version/VERSION`; builds add the commit
-they came from (`lex -version` prints e.g. `lex 0.0.15 (2b8f74d)`, and it's shown
-in Settings → About and the account menu). To release, bump that file, commit,
-and push a matching tag:
-
-```sh
-git tag -a v0.0.15 -m "Lex v0.0.15" && git push origin v0.0.15
-```
-
-The Container image workflow checks the tag against the file, publishes the
-arm64 image and creates a GitHub Release (notes only).
-
-## Development and publication
+## Development
 
 ```sh
 go test -race ./...
 go vet ./...
 python3 scripts/check-publication.py
-go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --no-banner --log-opts="HEAD" .
-go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 ```
 
-CI runs on pull requests (merging doesn't run it again, and PRs that only change
-docs or the version number skip it) and checks formatting, module consistency, race tests, Go vet, JavaScript/shell
-syntax, Compose configuration, publication privacy, secrets and vulnerabilities.
-Pull requests that change the Dockerfile or its inputs also build the arm64 image. The privacy script checks working
-files and branch/tag history for private deployment addresses, home paths,
-runtime/configuration files and personal commit attribution. It complements
-manual review and secret scanning; it cannot detect every form of PII.
-
-Before a first GitHub publication, use a fresh repository, run the checks, and
-push only the cleaned `main` branch. For example, after choosing a repository
-name and signing in to GitHub CLI:
-
-```sh
-gh repo create REPOSITORY_NAME --public --source=. --remote=origin --push
-```
-
-Do not use `git push --mirror`: application checkpoint refs are local metadata.
-Commits use the neutral "Lex contributors" identity; pull requests merged on
-GitHub record the maintainer's GitHub no-reply address, which the check allows. Keep
-personal data, logs, media and credentials out of future commits, screenshots
-and issues. See [contributing](CONTRIBUTING.md) and the
-[publication audit](docs/PUBLISH_AUDIT.md) for validation and remaining limits.
+See [contributing](CONTRIBUTING.md) for the full checks, the code layout and
+how releases are made, and the [publication audit](docs/PUBLISH_AUDIT.md) for
+the privacy checks.
 
 ## AI disclosure
 
-Lex was built by large language models. LLM coding agents wrote the Go
-server, the web UI, the tests, the documentation, the publication audit and
-the README screenshots; a human maintainer set the direction, chose the
-features, reported bugs and tested it on real hardware. This covers the whole
-history, including the initial commit; commits since then also name the model
-in a `Co-Authored-By` trailer.
-
-LLM-written code can contain mistakes, including security ones. The automated
-checks and the publication audit were also produced with LLMs and are not an
-independent security review, so treat Lex like any other unaudited software:
-review it before exposing it to the internet. Lex does not call an AI model
-service at runtime. The same disclosure appears in Settings → About.
+Lex was built by large language models: LLM coding agents wrote the server,
+UI, tests, documentation and screenshots, while a human maintainer chose the
+features, reported bugs and tested on real hardware. Commits name the model in
+a `Co-Authored-By` trailer. The code and its checks have not had an independent
+security review, so review Lex before exposing it to the internet. Lex calls no
+AI service at runtime.
 
 ## License
 
-Lex is released under the [MIT License](LICENSE).
-Third-party dependencies, the bundled subtitle renderer (see
-[third-party notices](THIRD_PARTY_NOTICES.md)) and bundled public Raspberry Pi
-archive verification keys retain their respective upstream terms.
-
-## Layout
-
-```text
-cmd/lex            flags, wiring, periodic scans
-internal/store     SQLite schema and queries
-internal/library   scanner, filename parser, ffprobe
-internal/meta      TMDB, TVmaze, Radarr, artwork and metadata
-internal/stream    playback decisions, ffmpeg jobs, sessions, subtitles
-internal/subsearch OpenSubtitles.com search and download
-internal/trickplay seek-bar preview thumbnails
-internal/cache     optional media disk cache
-internal/intro     optional intro & end-credits detection
-internal/tv        Live TV channels and their daily schedules
-internal/sysstats  host/container statistics
-internal/api       HTTP API, auth, images, static files
-internal/logx      leveled logger with a recent-lines buffer for the UI
-internal/proc      child-process helpers
-internal/version   version number and build commit
-web/static         vanilla JavaScript UI (no build step)
-web/static/vendor  prebuilt third-party browser code (JASSUB subtitle renderer, FFmpeg audio converter)
-wasm/audio         source of the browser's AC-3/E-AC-3/DTS/TrueHD → AAC converter (scripts/build-audio-wasm.sh)
-wasm/remux         source of the browser's MKV/WebM → fragmented MP4 remuxer (scripts/build-remux-wasm.sh)
-deploy             Linux deployment examples
-docker             Raspberry Pi archive keys for the container build
-scripts            release, WebAssembly builds and publication privacy checks
-```
+[MIT](LICENSE). Third-party components, including the bundled subtitle
+renderer and Raspberry Pi archive keys, keep their own terms; see
+[third-party notices](THIRD_PARTY_NOTICES.md).

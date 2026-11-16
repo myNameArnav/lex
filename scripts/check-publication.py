@@ -79,6 +79,19 @@ for ref in refs:
         if not (neutral or github_merge):
             violations.append((commit[:12], "commit metadata", "non-neutral author/committer identity"))
 
+# The Go version named in the docs and the Dockerfile must match go.mod,
+# which a local toolchain has to satisfy (GOTOOLCHAIN=local fails otherwise).
+go_mod = re.search(r"^go (\S+)$", pathlib.Path("go.mod").read_text(), re.M).group(1)
+for path, pattern in [("README.md", r"Go \*\*(\S+) or newer\*\*"),
+                      ("CONTRIBUTING.md", r"Use Go (\S+) or newer"),
+                      ("Dockerfile", r"golang:([\d.]+)-")]:
+    found = re.findall(pattern, pathlib.Path(path).read_text())
+    if not found:
+        violations.append(("working tree", path, "Go version not found"))
+    for version in found:
+        if version != go_mod:
+            violations.append(("working tree", path, f"names Go {version}, go.mod requires {go_mod}"))
+
 if violations:
     for location, path, label in sorted(set(violations)):
         print(f"FAIL {location}: {path}: {label}", file=sys.stderr)

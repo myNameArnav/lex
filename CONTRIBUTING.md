@@ -1,8 +1,9 @@
 # Contributing
 
-Use Go 1.26.9 or newer and format changes with `gofmt`. FFmpeg and FFprobe are
-needed to exercise actual playback. The UI consists of native JavaScript modules
-with no package installation or build step.
+Use Go 1.26.11 or newer (the `go` line in `go.mod`) and format changes with
+`gofmt`. FFmpeg and FFprobe are needed to exercise actual playback. The UI
+consists of native JavaScript modules with no package installation or build
+step.
 
 Run these checks before opening a pull request:
 
@@ -35,6 +36,74 @@ server restart and continuous playback. Restart the server when the page says
 suppresses watch progress. Use `restartOnly` to repeat the restart, movie and
 continuous checks, or `continuousOnly` for just the endurance check. Remove the
 temporary static files before building the normal release.
+
+## Checks and publication
+
+CI runs on pull requests (merging doesn't run it again, and PRs that only change
+docs or the version number skip it) and checks formatting, module consistency, race tests, Go vet, JavaScript/shell
+syntax, Compose configuration, publication privacy, secrets and vulnerabilities.
+Pull requests that change the Dockerfile or its inputs also build the arm64 image. The privacy script checks working
+files and branch/tag history for private deployment addresses, home paths,
+runtime/configuration files and personal commit attribution. It complements
+manual review and secret scanning; it cannot detect every form of PII.
+
+Before a first GitHub publication, use a fresh repository, run the checks, and
+push only the cleaned `main` branch. For example, after choosing a repository
+name and signing in to GitHub CLI:
+
+```sh
+gh repo create REPOSITORY_NAME --public --source=. --remote=origin --push
+```
+
+Do not use `git push --mirror`: application checkpoint refs are local metadata.
+Commits use the neutral "Lex contributors" identity; pull requests merged on
+GitHub record the maintainer's GitHub no-reply address, which the check allows. Keep
+personal data, logs, media and credentials out of future commits, screenshots
+and issues. See the
+[publication audit](docs/PUBLISH_AUDIT.md) for validation and remaining limits.
+
+## Releases
+
+The version number lives in `internal/version/VERSION`; builds add the commit
+they came from (`lex -version` prints e.g. `lex 0.0.15 (2b8f74d)`, and it's shown
+in Settings → About and the account menu). To release, bump that file, commit,
+and push a matching tag:
+
+```sh
+git tag -a v0.0.15 -m "Lex v0.0.15" && git push origin v0.0.15
+```
+
+The Container image workflow checks the tag against the file, publishes the
+arm64 image and creates a GitHub Release (notes only).
+
+## Code layout
+
+```text
+cmd/lex            flags, wiring, periodic scans
+internal/store     SQLite schema and queries
+internal/library   scanner, filename parser, ffprobe
+internal/meta      TMDB, TVmaze, Radarr, artwork and metadata
+internal/stream    playback decisions, ffmpeg jobs, sessions, subtitles
+internal/subsearch OpenSubtitles.com search and download
+internal/trickplay seek-bar preview thumbnails
+internal/cache     optional media disk cache
+internal/intro     optional intro & end-credits detection
+internal/tv        Live TV channels and their daily schedules
+internal/sysstats  host/container statistics
+internal/api       HTTP API, auth, images, static files
+internal/logx      leveled logger with a recent-lines buffer for the UI
+internal/proc      child-process helpers
+internal/version   version number and build commit
+web/static         vanilla JavaScript UI (no build step)
+web/static/vendor  prebuilt third-party browser code (JASSUB subtitle renderer, FFmpeg audio converter)
+wasm/audio         source of the browser's AC-3/E-AC-3/DTS/TrueHD → AAC converter (scripts/build-audio-wasm.sh)
+wasm/remux         source of the browser's MKV/WebM → fragmented MP4 remuxer (scripts/build-remux-wasm.sh)
+deploy             Linux deployment examples
+docker             Raspberry Pi archive keys for the container build
+scripts            release, WebAssembly builds and publication privacy checks
+```
+
+## License
 
 Lex is licensed under the [MIT License](LICENSE). By contributing, you agree
 that your contributions are licensed under the same terms.
