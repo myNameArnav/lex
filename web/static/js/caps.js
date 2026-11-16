@@ -125,7 +125,7 @@ export function causeLabel(c, { remote = false } = {}) {
     case 'bitrate': return prefs.get('quality') > 0 ? 'Above this device’s quality setting' : remote ? 'Above the server’s limit for remote streaming' : 'Above the quality limit';
     case 'hls': return `HLS can only repackage MKV files, not ${name}`;
     case 'mode': return `“Always ${c.key === 'transcode' ? 'Transcode' : 'Direct Stream'}” is set on this device`;
-    case 'setting': return c.key === 'directplay' ? 'Direct Play is turned off on the server' : 'Remuxing is turned off on the server';
+    case 'setting': return { directplay: 'Direct Play is turned off on the server', remux: 'Remuxing is turned off on the server', transcode: 'Converting video is turned off on the server' }[c.key] || `${c.key} is turned off on the server`;
     case 'error': return c.key ? c.key[0].toUpperCase() + c.key.slice(1) : 'No playback method works';
   }
   return `${c.kind} ${c.key}`;

@@ -174,7 +174,8 @@ function compatSection() {
     const mine = ++gen, req = compatRequest();
     clear(body).append(h('div', { class: 'row' }, h('div', { class: 'spinner sm' }), h('span', { class: 'muted small' }, 'Checking your library…')));
     api('/api/compat', { method: 'POST', body: req }).then((sum) => {
-      if (mine === gen) clear(body).append(...compatSummary(sum, req));
+      // h() flattens the nested arrays and skips nulls; append() wouldn't.
+      if (mine === gen) clear(body).append(h('div', null, compatSummary(sum, req)));
     }).catch((e) => { if (mine === gen) clear(body).append(h('p', { class: 'bad', style: { margin: 0 } }, e.message)); });
   };
   refreshCompat();
@@ -200,7 +201,9 @@ function compatSummary(sum, req) {
   // For conversions only the reasons it can't just repackage count.
   const causes = sum.causes.filter((c) => c.tier !== 'direct' && (c.stage === 'stream' || !['transcode', 'unplayable'].includes(c.tier)))
     .sort((a, b) => TIER_ORDER.indexOf(b.tier) - TIER_ORDER.indexOf(a.tier) || (a.kind === 'audio') - (b.kind === 'audio') || b.files - a.files);
-  const notes = [req.maxBitrate ? 'this device’s quality setting' : null, req.mode !== 'auto' ? 'this device’s playback method' : null, sum.remote ? 'streaming from outside your network' : null].filter(Boolean);
+  // Being remote only matters when the server's remote bitrate limit applies.
+  const capped = !req.maxBitrate && sum.remote && sum.causes.some((c) => c.kind === 'bitrate');
+  const notes = [req.maxBitrate ? 'this device’s quality setting' : null, req.mode !== 'auto' ? 'this device’s playback method' : null, capped ? 'the server’s limit for streaming from outside your network' : null].filter(Boolean);
   return [
     h('p', { style: { margin: '0 0 10px' } }, headline),
     h('div', { class: 'compat-bar', role: 'img', 'aria-label': tiers.map((t) => `${TIERS[t].label}: ${sum.tiers[t]}`).join(', ') },

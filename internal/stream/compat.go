@@ -56,6 +56,17 @@ func Assess(cfg store.Config, f *store.File, req PlanRequest, remote bool) Verdi
 	}
 	plan, err := Decide(cfg, f, req, remote)
 	if err != nil {
+		// Usually the file needs converting and that's turned off: say
+		// why it would be converted, and that it's off.
+		if !cfg.EnableTranscode {
+			on := cfg
+			on.EnableTranscode = true
+			if v := Assess(on, f, req, remote); v.Tier == TierTranscode {
+				v.Tier = TierUnplayable
+				v.Causes = append(v.Causes, Cause{Stage: "stream", Kind: "setting", Key: "transcode"})
+				return v
+			}
+		}
 		return Verdict{Tier: TierUnplayable, Causes: []Cause{{Stage: "stream", Kind: "error", Key: err.Error()}}}
 	}
 	v := Verdict{Causes: []Cause{}}

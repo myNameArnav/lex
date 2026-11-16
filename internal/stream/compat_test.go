@@ -55,7 +55,8 @@ func TestAssess(t *testing.T) {
 	}
 
 	cfg.EnableTranscode = false
-	if got := Assess(cfg, file("/m/a.mp4", hevc10, aac), PlanRequest{Audio: -1, Subtitle: -1, Caps: noHEVC}, false); got.Tier != TierUnplayable {
-		t.Errorf("transcoding off: got %s", got.Tier)
+	want := []Cause{{"direct", "video", "hevc10"}, {"stream", "video", "hevc10"}, {"stream", "setting", "transcode"}}
+	if got := Assess(cfg, file("/m/a.mp4", hevc10, aac), PlanRequest{Audio: -1, Subtitle: -1, Caps: noHEVC}, false); got.Tier != TierUnplayable || !reflect.DeepEqual(got.Causes, want) {
+		t.Errorf("transcoding off: got %s %v, want %v", got.Tier, got.Causes, want)
 	}
 }
