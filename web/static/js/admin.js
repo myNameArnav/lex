@@ -3,6 +3,7 @@ import { api, img } from './api.js';
 import { state, loadLibraries, refreshSoft, setLeaveGuard, focusAfterRoute, renderNav } from './app.js';
 import { prefs, DEFAULTS, QUALITIES } from './prefs.js';
 import { capsSummary, compatRequest, TIERS, TIER_ORDER, causeLabel } from './caps.js';
+import { PAGES, searchBox, reveal } from './settings-search.js';
 import { lineChart, columnChart, barList, axisHours, axisBitrate } from './charts.js';
 
 // Pollers owned by the current admin view. Each stops at its next tick once
@@ -45,30 +46,27 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) poll
 // Settings
 // ======================================================================
 
-const SECTIONS = [
-  ['preferences', 'Playback', 'sliders', false],
-  ['account', 'Account', 'user', false],
-  ['server', 'Server', 'gear', true],
-  ['transcoding', 'Transcoding', 'cpu', true],
-  ['metadata', 'Metadata', 'film', true],
-  ['cache', 'SSD cache', 'drive', true],
-  ['libraries', 'Libraries', 'library', true],
-  ['users', 'Users', 'users', true],
-  ['devices', 'Devices', 'devices', true],
-  ['logs', 'Tasks & logs', 'log', true],
-  ['about', 'About', 'info', true],
-];
+// The Settings page: a side column (search, then the page list) beside one
+// content column of a fixed width, so switching pages never moves the nav or
+// changes the column's width. Pages are listed in settings-search.js.
+let pendingReveal = null; // a search result to show once its page renders
 
 export async function settingsView(ctx, section) {
   // Following a link keeps focus on it (not on the page heading).
   const link = ([id, label, ic]) => h('a', { href: `#/settings/${id}`, class: id === section ? 'active' : '', 'aria-current': id === section ? 'page' : null,
-    dataset: { focusKey: `settings-nav-${id}` }, onclick: () => { if (id !== section) focusAfterRoute(`settings-nav-${id}`); } }, h('span', { html: icons[ic] }), label);
+    dataset: { focusKey: `settings-nav-${id}`, page: id }, onclick: () => { if (id !== section) focusAfterRoute(`settings-nav-${id}`); } }, h('span', { html: icons[ic] }), label);
   const nav = h('nav', { class: 'side-nav', 'aria-label': 'Settings sections' },
     h('div', { class: 'grp' }, 'You'),
-    SECTIONS.filter((s) => !s[3]).map(link),
-    state.me.isAdmin ? [h('div', { class: 'grp' }, 'Server'), SECTIONS.filter((s) => s[3]).map(link)] : null);
-  const content = h('div');
-  const def = SECTIONS.find((s) => s[0] === section);
+    PAGES.filter((s) => !s[3]).map(link),
+    state.me.isAdmin ? [h('div', { class: 'grp' }, 'Server'), PAGES.filter((s) => s[3]).map(link)] : null);
+  const content = h('div', { class: 'settings-content' });
+  const search = searchBox({ isAdmin: state.me.isAdmin, choose: (e) => {
+    if (e.page === section) { reveal(content, e, { smooth: motionOK() }); return; }
+    pendingReveal = e;
+    location.hash = `#/settings/${e.page}`;
+  } });
+  search.input.setAttribute('aria-keyshortcuts', 'Control+K Meta+K /');
+  const def = PAGES.find((s) => s[0] === section);
   if (!def) content.appendChild(emptyState({ level: 'h2', title: 'Not found', text: 'There’s no settings page here.', actions: [h('a', { class: 'btn', href: '#/settings/preferences' }, 'Playback settings')] }));
   else if (def[3] && !state.me.isAdmin) {
     content.appendChild(emptyState({ level: 'h2', title: 'Admins only', text: 'Ask an administrator to change server settings.',
@@ -77,13 +75,34 @@ export async function settingsView(ctx, section) {
     preferences: prefsSection, account: accountSection, server: serverSection, transcoding: transcodingSection,
     metadata: metadataSection, cache: cacheSection, libraries: librariesSection, users: usersSection, devices: devicesSection, logs: logsSection, about: aboutSection,
   })[section](ctx));
+  // A search result on another page: show it once the route has put this
+  // page up (and focused its heading).
+  const want = pendingReveal;
+  pendingReveal = null;
+  if (want && want.page === section) setTimeout(() => { if (ctx.isCurrent() && content.isConnected) reveal(content, want, { smooth: false }); });
   // On narrow screens the nav is a horizontal strip: once the view is shown,
   // bring the current section into view (scrollLeft, so the page doesn't scroll).
   requestAnimationFrame(() => {
     const a = nav.querySelector('a.active');
     if (a && nav.scrollWidth > nav.clientWidth) nav.scrollLeft += a.getBoundingClientRect().left - nav.getBoundingClientRect().left - (nav.clientWidth - a.offsetWidth) / 2;
   });
-  return h('div', { class: 'page' }, h('h1', { class: 'page-title', style: { marginBottom: '22px' } }, 'Settings'), h('div', { class: 'side-layout' }, nav, content));
+  const view = h('div', { class: 'page settings' }, h('h1', { class: 'page-title' }, 'Settings'),
+    h('div', { class: 'settings-layout' }, h('aside', { class: 'settings-side' }, search.el, nav), content));
+  // While the next settings page loads, this one stays up: the nav marks the
+  // page being opened at once and the content dims (see route() in app.js).
+  view.pendingRoute = (next, id) => {
+    if (next !== 'settings') return false;
+    const to = id || 'preferences';
+    nav.querySelectorAll('a').forEach((a) => {
+      const on = a.dataset.page === to;
+      a.classList.toggle('active', on);
+      if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    });
+    content.classList.add('pending');
+    content.setAttribute('aria-busy', 'true');
+    return true;
+  };
+  return view;
 }
 
 // field wraps a control with its label and help. The label alone names the
@@ -123,7 +142,7 @@ function prefsSection() {
   const set = (k, conv = (x) => x) => (v) => { prefs.set(k, conv(v)); toast('Saved on this device', 'ok'); };
   const langs = [['', 'File default'], ...LANG_OPTIONS];
   const caps = capsSummary();
-  return h('div', { class: 'form cols' },
+  return h('div', { class: 'form' },
     h('div', { class: 'form-section' }, h('h2', null, 'Quality & method'),
       h('p', { class: 'help', style: { margin: 0 } }, 'These settings are stored in this browser, so each device can have its own (e.g. lower quality on your phone).'),
       h('div', { class: 'form-grid' },
@@ -242,6 +261,10 @@ async function resetPrefs() {
   refreshSoft();
 }
 
+// formActions puts a form's submit button and its error line side by side,
+// so an error appearing (or clearing) doesn't push the button around.
+const formActions = (btn, err) => h('div', { class: 'form-actions' }, btn, err);
+
 // formErrors gives a form an inline error line (role=alert) and helpers to
 // flag fields: fail(msg, ...inputs) marks them invalid and focuses the first.
 function formErrors(id, inputs) {
@@ -293,14 +316,13 @@ function accountSection() {
     if (await submitInline(btn, errors, () => api('/api/me/password', { method: 'PUT', body: { current: cur.value, new: n1.value } }), 'Password changed; other devices were signed out',
       (m) => (/current/i.test(m) ? [cur] : /password must/i.test(m) ? [n1] : []))) cur.value = n1.value = n2.value = '';
   };
-  return h('div', { class: 'form' }, h('form', { class: 'form-section', style: { maxWidth: '480px' }, novalidate: true, onsubmit },
+  return h('div', { class: 'form' }, h('form', { class: 'form-section', dataset: { searchSection: 'Password' }, novalidate: true, onsubmit },
     h('h2', null, `Signed in as ${state.me.name}`),
     h('p', { class: 'muted', style: { margin: 0 } }, state.me.isAdmin ? 'Administrator' : 'User'),
     // Lets password managers file the new password under this account.
     h('input', { type: 'text', name: 'username', autocomplete: 'username', value: state.me.name, hidden: true, readonly: true, tabindex: -1 }),
     field('Current password', cur), field('New password', n1, 'Use 12–72 bytes.'), field('Confirm new password', n2),
-    errors.err,
-    h('div', null, btn)));
+    formActions(btn, errors.err)));
 }
 
 // ---------- server config (shared by several sections) ----------
@@ -385,10 +407,8 @@ async function configForm(build, { check } = {}) {
     if (reset.length) toast(`Saved, but some values were out of range and were reset: ${reset.join(', ')}`, 'error');
   };
   // novalidate: Save checks the number fields itself (see invalid()).
-  // A single section doesn't use the two-column layout (it'd leave one empty).
   const parts = build({ draft, num, text, list, tg, bind, info });
-  const many = Array.isArray(parts) && parts.length > 1;
-  const form = h('form', { class: many ? 'form cols' : 'form', novalidate: true, onsubmit: onSubmit, oninput: mark, onchange: mark },
+  const form = h('form', { class: 'form', novalidate: true, onsubmit: onSubmit, oninput: mark, onchange: mark },
     parts, h('div', { class: 'save-bar' }, save, note, err));
   return form;
 }
@@ -949,8 +969,7 @@ function addUserForm() {
   return h('form', { class: 'form-section', novalidate: true, onsubmit }, h('h2', null, 'Add user'),
     h('div', { class: 'form-grid' }, field('Username', name), field('Password', pw, 'Use 12–72 bytes.')),
     toggleRow('Administrator', 'Can change settings, libraries and see stats.', false, (v) => { admin = v; }),
-    errors.err,
-    h('div', null, btn));
+    formActions(btn, errors.err));
 }
 
 // Which libraries a regular user may see and play: all of them (including
@@ -1168,7 +1187,7 @@ async function logsSection(ctx) {
   };
   await renderTasks();
   await renderLogs();
-  const page = h('div', { class: 'form', style: { maxWidth: 'none' } }, tasks,
+  const page = h('div', { class: 'form' }, tasks,
     h('div', { class: 'form-section' }, h('div', { class: 'row' }, h('h2', { class: 'grow' }, 'Log'), h('button', { class: 'btn sm', type: 'button', onclick: copy }, 'Copy log')), logBox));
   const banner = staleBanner(page);
   every(ctx, 2000, renderTasks, banner.hooks('tasks'));

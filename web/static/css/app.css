@@ -481,7 +481,6 @@ body:has(.save-bar) > .toasts { bottom: calc(80px + var(--sab)); }
 .empty-actions { justify-content: center; margin-top: 14px; }
 
 /* ---------- settings / dashboard ---------- */
-.side-layout { display: grid; grid-template-columns: 220px 1fr; gap: 30px; align-items: start; }
 .side-nav { position: sticky; top: calc(var(--top) + 20px); display: grid; gap: 2px; }
 .side-nav a { padding: 9px 12px; border-radius: 8px; color: var(--text2); font-weight: 600; display: flex; gap: 10px; align-items: center; }
 .side-nav a span { display: flex; }
@@ -490,12 +489,67 @@ body:has(.save-bar) > .toasts { bottom: calc(80px + var(--sab)); }
 .side-nav a.active { background: rgba(242,179,61,.12); color: var(--accent); }
 .side-nav .grp { color: var(--text3); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; padding: 16px 12px 6px; }
 .form { display: grid; gap: 18px; max-width: 1120px; }
-/* Settings forms: independent sections flow into two columns when there's room. */
-@media (min-width: 1200px) {
-  .form.cols { display: block; columns: 2; column-gap: 18px; }
-  .form.cols > * { break-inside: avoid; margin-bottom: 18px; }
-  .form.cols > .save-bar { column-span: all; margin-bottom: 0; }
+/* Settings: a side column (search + page list) that stays put, beside one
+   content column whose width is the same on every page, so switching pages
+   or loading one never moves anything sideways. */
+.settings .page-title { margin-bottom: 22px; }
+.settings-layout { display: grid; grid-template-columns: 232px minmax(0, 780px); gap: 40px; align-items: start; }
+.settings-side { position: sticky; top: calc(var(--top) + 20px); display: grid; gap: 14px; align-content: start; }
+.settings-side .side-nav { position: static; }
+.settings-content { min-width: 0; transition: opacity .15s; }
+/* The page being left stays up, dimmed, until the next one is ready (after a
+   short delay, so quick loads don't flicker). */
+.settings-content.pending { opacity: .5; pointer-events: none; transition-delay: .12s; }
+.settings .form { max-width: none; gap: 20px; }
+.settings .form-section { padding: 22px 24px; gap: 0; }
+.settings .form-section > h2, .settings .form-section > .row:first-child, .settings .form-section > details > summary h2 { margin-bottom: 4px; }
+.settings .form-section > p.help, .settings .form-section > p.muted { margin: 0 0 8px !important; max-width: 64ch; }
+.settings .form-section > :not(h2, p.help, .err, .field, .toggle-row, .form-grid) { margin-top: 14px; }
+.settings .form-section > h2 + :not(.field, .toggle-row, .form-grid, p.help) { margin-top: 14px; }
+/* One setting per row: label and help on the left, the control on the right,
+   with a rule between rows. Lists, pickers and editors keep the full width. */
+.settings .form-grid { display: contents; }
+.settings .form-section > .field, .settings .form-section > .form-grid > .field, .settings .form-section > .toggle-row {
+  padding: 14px 0; border-top: 1px solid var(--line); margin: 0;
 }
+.settings .form-section > h2 + :is(.field, .toggle-row, .form-grid) { margin-top: 8px; }
+.settings .form-section > .field:not(:has(textarea, .check-chips, .title-picker)),
+.settings .form-section > .form-grid > .field {
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 280px); grid-template-rows: auto; column-gap: 28px; row-gap: 2px; align-items: center;
+}
+.settings .form-section .field > span:first-child { text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--text); }
+.settings .form-section > .field:not(:has(textarea, .check-chips, .title-picker)) > span:first-child,
+.settings .form-section > .form-grid > .field > span:first-child { grid-column: 1; grid-row: 1; align-self: end; }
+.settings .form-section > .field:not(:has(textarea, .check-chips, .title-picker)) > :is(input, select),
+.settings .form-section > .form-grid > .field > :is(input, select) { grid-column: 2; grid-row: 1 / span 2; }
+.settings .form-section > .field:not(:has(textarea, .check-chips, .title-picker)) > .help,
+.settings .form-section > .form-grid > .field > .help { grid-column: 1; grid-row: 2; align-self: start; }
+.settings .form-section > .field:not(:has(.help)) > span:first-child,
+.settings .form-section > .form-grid > .field:not(:has(.help)) > span:first-child { grid-row: 1 / span 2; align-self: center; }
+.settings .form-section .tv-channel-edit .form-grid { display: grid; }
+.settings .toggle-row { gap: 28px; }
+.settings .toggle-row .lbl { gap: 2px; }
+.settings .form-section > .help:not(p) { margin-top: 10px; }
+.form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 18px !important; }
+.form-actions .err { min-height: 0; }
+.settings .save-bar { margin-top: 0; }
+/* A setting opened from search glows for a moment (no size change). */
+.setting-flash { animation: setting-flash 2s ease-out; border-radius: 8px; }
+@keyframes setting-flash { 0%, 35% { box-shadow: 0 0 0 3px rgba(242,179,61,.55); background-color: rgba(242,179,61,.10); } 100% { box-shadow: 0 0 0 3px rgba(242,179,61,0); background-color: rgba(242,179,61,0); } }
+@media (prefers-reduced-motion: reduce) { .setting-flash { animation-duration: 2s; animation-timing-function: steps(1, end); } }
+/* Settings search: results float over the page instead of pushing it down. */
+.settings-search { position: relative; }
+.settings-search input.settings-search-input { width: 100%; padding-left: 34px !important; background: var(--bg2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b91a1' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E") no-repeat 11px center; }
+.settings-search-pop { position: absolute; z-index: 30; top: calc(100% + 6px); left: 0; width: max(100%, 380px); max-width: calc(100vw - 32px); background: var(--bg3); border: 1px solid var(--line-strong); border-radius: 10px; box-shadow: var(--shadow); padding: 6px; }
+.settings-search-pop[hidden], .settings-search-list[hidden], .settings-search-empty[hidden] { display: none; }
+.settings-search-list { list-style: none; margin: 0; padding: 0; max-height: min(420px, 60vh); overflow-y: auto; }
+.settings-search-list li { display: grid; gap: 1px; padding: 8px 10px; border-radius: 7px; cursor: pointer; }
+.settings-search-list li .name { font-weight: 600; }
+.settings-search-list li .where { color: var(--text3); font-size: 12px; }
+.settings-search-list li:hover { background: rgba(255,255,255,.05); }
+.settings-search-list li[aria-selected=true] { background: rgba(242,179,61,.14); }
+.settings-search-list li[aria-selected=true] .name { color: var(--accent); }
+.settings-search-empty { margin: 0; padding: 10px; color: var(--text2); }
 .form-section { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 20px; display: grid; gap: 16px; }
 .form-section h2 { margin: 0; font-size: 16px; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 16px; align-items: start; }
@@ -707,6 +761,15 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   .side-nav::-webkit-scrollbar { display: none; }
   .side-nav a { flex: none; white-space: nowrap; }
   .form { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  /* Phones: each setting stacks (label, help, control). */
+  .settings .form-section { padding: 18px 16px; }
+  .settings .form-section > .field:not(:has(textarea, .check-chips, .title-picker)),
+  .settings .form-section > .form-grid > .field { grid-template-columns: minmax(0, 1fr); row-gap: 6px; }
+  .settings .form-section > .field > *, .settings .form-section > .form-grid > .field > * { grid-column: 1 !important; grid-row: auto !important; }
+  .settings .form-section > .field > :is(input, select), .settings .form-section > .form-grid > .field > :is(input, select) { order: 3; }
+  .settings .toggle-row { gap: 16px; }
 }
 @media (max-width: 700px) {
   .tbl.stack, .tbl.stack tbody { display: block; }
@@ -942,7 +1005,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   .shelf-head { margin: 0 16px 10px; }
   .shelf-track { padding: 4px 16px 12px; gap: 12px; scroll-padding: 0 16px; }
   .people { padding: 4px 16px 14px; }
-  .side-layout { grid-template-columns: minmax(0, 1fr); }
+  .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .settings-side { position: static; gap: 10px; }
   .side-nav { position: static; display: flex; overflow-x: auto; }
   .side-nav .grp { display: none; }
   .session { grid-template-columns: 60px 1fr; }

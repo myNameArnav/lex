@@ -317,7 +317,8 @@ export async function run(btn, fn, okMsg, { busyLabel } = {}) {
     hadFocus = document.activeElement === btn;
     btn.disabled = true;
     btn.setAttribute('aria-busy', 'true');
-    if (busyLabel) { saved = [...btn.childNodes]; btn.textContent = busyLabel; }
+    // A shorter busy label mustn't shrink the button (and move what's beside it).
+    if (busyLabel) { saved = [...btn.childNodes]; if (btn.offsetWidth) btn.style.minWidth = `${btn.offsetWidth}px`; btn.textContent = busyLabel; }
   }
   try {
     const res = await fn();
@@ -329,7 +330,7 @@ export async function run(btn, fn, okMsg, { busyLabel } = {}) {
     return false;
   } finally {
     if (btn?.isConnected) {
-      if (saved) btn.replaceChildren(...saved);
+      if (saved) { btn.replaceChildren(...saved); btn.style.minWidth = ''; }
       btn.disabled = false;
       btn.removeAttribute('aria-busy');
       // Disabling a focused button drops focus to <body>; put it back.
