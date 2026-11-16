@@ -56,12 +56,9 @@ func nextUpReference(t *testing.T, st *Store, uid int64, limit int) []int64 {
 	return out
 }
 
-func adjacentReference(t *testing.T, st *Store, ep *Item, uid int64) (prev, next int64) {
-	t.Helper()
-	eps, err := st.ShowEpisodes(ep.ShowID, uid)
-	if err != nil {
-		t.Fatal(err)
-	}
+// adjacentReference finds ep's neighbours in eps, the result of
+// ShowEpisodes for ep's show.
+func adjacentReference(eps []*Item, ep *Item) (prev, next int64) {
 	for i, e := range eps {
 		if e.ID == ep.ID {
 			if i > 0 {
@@ -231,6 +228,9 @@ func TestNextUpEdgeCases(t *testing.T) {
 func TestEpisodeQueriesMatchReference(t *testing.T) {
 	for seed := uint64(1); seed <= 8; seed++ {
 		t.Run(fmt.Sprint(seed), func(t *testing.T) {
+			// Each seed has its own database, and the comparison is slow
+			// under -race (SQLite is pure Go), so seeds run side by side.
+			t.Parallel()
 			f := newEpisodeFixture(t)
 			rng := rand.New(rand.NewPCG(seed, 99))
 			var all []int64
@@ -262,6 +262,7 @@ func TestEpisodeQueriesMatchReference(t *testing.T) {
 						t.Fatalf("user %d limit %d: next up = %v, want %v", uid, limit, got, want)
 					}
 				}
+				showEps := map[int64][]*Item{} // ShowEpisodes per show, for the reference
 				for _, id := range all {
 					ep, err := f.st.Item(id)
 					if err != nil {
@@ -271,7 +272,14 @@ func TestEpisodeQueriesMatchReference(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					wp, wn := adjacentReference(t, f.st, ep, uid)
+					eps, ok := showEps[ep.ShowID]
+					if !ok {
+						if eps, err = f.st.ShowEpisodes(ep.ShowID, uid); err != nil {
+							t.Fatal(err)
+						}
+						showEps[ep.ShowID] = eps
+					}
+					wp, wn := adjacentReference(eps, ep)
 					if idOf(prev) != wp || idOf(next) != wn {
 						t.Fatalf("episode %d: prev/next = %d/%d, want %d/%d", id, idOf(prev), idOf(next), wp, wn)
 					}

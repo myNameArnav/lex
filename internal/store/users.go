@@ -14,11 +14,21 @@ import (
 
 var ErrSetupCompleted = errors.New("setup already completed")
 
+// passwordCost is the bcrypt cost for new hashes and for the dummy hash
+// Authenticate compares against, so both paths cost the same.
+var passwordCost = bcrypt.DefaultCost
+
+// UseMinPasswordCostForTests drops the bcrypt cost to bcrypt.MinCost. Only
+// tests call it (from TestMain): at DefaultCost every user created or login
+// attempted costs tens of milliseconds, ten times that under -race. Call it
+// before any hashing happens.
+func UseMinPasswordCostForTests() { passwordCost = bcrypt.MinCost }
+
 func passwordHash(password string) (string, error) {
 	if len(password) < 12 || len(password) > 72 {
 		return "", errors.New("password must be between 12 and 72 bytes")
 	}
-	h, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	h, err := bcrypt.GenerateFromPassword([]byte(password), passwordCost)
 	return string(h), err
 }
 
@@ -212,7 +222,7 @@ func (s *Store) Authenticate(name, password string) (*User, error) {
 	err := s.db.QueryRow(`SELECT id,pass_hash FROM users WHERE name=?`, strings.TrimSpace(name)).Scan(&id, &hash)
 	if errors.Is(err, sql.ErrNoRows) {
 		dummyOnce.Do(func() {
-			h, _ := bcrypt.GenerateFromPassword([]byte("dummy-password"), bcrypt.DefaultCost)
+			h, _ := bcrypt.GenerateFromPassword([]byte("dummy-password"), passwordCost)
 			dummyHash = string(h)
 		})
 		hash = dummyHash

@@ -14,13 +14,24 @@ permissions:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+# The checks run as parallel jobs; "check" passes only when all of them do.
 jobs:
-  check:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race ./...
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
@@ -31,20 +42,47 @@ jobs:
           test -z "$(gofmt -l cmd internal web)"
           go mod tidy
           git diff --exit-code -- go.mod go.sum
-      - name: Tests and static checks
+      - name: Static checks
         run: |
-          go test -race ./...
           go vet ./...
           for file in web/static/js/*.js; do node --input-type=module --check < "$file"; done
           node --experimental-vm-modules --test web/tests/*.test.mjs
           bash -n deploy/deploy.sh
           docker compose config --quiet
           docker compose -f docker-compose.yml -f docker-compose.rpi.yml config --quiet
-      - name: Publication privacy checks
-        run: python3 scripts/check-publication.py
-      - name: Secret scanning
-        run: |
-          go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --no-banner --log-opts="HEAD" .
-          go run github.com/zricethezav/gitleaks/v8@v8.30.1 dir --redact --no-banner .
       - name: Vulnerability scanning
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+  security:
+    runs-on: ubuntu-latest
+    env:
+      # A pull request's history scans cover only its own commits: the base
+      # branch's were scanned by the pull requests that brought them in.
+      # A manual run scans the whole history.
+      BASE_REF: ${{ github.base_ref }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Publication privacy checks
+        run: python3 scripts/check-publication.py ${BASE_REF:+--since "origin/$BASE_REF"}
+      - name: Secret scanning
+        run: |
+          go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --no-banner --log-opts="${BASE_REF:+origin/$BASE_REF..}HEAD" .
+          go run github.com/zricethezav/gitleaks/v8@v8.30.1 dir --redact --no-banner .
+  check:
+    if: always()
+    needs: [test, lint, security]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All checks passed
+        run: |
+          for result in $RESULTS; do
+            test "$result" = success || { echo "Job results: $RESULTS"; exit 1; }
+          done
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}

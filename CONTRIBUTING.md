@@ -44,7 +44,9 @@ docs or the version number skip it) and checks formatting, module consistency, r
 syntax, Compose configuration, publication privacy, secrets and vulnerabilities.
 Pull requests that change the Dockerfile or its inputs also build the arm64 image. The privacy script checks working
 files and branch/tag history for private deployment addresses, home paths,
-runtime/configuration files and personal commit attribution. It complements
+runtime/configuration files and personal commit attribution; with
+`--since origin/main` it checks only your branch's commits, as CI does for a
+pull request (CI's test, lint and security checks run as parallel jobs). It complements
 manual review and secret scanning; it cannot detect every form of PII.
 
 Before a first GitHub publication, use a fresh repository, run the checks, and
