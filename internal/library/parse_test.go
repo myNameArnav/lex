@@ -79,3 +79,59 @@ func TestIsSample(t *testing.T) {
 		}
 	}
 }
+
+func TestParseEpisodeAirDate(t *testing.T) {
+	cases := []struct {
+		in   string
+		date string // "" = no air date
+		s, e int
+		ok   bool
+	}{
+		// Daily-show names.
+		{"The.Daily.Show.2024.03.05.Guest.Name.1080p.WEB.mkv", "2024-03-05", 2024, 305, true},
+		{"Show - 2024-03-05 - Title.mkv", "2024-03-05", 2024, 305, true},
+		{"The Daily Show - 2024-12-31 - Year End HDTV-720p.mkv", "2024-12-31", 2024, 1231, true},
+		{"show_2023_01_09_guest.mkv", "2023-01-09", 2023, 109, true},
+		{"Show 2023 01 09 Guest.mkv", "2023-01-09", 2023, 109, true},
+		{"Tagesschau.05.03.2024.mkv", "2024-03-05", 2024, 305, true},
+		{"Show 31-12-2023.mkv", "2023-12-31", 2023, 1231, true},
+		{"Show.12.31.2023.mkv", "2023-12-31", 2023, 1231, true}, // MM.DD.YYYY when DD.MM can't be
+		{"2024.02.29.Leap.Day.Special.mkv", "2024-02-29", 2024, 229, true},
+		{"[Group] Show 2024.03.05 [1080p].mkv", "2024-03-05", 2024, 305, true},
+		{"Jeopardy.2024.03.05.Episode.9001.mkv", "2024-03-05", 2024, 305, true},
+		// A season marker wins over a date.
+		{"Show.S29E45.2024.03.05.mkv", "", 29, 45, true},
+		{"Show.3x07.2024.03.05.mkv", "", 3, 7, true},
+		// Not dates.
+		{"Movie.2020.1080p.WEB.mkv", "", 0, 0, false},
+		{"Blade.Runner.2049.2017.1080p.BluRay.mkv", "", 0, 0, false},
+		{"2001.A.Space.Odyssey.1968.mkv", "", 0, 0, false},
+		{"Movie.2019.7.1.Atmos.mkv", "", 0, 0, false},                  // year + 7.1 audio
+		{"Movie.2019.DDP5.1.Atmos.mkv", "", 0, 0, false},               // year + DDP5.1
+		{"Movie.2020.1920x1080.mkv", "", 0, 0, false},                  // resolution
+		{"Movie.2023.13.45.mkv", "", 0, 0, false},                      // no such month/day
+		{"Show.2023.02.30.mkv", "", 0, 0, false},                       // no such day
+		{"Show.2024-03.05.mkv", "", 0, 0, false},                       // mixed separators
+		{"Movie.1999.10.12bit.mkv", "", 0, 0, false},                   // day runs into "bit"
+		{"Movie.x2024.03.05.mkv", "", 0, 0, false},                     // year runs into a letter
+		{"Movie.12024.03.05.mkv", "", 0, 0, false},                     // five-digit number
+		{"Movie.2024.03.051.mkv", "", 0, 0, false},                     // three-digit day
+		{"Old.Film.1912.03.05.mkv", "", 0, 0, false},                   // too early to be a TV air date
+		{"Future.2999.03.05.mkv", "", 0, 0, false},                     // not a 19xx/20xx year
+		{"Movie.Title.2010.10.10.mkv", "2010-10-10", 2010, 1010, true}, // a real date is a date
+	}
+	for _, c := range cases {
+		ei, ok := ParseEpisode(c.in, -1, false)
+		if ok != c.ok || ei.AirDate != c.date || (ok && (ei.Season != c.s || ei.Episode != c.e)) {
+			t.Errorf("ParseEpisode(%q) = %+v,%v want date %q %d,%d,%v", c.in, ei, ok, c.date, c.s, c.e, c.ok)
+		}
+	}
+	// A season folder doesn't override the year grouping, and absolute
+	// numbering doesn't take the date apart.
+	for _, dir := range []int{-1, 2024, 29} {
+		ei, ok := ParseEpisode("Show - 2024-03-05 - Title.mkv", dir, true)
+		if !ok || ei.AirDate != "2024-03-05" || ei.Season != 2024 || ei.Episode != 305 {
+			t.Errorf("dir %d: got %+v,%v", dir, ei, ok)
+		}
+	}
+}

@@ -3,16 +3,20 @@ package stream
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
+	"lex/internal/fsx"
 	"lex/internal/library"
 	"lex/internal/logx"
 	"lex/internal/proc"
@@ -55,7 +59,7 @@ func IsASS(codec string) bool { return codec == "ass" || codec == "ssa" }
 // GetASS returns a path to the raw ASS/SSA script for a styled subtitle
 // stream, so the browser can render it with libass (JASSUB).
 func (s *Subs) GetASS(ctx context.Context, f *store.File, idx int) (string, error) {
-	if idx >= 1000 {
+	if IsExternal(idx) {
 		for _, ext := range library.ExternalSubs(f.Path) {
 			if ext.Index == idx && IsASS(ext.Codec) {
 				return ext.ExternalPath, nil
@@ -286,20 +290,58 @@ func exists(p string) bool {
 
 // Get returns a path to a WebVTT file for the given subtitle stream.
 func (s *Subs) Get(ctx context.Context, f *store.File, idx int) (string, error) {
+	if IsExternal(idx) {
+		return s.getExternal(ctx, f, idx)
+	}
 	dst := s.cachePath(f, idx)
 	if exists(dst) {
 		return dst, nil
 	}
-	if idx >= 1000 {
-		for _, ext := range library.ExternalSubs(f.Path) {
-			if ext.Index == idx {
-				return dst, s.run(ctx, fmt.Sprintf("ext-%d-%d", f.ID, idx), func() error { return s.convertExternal(ext.ExternalPath, dst) })
-			}
-		}
-		return "", fmt.Errorf("subtitle %d not found", idx)
-	}
 	p, _, err := s.Serve(ctx, f, idx, "vtt", 24*time.Hour)
 	return p, err
+}
+
+// IsExternal reports whether idx is a sidecar subtitle's index (see
+// library.ExternalSubs); downloaded subtitles are above that range.
+func IsExternal(idx int) bool {
+	return idx >= library.ExternalSubBase && idx < store.DownloadedSubBase
+}
+
+// getExternal converts a sidecar subtitle to WebVTT. The cache is keyed on
+// the sidecar itself (path, size and mtime), so an edited, replaced or
+// renamed sidecar is converted again rather than served stale.
+func (s *Subs) getExternal(ctx context.Context, f *store.File, idx int) (string, error) {
+	for _, ext := range library.ExternalSubs(f.Path) {
+		if ext.Index != idx {
+			continue
+		}
+		dst, err := s.externalCachePath(f, &ext)
+		if err != nil {
+			return "", err
+		}
+		if exists(dst) {
+			return dst, nil
+		}
+		return dst, s.run(ctx, "ext-"+filepath.Base(dst), func() error { return s.convertExternal(ext.ExternalPath, dst) })
+	}
+	return "", fmt.Errorf("subtitle %d not found", idx)
+}
+
+// externalCachePath is where the WebVTT conversion of a sidecar goes:
+// <fileID>-<video mtime>-<index>-<sidecar key>.vtt. The leading fields match
+// the other cache entries so cleanup can treat them alike.
+func (s *Subs) externalCachePath(f *store.File, ext *store.Stream) (string, error) {
+	st, err := os.Stat(ext.ExternalPath)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(s.dir, fmt.Sprintf("%d-%d-%d-%s.vtt", f.ID, f.Mtime, ext.Index, sidecarKey(ext.ExternalPath, st))), nil
+}
+
+// sidecarKey is a short hash identifying one version of a sidecar file.
+func sidecarKey(path string, st os.FileInfo) string {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%d", path, st.Size(), st.ModTime().UnixNano())))
+	return hex.EncodeToString(h[:6])
 }
 
 // Prefetch starts extracting embedded text subtitles in the background so
@@ -561,14 +603,109 @@ func (s *Subs) convertExternal(src, dst string) error {
 	return commit(tmp, dst)
 }
 
-// Clear removes all cached subtitles.
+// downloadedDir holds subtitles fetched from online providers. They're
+// user data (listed as tracks of the file), not a cache.
+const downloadedDir = "downloaded"
+
+// Clear removes all cached subtitles and extracted fonts. Downloaded
+// subtitles stay.
 func (s *Subs) Clear() error {
-	ents, err := os.ReadDir(s.dir)
-	if err != nil {
+	if _, err := os.ReadDir(s.dir); err != nil {
 		return err
 	}
-	for _, e := range ents {
-		os.Remove(filepath.Join(s.dir, e.Name()))
+	var first error
+	for _, e := range fsx.List(s.dir) {
+		if e.Name == downloadedDir {
+			continue
+		}
+		if err := fsx.Remove(s.dir, e.Name); err != nil && first == nil {
+			first = err
+		}
 	}
-	return nil
+	return first
+}
+
+// isCacheName reports whether name is a subtitle conversion or extraction
+// (finished or in progress) in the top-level cache folder.
+func isCacheName(name string) bool {
+	for _, ext := range []string{".vtt", ".ass", ".tmp"} {
+		if strings.HasSuffix(name, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// legacyExternal reports whether name is a sidecar conversion cached under
+// the old positional key "<id>-<mtime>-<index>.vtt" (now keyed on the
+// sidecar too, see externalCachePath), which nothing reads any more.
+func legacyExternal(name string) bool {
+	parts := strings.Split(strings.TrimSuffix(name, ".vtt"), "-")
+	if len(parts) != 3 || !strings.HasSuffix(name, ".vtt") {
+		return false
+	}
+	idx, err := strconv.Atoi(parts[2])
+	return err == nil && IsExternal(idx)
+}
+
+// ForgetFile removes the cached subtitles and fonts of every version of a
+// file (it was removed from the library or replaced). Downloaded subtitles
+// belong to the file's database row and are handled by Sweep.
+func (s *Subs) ForgetFile(fileID int64) {
+	for _, e := range fsx.List(s.dir) {
+		if v, ok := fsx.ParseVersion(e.Name); ok && v.ID == fileID && !e.Dir && isCacheName(e.Name) {
+			fsx.Remove(s.dir, e.Name)
+		}
+	}
+	fonts := filepath.Join(s.dir, "fonts")
+	for _, e := range fsx.List(fonts) {
+		if v, ok := fsx.ParseVersion(e.Name); ok && v.ID == fileID && e.Dir {
+			fsx.Remove(fonts, e.Name)
+		}
+	}
+}
+
+// Sweep removes cached subtitles and font folders whose file is gone or has
+// changed since (current maps file ids to mtimes), and downloaded subtitle
+// files no database row points at (downloads are the recorded paths;
+// they're matched by file name, so a data folder that moved since the
+// download never makes a recorded subtitle look orphaned). Entries modified after cutoff are kept: they may belong to
+// work that started after current was read.
+func (s *Subs) Sweep(current map[int64]int64, downloads map[string]bool, cutoff time.Time) (removed int) {
+	stale := func(name string) bool {
+		v, ok := fsx.ParseVersion(name)
+		if !ok {
+			return false
+		}
+		m, live := current[v.ID]
+		return !live || m != v.Mtime
+	}
+	for _, e := range fsx.List(s.dir) {
+		if !e.Dir && isCacheName(e.Name) && !e.ModTime.After(cutoff) && (stale(e.Name) || legacyExternal(e.Name)) && fsx.Remove(s.dir, e.Name) == nil {
+			removed++
+		}
+	}
+	fonts := filepath.Join(s.dir, "fonts")
+	for _, e := range fsx.List(fonts) {
+		if e.Dir && !e.ModTime.After(cutoff) && stale(e.Name) && fsx.Remove(fonts, e.Name) == nil {
+			removed++
+		}
+	}
+	recorded := map[string]bool{}
+	for p := range downloads {
+		recorded[filepath.Base(p)] = true
+	}
+	dl := filepath.Join(s.dir, downloadedDir)
+	for _, e := range fsx.List(dl) {
+		if _, ok := fsx.ParseVersion(e.Name); !ok || e.Dir || e.ModTime.After(cutoff) {
+			continue
+		}
+		if !strings.HasSuffix(e.Name, ".srt") && !strings.HasSuffix(e.Name, ".tmp") {
+			continue
+		}
+		if !recorded[strings.TrimPrefix(e.Name, ".")] && fsx.Remove(dl, e.Name) == nil {
+			removed++
+		}
+	}
+	return removed
 }

@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,7 +9,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"lex/internal/library"
 	"lex/internal/logx"
 	"lex/internal/store"
 )
@@ -181,5 +184,68 @@ func TestForgetOnlyMatchingIndex(t *testing.T) {
 	}
 	if want := []string{"5-1-12001.vtt", "5-1-2002.vtt", "55-1-2001.vtt"}; !slices.Equal(left, want) {
 		t.Fatalf("left %v, want %v", left, want)
+	}
+}
+
+// Sidecar conversions are keyed on the sidecar, so editing one or adding
+// another next to it never serves the wrong or stale text.
+func TestExternalSubsFollowSidecarChanges(t *testing.T) {
+	media := t.TempDir()
+	video := filepath.Join(media, "Movie.mkv")
+	os.WriteFile(video, nil, 0o644)
+	write := func(name, text string, mtime time.Time) {
+		t.Helper()
+		p := filepath.Join(media, name)
+		if err := os.WriteFile(p, []byte("WEBVTT\n\n00:01.000 --> 00:02.000\n"+text+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		os.Chtimes(p, mtime, mtime)
+	}
+	t0 := time.Now().Add(-time.Hour)
+	write("Movie.fr.vtt", "Bonjour", t0)
+	s := NewSubs(t.TempDir(), "ffmpeg", "ffprobe", logx.New(10, false))
+	f := &store.File{ID: 3, Mtime: 7, Path: video}
+	indexOf := func(name string) int {
+		for _, e := range library.ExternalSubs(video) {
+			if filepath.Base(e.ExternalPath) == name {
+				return e.Index
+			}
+		}
+		t.Fatalf("%s not listed", name)
+		return 0
+	}
+	text := func(idx int) string {
+		t.Helper()
+		p, err := s.Get(t.Context(), f, idx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := os.ReadFile(p)
+		return string(b)
+	}
+	fr := indexOf("Movie.fr.vtt")
+	if got := text(fr); !strings.Contains(got, "Bonjour") {
+		t.Fatalf("fr = %q", got)
+	}
+	// A new sidecar that sorts first.
+	write("Movie.de.vtt", "Hallo", t0)
+	if indexOf("Movie.fr.vtt") != fr {
+		t.Fatal("adding a sidecar changed the French index")
+	}
+	if got := text(indexOf("Movie.de.vtt")); !strings.Contains(got, "Hallo") {
+		t.Fatalf("de = %q", got)
+	}
+	if got := text(fr); !strings.Contains(got, "Bonjour") {
+		t.Fatalf("fr after adding de = %q", got)
+	}
+	// Edited in place.
+	write("Movie.fr.vtt", "Salut", t0.Add(time.Minute))
+	if got := text(fr); !strings.Contains(got, "Salut") {
+		t.Fatalf("fr after edit = %q", got)
+	}
+	// A conversion cached under the old positional key is ignored.
+	os.WriteFile(filepath.Join(s.dir, fmt.Sprintf("3-7-%d.vtt", fr)), []byte("WEBVTT\n\nstale"), 0o644)
+	if got := text(fr); strings.Contains(got, "stale") {
+		t.Fatal("served a conversion cached under the old key")
 	}
 }

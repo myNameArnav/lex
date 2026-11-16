@@ -11,8 +11,9 @@ RemainAfterExit=yes
 ExecStart=/bin/sh -c 'modprobe rpi_hevc_dec || true; for i in 1 2 3; do [ -e /dev/video11 ] && exit 0; modprobe -r bcm2835_codec; sleep 1; modprobe bcm2835_codec; sleep 2; done; exit 0'
 # Quadlet generates lex.service very early in boot, before these drivers
 # exist, and drops the optional (-) devices it can't find, so after a reboot
-# Lex would run without hardware video. Regenerate it now that they're here.
-ExecStartPost=/bin/sh -c 'if [ -e /dev/video10 ] && ! systemctl show -p ExecStart lex.service | grep -q /dev/video10; then systemctl daemon-reload; fi'
+# Lex would run without hardware video. Regenerate it now that they're here
+# (if any codec or media node is missing from the generated unit).
+ExecStartPost=/bin/sh -c 'x=$(systemctl show -p ExecStart lex.service); for d in /dev/video10 /dev/video19 /dev/media0 /dev/media1; do if [ -e $d ] && ! echo "$x" | grep -q $d; then systemctl daemon-reload; exit 0; fi; done'
 
 [Install]
 WantedBy=multi-user.target

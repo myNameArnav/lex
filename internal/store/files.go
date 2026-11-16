@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 )
 
 // Stream describes one elementary stream of a media file.
@@ -218,8 +219,52 @@ func (s *Store) InsertFile(f *File) (int64, error) {
 
 // MarkFileChanged records a new size/mtime and queues a re-probe.
 func (s *Store) MarkFileChanged(id, size, mtime int64) error {
-	_, err := s.db.Exec(`UPDATE files SET size=?,mtime=?,probed_at=0,probe_attempts=0 WHERE id=?`, size, mtime, id)
-	return err
+	return s.Tx(context.Background(), func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`UPDATE files SET size=?,mtime=?,probed_at=0,probe_attempts=0 WHERE id=?`, size, mtime, id); err != nil {
+			return err
+		}
+		// Artwork URLs carry the item's updated_at: bumping it makes clients
+		// fetch the thumbnail again, which is regenerated from the new file.
+		_, err := tx.Exec(`UPDATE items SET updated_at=? WHERE id=(SELECT item_id FROM files WHERE id=?)`, time.Now().Unix(), id)
+		return err
+	})
+}
+
+// FileMtimes maps every file id to its mtime (what derived files such as
+// subtitle conversions and seek previews are keyed on).
+func (s *Store) FileMtimes() (map[int64]int64, error) {
+	rows, err := s.db.Query(`SELECT id,mtime FROM files`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]int64{}
+	for rows.Next() {
+		var id, mtime int64
+		if err := rows.Scan(&id, &mtime); err != nil {
+			return nil, err
+		}
+		out[id] = mtime
+	}
+	return out, rows.Err()
+}
+
+// ItemIDs returns the ids of all items.
+func (s *Store) ItemIDs() (map[int64]bool, error) {
+	rows, err := s.db.Query(`SELECT id FROM items`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }
 
 // MoveFile re-points a file at another item (its name or folder now parses
@@ -285,14 +330,15 @@ func carryOver(tx *sql.Tx, fileID, oldItem, newItem int64) error {
 		q    string
 		args []any
 	}{
-		{`INSERT INTO user_data(user_id,item_id,position,played,play_count,last_played,favorite)
-			SELECT user_id,?,position,played,play_count,last_played,favorite FROM user_data WHERE item_id=?
+		{`INSERT INTO user_data(user_id,item_id,position,played,play_count,last_played,favorite,favorited_at)
+			SELECT user_id,?,position,played,play_count,last_played,favorite,favorited_at FROM user_data WHERE item_id=?
 			ON CONFLICT(user_id,item_id) DO UPDATE SET
 				position=CASE WHEN excluded.last_played>user_data.last_played THEN excluded.position ELSE user_data.position END,
 				last_played=MAX(user_data.last_played,excluded.last_played),
 				played=MAX(user_data.played,excluded.played),
 				play_count=MAX(user_data.play_count,excluded.play_count),
-				favorite=MAX(user_data.favorite,excluded.favorite)`, []any{newItem, oldItem}},
+				favorite=MAX(user_data.favorite,excluded.favorite),
+				favorited_at=MAX(user_data.favorited_at,excluded.favorited_at)`, []any{newItem, oldItem}},
 		{`INSERT OR IGNORE INTO segments(item_id,kind,start,end,source) SELECT ?,kind,start,end,source FROM segments WHERE item_id=?`, []any{newItem, oldItem}},
 		{`UPDATE history SET item_id=? WHERE item_id=? AND (file_id=? OR NOT EXISTS (SELECT 1 FROM files WHERE item_id=?))`, []any{newItem, oldItem, fileID, oldItem}},
 		{`UPDATE items SET title=o.title,sort_title=o.sort_title,original_title=o.original_title,year=o.year,overview=o.overview,tagline=o.tagline,

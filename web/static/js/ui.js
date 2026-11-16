@@ -134,8 +134,18 @@ export function streamLabel(s) {
   return s.codec;
 }
 
-// "S1 E3", or "S1 E3–4" for a multi-episode file.
+// datedEpisode: a date-named daily-show episode its provider hasn't placed
+// yet. The scanner groups those by year (season) and numbers them by date
+// (episode = MMDD), which means nothing to show as "S2024 E305".
+export function datedEpisode(it) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(it?.premiere || '');
+  return !!m && it.season === +m[1] && it.episode === +m[2] * 100 + +m[3];
+}
+
+// "S1 E3", or "S1 E3–4" for a multi-episode file; the air date for an
+// unplaced daily-show episode.
 export function fmtEpisode(it) {
+  if (datedEpisode(it)) return fmtAirDate(it.premiere);
   if (it?.episode == null) return it?.season != null ? `S${it.season}` : '';
   return `S${it.season ?? 0} E${it.episode}${it.episodeEnd ? `–${it.episodeEnd}` : ''}`;
 }
@@ -335,7 +345,8 @@ export async function run(btn, fn, okMsg, { busyLabel } = {}) {
     hadFocus = document.activeElement === btn;
     btn.disabled = true;
     btn.setAttribute('aria-busy', 'true');
-    if (busyLabel) { saved = [...btn.childNodes]; btn.textContent = busyLabel; }
+    // A shorter busy label mustn't shrink the button (and move what's beside it).
+    if (busyLabel) { saved = [...btn.childNodes]; if (btn.offsetWidth) btn.style.minWidth = `${btn.offsetWidth}px`; btn.textContent = busyLabel; }
   }
   try {
     const res = await fn();
@@ -347,7 +358,7 @@ export async function run(btn, fn, okMsg, { busyLabel } = {}) {
     return false;
   } finally {
     if (btn?.isConnected) {
-      if (saved) btn.replaceChildren(...saved);
+      if (saved) { btn.replaceChildren(...saved); btn.style.minWidth = ''; }
       btn.disabled = false;
       btn.removeAttribute('aria-busy');
       // Disabling a focused button drops focus to <body>; put it back.

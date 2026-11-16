@@ -620,6 +620,32 @@ func TestRestrictedUserBrowsePagesHideOtherLibraries(t *testing.T) {
 	if ids := itemIDs(wl.Items); !slices.Equal(ids, []int64{familyMovie}) {
 		t.Errorf("watchlist: %v", ids)
 	}
+	// Favorites made before the restriction stay hidden too, on the page
+	// and on Home.
+	for _, id := range []int64{privateMovie, familyMovie, privateShow} {
+		if err := st.SetFavorite(f.kidID, id, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var favs struct {
+		Items []*store.Item `json:"items"`
+	}
+	f.getJSON(t, f.kid, "/api/favorites", &favs)
+	if ids := itemIDs(favs.Items); !slices.Equal(ids, []int64{familyMovie}) {
+		t.Errorf("favorites: %v", ids)
+	}
+	var home struct {
+		Rows []struct {
+			ID    string        `json:"id"`
+			Items []*store.Item `json:"items"`
+		} `json:"rows"`
+	}
+	f.getJSON(t, f.kid, "/api/home", &home)
+	for _, row := range home.Rows {
+		if ids := itemIDs(row.Items); (row.ID == "favorites" || row.ID == "watchlist") && !slices.Equal(ids, []int64{familyMovie}) {
+			t.Errorf("home %s row: %v", row.ID, ids)
+		}
+	}
 	var coll struct {
 		Items []*store.Item `json:"items"`
 	}

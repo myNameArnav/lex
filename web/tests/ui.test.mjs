@@ -74,6 +74,20 @@ test('fmtEpisode formats single and multi-episode codes', async () => {
   assert.equal(ui.fmtEpisode({}), '');
 });
 
+test('fmtEpisode shows the air date of an unplaced daily-show episode', async () => {
+  const { ui } = await loadUI();
+  const it = { season: 2024, episode: 305, premiere: '2024-03-05' };
+  assert.equal(ui.datedEpisode(it), true);
+  assert.equal(ui.fmtEpisode(it), ui.fmtAirDate('2024-03-05'));
+  assert.notEqual(ui.fmtEpisode(it), 'S2024 E305');
+  // Placed in its provider's season, it is numbered like any other.
+  assert.equal(ui.datedEpisode({ season: 29, episode: 45, premiere: '2024-03-05' }), false);
+  assert.equal(ui.fmtEpisode({ season: 29, episode: 45, premiere: '2024-03-05' }), 'S29 E45');
+  // A provider that numbers seasons by year isn't mistaken for one.
+  assert.equal(ui.fmtEpisode({ season: 2024, episode: 12, premiere: '2024-03-05' }), 'S2024 E12');
+  assert.equal(ui.datedEpisode({}), false);
+});
+
 test('streamLabel normalises codecs and names tracks once', async () => {
   const { ui } = await loadUI();
   assert.equal(ui.streamLabel({ type: 'subtitle', language: 'eng', codec: 'srt', forced: true, external: true, textSub: true }), 'English · Forced · SRT · External');

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"lex/internal/store"
+	"lex/internal/stream"
 	"lex/internal/sysstats"
 )
 
@@ -63,11 +65,67 @@ func (s *Server) adminInfo(w http.ResponseWriter, r *http.Request) {
 		"go":         runtime.Version(),
 		"dataDir":    s.DataDir,
 		"ffmpeg":     s.FF,
+		"hwFallback": stream.LastHWFallback(),
 		"imageCache": sysstats.DirSize(s.Images.Dir),
 		"subsCache":  sysstats.DirSize(filepath.Join(s.DataDir, "subs")),
+		"trickplay":  trickplaySize(s),
 		"dbSize":     fileSize(filepath.Join(s.DataDir, "lex.db")) + fileSize(filepath.Join(s.DataDir, "lex.db-wal")),
 		"webhookUrl": "/api/webhook/scan?token=" + cfg.WebhookToken,
+		// Containers (e.g. Radarr under Docker/Podman) often can't reach the
+		// address the admin's browser uses, such as a Tailscale serve name
+		// that only listens on tailscale0, so also offer direct LAN URLs.
+		"webhookLanUrls": lanBases(s.ListenAddr, interfaceAddrs()),
 	})
+}
+
+func interfaceAddrs() []string {
+	addrs, _ := net.InterfaceAddrs()
+	out := make([]string, 0, len(addrs))
+	for _, a := range addrs {
+		out = append(out, a.String())
+	}
+	return out
+}
+
+// lanBases returns "http://ip:port" for each private IPv4 address the server
+// listens on, given the listen address and the host's interface addresses
+// (CIDR strings). A loopback-only listener is unreachable from elsewhere, so
+// it gets none.
+func lanBases(listen string, ifaceAddrs []string) []string {
+	out := []string{}
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil || port == "" {
+		return out
+	}
+	if host != "" {
+		ip := net.ParseIP(host)
+		if ip == nil || ip.IsLoopback() {
+			return out
+		}
+		if !ip.IsUnspecified() {
+			if ip4 := ip.To4(); ip4 != nil && ip4.IsPrivate() {
+				out = append(out, "http://"+net.JoinHostPort(ip4.String(), port))
+			}
+			return out
+		}
+	}
+	for _, a := range ifaceAddrs {
+		ip, _, err := net.ParseCIDR(a)
+		if err != nil {
+			continue
+		}
+		if ip4 := ip.To4(); ip4 != nil && ip4.IsPrivate() {
+			out = append(out, "http://"+net.JoinHostPort(ip4.String(), port))
+		}
+	}
+	return out
+}
+
+func trickplaySize(s *Server) int64 {
+	if s.Trick == nil {
+		return 0
+	}
+	return sysstats.DirSize(s.Trick.Dir())
 }
 
 func fileSize(p string) int64 {

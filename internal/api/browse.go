@@ -48,6 +48,19 @@ func (s *Server) watchlist(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"items": nonNilItems(items)})
 }
 
+// favorites lists the user's favorite movies and shows across the libraries
+// they may see.
+func (s *Server) favorites(w http.ResponseWriter, r *http.Request) {
+	uid := userOf(r).ID
+	items, err := s.St.Favorites(uid, 0)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	s.withWatchlist(uid, items...)
+	writeJSON(w, map[string]any{"items": nonNilItems(items)})
+}
+
 func (s *Server) collection(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r, "id")
 	if err != nil {

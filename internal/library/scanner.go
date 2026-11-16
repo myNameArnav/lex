@@ -43,10 +43,11 @@ type Scanner struct {
 	OnDone func()
 	// OnProbed is invoked after each file is probed.
 	OnProbed func(f *store.File, info *store.MediaInfo)
-	// OnFileChanged is invoked with the id of a file that was removed from
-	// the library or whose contents changed, so copies derived from it (the
-	// SSD cache) can be dropped.
-	OnFileChanged func(id int64)
+	// OnFileChanged is invoked with a file that was removed from the
+	// library or whose contents changed (as it was before the change), so
+	// copies derived from it (the SSD cache, subtitles, seek previews, the
+	// item's thumbnail) can be dropped.
+	OnFileChanged func(f *store.File)
 
 	run    sync.Mutex // one scan at a time
 	mu     sync.Mutex
@@ -148,6 +149,7 @@ type target struct {
 	season    int
 	episode   int
 	epEnd     int
+	airDate   string // date-named episode (YYYY-MM-DD)
 }
 
 func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
@@ -277,7 +279,7 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 		if f := byPath[e.path]; f != nil {
 			if f.Size != e.size || f.Mtime != e.mtime {
 				s.st.MarkFileChanged(f.ID, e.size, e.mtime)
-				s.fileChanged(f.ID)
+				s.fileChanged(f)
 				s.update(func(st *Status) { st.Changed++ })
 			}
 			if f.ItemID != itemID {
@@ -331,7 +333,7 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 				s.log.Errorf("scan: remove %s: %v", p, err)
 				continue
 			}
-			s.fileChanged(f.ID)
+			s.fileChanged(f)
 			removed++
 		}
 	}
@@ -342,9 +344,9 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 	return s.st.SetLibraryScanned(lib.ID)
 }
 
-func (s *Scanner) fileChanged(id int64) {
+func (s *Scanner) fileChanged(f *store.File) {
 	if s.OnFileChanged != nil {
-		s.OnFileChanged(id)
+		s.OnFileChanged(f)
 	}
 }
 
@@ -411,7 +413,22 @@ func (s *Scanner) ensureItem(lib store.Library, t target, cache map[string]int64
 	if err != nil {
 		return 0, err
 	}
-	seasonKey := fmt.Sprintf("%s|S%d", t.showKey, t.season)
+	if t.airDate != "" {
+		// The metadata agent moves date-named episodes out of their year
+		// into the provider's season; once that happened the episode is
+		// found by its key, and its year season isn't made again.
+		ck := "episode\x00" + t.key
+		if id, ok := cache[ck]; ok {
+			return id, nil
+		}
+		if it, err := s.st.FindItemByPath(lib.ID, "episode", t.key); err == nil {
+			cache[ck] = it.ID
+			return it.ID, nil
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return 0, err
+		}
+	}
+	seasonKey := store.SeasonKey(t.showKey, t.season)
 	seasonID, err := get("season", seasonKey, func() *store.Item {
 		title := fmt.Sprintf("Season %d", t.season)
 		if t.season == 0 {
@@ -423,7 +440,7 @@ func (s *Scanner) ensureItem(lib store.Library, t target, cache map[string]int64
 		return 0, err
 	}
 	return get("episode", t.key, func() *store.Item {
-		return &store.Item{Title: t.title, ParentID: seasonID, ShowID: showID, Season: t.season, Episode: t.episode, EpisodeEnd: t.epEnd}
+		return &store.Item{Title: t.title, ParentID: seasonID, ShowID: showID, Season: t.season, Episode: t.episode, EpisodeEnd: t.epEnd, Premiere: t.airDate}
 	}, nil)
 }
 
@@ -450,7 +467,7 @@ func classify(lib store.Library, e entry, oneMovie map[string]*movieDir, hints *
 	case "mixed":
 		if dirSeason >= 0 {
 			isEpisode = true
-		} else if _, ok := ParseEpisode(base, -1, false); ok && reEpMarker.MatchString(stem) {
+		} else if ei, ok := ParseEpisode(base, -1, false); ok && (ei.AirDate != "" || reEpMarker.MatchString(stem)) {
 			isEpisode = true
 		}
 	}
@@ -459,6 +476,7 @@ func classify(lib store.Library, e entry, oneMovie map[string]*movieDir, hints *
 	}
 
 	t := target{kind: "episode"}
+	ei, ok := ParseEpisode(base, dirSeason, true)
 	if len(dirs) > 0 {
 		showDir := filepath.Join(e.root, dirs[0])
 		t.showKey = showDir
@@ -469,6 +487,8 @@ func classify(lib store.Library, e entry, oneMovie map[string]*movieDir, hints *
 		name := stem
 		if loc := reEpMarker.FindStringIndex(stem); loc != nil && loc[0] > 0 {
 			name = stem[:loc[0]]
+		} else if _, start, _, ok := airDate(stem); ok && ei.AirDate != "" && start > 0 {
+			name = stem[:start]
 		}
 		t.showTitle, t.showYear = CleanTitle(name)
 		t.showKey = e.root + "#" + Normalize(t.showTitle)
@@ -481,8 +501,15 @@ func classify(lib store.Library, e entry, oneMovie map[string]*movieDir, hints *
 	}
 	t.showHint.Title, t.showHint.Year = t.showTitle, t.showYear
 
-	ei, ok := ParseEpisode(base, dirSeason, true)
-	if ok {
+	switch {
+	case ok && ei.AirDate != "":
+		t.season, t.episode, t.airDate = ei.Season, ei.Episode, ei.AirDate
+		t.key = t.showKey + "|D" + ei.AirDate
+		t.title = datedEpisodeTitle(stem)
+		if t.title == "" {
+			t.title = ei.AirDate
+		}
+	case ok:
 		t.season, t.episode, t.epEnd = ei.Season, ei.Episode, ei.EpisodeEnd
 		if dirSeason >= 0 && !ei.HasSeason {
 			t.season = dirSeason
@@ -492,7 +519,7 @@ func classify(lib store.Library, e entry, oneMovie map[string]*movieDir, hints *
 		if t.title == "" {
 			t.title = fmt.Sprintf("Episode %d", t.episode)
 		}
-	} else {
+	default:
 		t.season = max(dirSeason, 0)
 		t.key = e.path
 		t.title, _ = CleanTitle(stem)
@@ -506,7 +533,22 @@ func episodeTitle(stem string) string {
 	if loc == nil {
 		return ""
 	}
-	rest := strings.TrimLeft(stem[loc[1]:], " -._")
+	return titleAfter(stem[loc[1]:])
+}
+
+// datedEpisodeTitle pulls "Guest Name" out of
+// "The.Daily.Show.2024.03.05.Guest.Name.1080p.WEB".
+func datedEpisodeTitle(stem string) string {
+	_, _, end, ok := airDate(stem)
+	if !ok {
+		return ""
+	}
+	return titleAfter(stem[end:])
+}
+
+// titleAfter cleans the part of a name after its episode marker.
+func titleAfter(rest string) string {
+	rest = strings.TrimLeft(rest, " -._")
 	if rest == "" {
 		return ""
 	}

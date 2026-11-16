@@ -16,9 +16,11 @@ import (
 	"sync"
 	"time"
 
+	"lex/internal/fsx"
 	"lex/internal/logx"
 	"lex/internal/proc"
 	"lex/internal/store"
+	"lex/internal/stream"
 )
 
 const (
@@ -72,6 +74,42 @@ func New(st *store.Store, log *logx.Logger, ffmpeg, dir string) *Generator {
 
 func (g *Generator) fileDir(f *store.File) string {
 	return filepath.Join(g.dir, fmt.Sprintf("%d-%d", f.ID, f.Mtime))
+}
+
+// Dir is the folder previews are stored in.
+func (g *Generator) Dir() string { return g.dir }
+
+// Forget removes the previews of every version of a file (it was removed
+// from the library or replaced).
+func (g *Generator) Forget(fileID int64) {
+	for _, e := range fsx.List(g.dir) {
+		if v, ok := fsx.ParseVersion(e.Name); ok && v.ID == fileID && e.Dir {
+			fsx.Remove(g.dir, e.Name)
+		}
+	}
+	g.mu.Lock()
+	delete(g.failed, fileID)
+	g.mu.Unlock()
+}
+
+// Sweep removes preview folders whose file is gone or has changed since
+// (keyed "<id>-<mtime>", plus ".tmp" while generating). current maps file
+// ids to their mtime; entries modified after cutoff are kept, so a file
+// added after current was read is never mistaken for an orphan.
+func (g *Generator) Sweep(current map[int64]int64, cutoff time.Time) (removed int) {
+	for _, e := range fsx.List(g.dir) {
+		v, ok := fsx.ParseVersion(e.Name)
+		if !ok || !e.Dir || e.ModTime.After(cutoff) {
+			continue
+		}
+		if m, live := current[v.ID]; live && m == v.Mtime {
+			continue
+		}
+		if fsx.Remove(g.dir, e.Name) == nil {
+			removed++
+		}
+	}
+	return removed
 }
 
 // Meta returns the previews for a file, if generated.
@@ -282,6 +320,7 @@ func (g *Generator) generate(f *store.File) error {
 	for {
 		select {
 		case err := <-done:
+			stream.CheckHWFallback("trickplay", args, stderr.String())
 			if err != nil {
 				os.RemoveAll(tmp)
 				return fmt.Errorf("%v %s", err, strings.TrimSpace(stderr.String()))

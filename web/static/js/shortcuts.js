@@ -11,8 +11,8 @@ export const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
 
 const SECTIONS = [
   ['General', [
-    [[MOD, 'K'], 'Search', '+'],
-    [['/'], 'Search'],
+    [[MOD, 'K'], 'Search (in Settings: search settings; press again for the app search)', '+'],
+    [['/'], 'Search (in Settings: search settings)'],
     [['?'], 'Show keyboard shortcuts'],
     [['Esc'], 'Close a dialog or menu, clear the search box'],
   ]],
@@ -20,6 +20,8 @@ const SECTIONS = [
     [['g', 'h'], 'Home', 'then'],
     [['g', '1 – 9'], 'Library 1 to 9 (in menu order)', 'then'],
     [['g', 't'], 'Live TV (when it is on)', 'then'],
+    [['g', 'w'], 'Watchlist', 'then'],
+    [['g', 'f'], 'Favorites', 'then'],
     [['g', 's'], 'Settings', 'then'],
     [['g', 'd'], 'Dashboard (admins)', 'then'],
   ]],
@@ -79,7 +81,8 @@ export function installShortcuts(nav) {
     if (Date.now() - gAt < 1200) {
       gAt = 0;
       const libs = nav.libraries();
-      const target = k === 'h' ? '#/' : k === 't' && nav.liveTv?.() ? '#/tv' : k === 's' ? '#/settings' : k === 'd' ? '#/dashboard'
+      const target = k === 'h' ? '#/' : k === 't' && nav.liveTv?.() ? '#/tv' : k === 'w' ? '#/watchlist' : k === 'f' ? '#/favorites'
+        : k === 's' ? '#/settings' : k === 'd' ? '#/dashboard'
         : /^[1-9]$/.test(k) && libs[+k - 1] ? `#/library/${libs[+k - 1].id}` : null;
       if (target) { e.preventDefault(); nav.go(target); }
       return;

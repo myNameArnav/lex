@@ -222,9 +222,9 @@ func (s *Store) InsertItem(it *Item) (int64, error) {
 		it.AddedAt = now()
 	}
 	it.UpdatedAt = now()
-	res, err := s.db.Exec(`INSERT INTO items(library_id,kind,parent_id,show_id,title,sort_title,year,season,episode,episode_end,path,added_at,updated_at,meta_status,hint)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		it.LibraryID, it.Kind, nullID(it.ParentID), it.ShowID, it.Title, it.SortTitle, it.Year, it.Season, it.Episode, it.EpisodeEnd, it.Path, it.AddedAt, it.UpdatedAt, it.MetaStatus, jsonString(it.Hint))
+	res, err := s.db.Exec(`INSERT INTO items(library_id,kind,parent_id,show_id,title,sort_title,year,season,episode,episode_end,path,added_at,updated_at,meta_status,hint,premiere)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		it.LibraryID, it.Kind, nullID(it.ParentID), it.ShowID, it.Title, it.SortTitle, it.Year, it.Season, it.Episode, it.EpisodeEnd, it.Path, it.AddedAt, it.UpdatedAt, it.MetaStatus, jsonString(it.Hint), it.Premiere)
 	if err != nil {
 		return 0, err
 	}
@@ -325,6 +325,65 @@ func (s *Store) FindItemByPath(libID int64, kind, path string) (*Item, error) {
 		return nil, ErrNotFound
 	}
 	return it, err
+}
+
+// SeasonKey is the path key of a show's season item.
+func SeasonKey(showKey string, season int) string {
+	return fmt.Sprintf("%s|S%d", showKey, season)
+}
+
+// PlaceEpisode moves an episode to another season and number of its show,
+// making the season if the show doesn't have it, and dropping the season
+// it leaves if that is now empty. Date-named episodes of daily shows are
+// grouped by year until their provider's episode list places them. It
+// reports false, changing nothing, if the show already has an episode at
+// that place.
+func (s *Store) PlaceEpisode(epID int64, season, episode int) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var libID, showID, oldSeason int64
+	var showPath string
+	err = tx.QueryRow(`SELECT e.library_id, e.show_id, COALESCE(e.parent_id,0), sh.path FROM items e JOIN items sh ON sh.id=e.show_id
+		WHERE e.id=? AND e.kind='episode'`, epID).Scan(&libID, &showID, &oldSeason, &showPath)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	} else if err != nil {
+		return false, err
+	}
+	var taken int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM items WHERE show_id=? AND kind='episode' AND season=? AND episode=? AND id<>?`,
+		showID, season, episode, epID).Scan(&taken); err != nil || taken > 0 {
+		return false, err
+	}
+	var seasonID int64
+	err = tx.QueryRow(`SELECT id FROM items WHERE parent_id=? AND kind='season' AND season=?`, showID, season).Scan(&seasonID)
+	if errors.Is(err, sql.ErrNoRows) {
+		title := fmt.Sprintf("Season %d", season)
+		if season == 0 {
+			title = "Specials"
+		}
+		t := now()
+		res, err := tx.Exec(`INSERT INTO items(library_id,kind,parent_id,show_id,title,sort_title,season,path,added_at,updated_at,meta_status)
+			VALUES(?,'season',?,?,?,?,?,?,?,?,?)`, libID, showID, showID, title, SortTitle(title), season, SeasonKey(showPath, season), t, t, MetaPending)
+		if err != nil {
+			return false, err
+		}
+		seasonID, _ = res.LastInsertId()
+	} else if err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(`UPDATE items SET parent_id=?, season=?, episode=?, episode_end=0 WHERE id=?`, seasonID, season, episode, epID); err != nil {
+		return false, err
+	}
+	if oldSeason != seasonID {
+		if _, err := tx.Exec(`DELETE FROM items WHERE id=? AND kind='season' AND NOT EXISTS (SELECT 1 FROM items e WHERE e.parent_id=?)`, oldSeason, oldSeason); err != nil {
+			return false, err
+		}
+	}
+	return true, tx.Commit()
 }
 
 func (s *Store) FindSeason(showID int64, season int) (*Item, error) {
@@ -822,8 +881,11 @@ func (s *Store) MarkTreePlayed(uid, itemID int64, played bool) error {
 
 // SetFavorite returns ErrNotFound for an item that doesn't exist.
 func (s *Store) SetFavorite(uid, itemID int64, fav bool) error {
-	res, err := s.db.Exec(`INSERT INTO user_data(user_id,item_id,favorite) SELECT ?,id,? FROM items WHERE id=?
-		ON CONFLICT(user_id,item_id) DO UPDATE SET favorite=excluded.favorite`, uid, fav, itemID)
+	// favorited_at keeps the time it first became a favorite while it stays one.
+	res, err := s.db.Exec(`INSERT INTO user_data(user_id,item_id,favorite,favorited_at) SELECT ?,id,?,? FROM items WHERE id=?
+		ON CONFLICT(user_id,item_id) DO UPDATE SET favorite=excluded.favorite,
+			favorited_at=CASE WHEN excluded.favorite=0 THEN 0 WHEN user_data.favorite=1 THEN user_data.favorited_at ELSE excluded.favorited_at END`,
+		uid, fav, favoritedAt(fav), itemID)
 	if err != nil {
 		return err
 	}
@@ -831,6 +893,28 @@ func (s *Store) SetFavorite(uid, itemID int64, fav bool) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+func favoritedAt(fav bool) int64 {
+	if fav {
+		return now()
+	}
+	return 0
+}
+
+// Favorites returns the movies and shows a user marked as favorites, across
+// the libraries they may see, most recently added first; limit <= 0 returns
+// all of them.
+func (s *Store) Favorites(uid int64, limit int) ([]*Item, error) {
+	q := `WHERE i.kind IN ('movie','show') AND i.id IN (SELECT item_id FROM user_data WHERE user_id=:uid AND favorite=1)
+		ORDER BY ud.favorited_at DESC, i.id DESC`
+	args := []any{sql.Named("uid", uid)}
+	if limit > 0 {
+		q += ` LIMIT :lim`
+		args = append(args, sql.Named("lim", limit))
+	}
+	// Cards only, like ListItems: the Home row and page show posters.
+	return s.queryItemsUD(udSelectCols(cardCols, q), args...)
 }
 
 // Airable is a movie or episode with a known duration, for Live TV.

@@ -2,10 +2,12 @@
 package library
 
 import (
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -148,6 +150,63 @@ type EpisodeInfo struct {
 	Episode    int
 	EpisodeEnd int
 	HasSeason  bool
+	// AirDate (YYYY-MM-DD) is set for date-named episodes of daily shows
+	// ("Show.2024.03.05.Guest.mkv"). Until the show's provider places them,
+	// they are grouped by year (Season) and ordered by date (Episode=MMDD).
+	AirDate string
+}
+
+// Air dates in names: YYYY.MM.DD, YYYY-MM-DD, YYYY_MM_DD, YYYY MM DD, and
+// DD.MM.YYYY (or MM.DD.YYYY when the first number can't be a month). Both
+// separators must be the same, month and day take two digits, and the date
+// can't run into other letters or digits: that keeps out years next to audio
+// channels ("2019.7.1"), resolutions, codec tags and bit depths ("10bit").
+// Go's regexp has no backreferences, so there is a pattern per separator.
+var reDateYMD, reDateDMY []*regexp.Regexp
+
+func init() {
+	for _, sep := range []string{`\.`, `-`, `_`, ` `} {
+		reDateYMD = append(reDateYMD, regexp.MustCompile(`(?:^|[^0-9A-Za-z])((?:19|20)\d{2})`+sep+`(\d{2})`+sep+`(\d{2})(?:[^0-9A-Za-z]|$)`))
+		reDateDMY = append(reDateDMY, regexp.MustCompile(`(?:^|[^0-9A-Za-z])(\d{2})`+sep+`(\d{2})`+sep+`((?:19|20)\d{2})(?:[^0-9A-Za-z]|$)`))
+	}
+}
+
+// airDate finds an air date in a name. It returns the date as YYYY-MM-DD
+// and the byte range of the date in name; the earliest date found wins.
+func airDate(name string) (date string, start, end int, ok bool) {
+	start = -1
+	find := func(res []*regexp.Regexp, dmy bool) {
+		for _, re := range res {
+			for _, m := range re.FindAllStringSubmatchIndex(name, -1) {
+				if start >= 0 && m[2] >= start {
+					break
+				}
+				g := func(i int) int { n, _ := strconv.Atoi(name[m[2*i]:m[2*i+1]]); return n }
+				y, mo, d := g(1), g(2), g(3)
+				if dmy {
+					y, mo, d = g(3), g(2), g(1)
+					if mo > 12 && d <= 12 {
+						mo, d = d, mo
+					}
+				}
+				if validDate(y, mo, d) {
+					date, start, end = fmt.Sprintf("%04d-%02d-%02d", y, mo, d), m[2], m[7]
+					break
+				}
+			}
+		}
+	}
+	find(reDateYMD, false)
+	find(reDateDMY, true)
+	return date, start, end, start >= 0
+}
+
+func validDate(y, m, d int) bool {
+	if y < 1930 || y > time.Now().Year()+1 || m < 1 || m > 12 || d < 1 {
+		return false
+	}
+	t := time.Date(y, time.Month(m), d, 0, 0, 0, 0, time.UTC)
+	return t.Day() == d && int(t.Month()) == m
 }
 
 // ParseEpisode extracts season/episode numbers from a file name.
@@ -183,6 +242,14 @@ func ParseEpisode(base string, dirSeason int, allowAbsolute bool) (EpisodeInfo, 
 		if s > 0 && e < 500 {
 			return EpisodeInfo{Season: s, Episode: e, HasSeason: true}, true
 		}
+	}
+	if date, _, _, ok := airDate(name); ok {
+		ei := EpisodeInfo{AirDate: date, HasSeason: true}
+		ei.Season, _ = strconv.Atoi(date[:4])
+		mo, _ := strconv.Atoi(date[5:7])
+		d, _ := strconv.Atoi(date[8:])
+		ei.Episode = mo*100 + d
+		return ei, true
 	}
 	norm := normalizeSeparators(reBrackets.ReplaceAllString(name, " "))
 	if m := reEpisode.FindStringSubmatch(norm); m != nil {

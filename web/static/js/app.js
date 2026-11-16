@@ -1,10 +1,11 @@
-import { h, $, clear, icons, RAIL_LETTERS, letterOffsets, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrate, toast, modal, spinner, lazyImg, popupMenu, closePopupMenu, streamLabel, langName, channelName, confirmDialog, run, fmtEpisode, fmtAirDate, fmtClock, motionOK, emptyState } from './ui.js';
+import { h, $, clear, icons, RAIL_LETTERS, letterOffsets, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrate, toast, modal, spinner, lazyImg, popupMenu, closePopupMenu, streamLabel, langName, channelName, confirmDialog, run, fmtEpisode, datedEpisode, fmtAirDate, fmtClock, motionOK, emptyState } from './ui.js';
 import { api, img, castImg } from './api.js';
 import { openPlayer, isPlayerOpen, closePlayer } from './player.js';
 import { installShortcuts, showShortcuts, MOD } from './shortcuts.js';
+import { seasonMenuItems, seasonConfirm } from './season.js';
 import { compatRequest, TIERS, causeLabel, verdictCauses } from './caps.js';
 
-// caps: { subtitleSearch, cacheEnabled, liveTv } from the server (see /api/me).
+// caps: { subtitleSearch, cacheEnabled, liveTv, maxTranscodeHeight } from the server (see /api/me).
 export const state = { me: null, caps: {}, serverName: 'Lex', libraries: [], version: '' };
 const app = document.getElementById('app');
 let mainEl = null, navEl = null, searchInput = null;
@@ -12,7 +13,13 @@ let routeToken = 0;
 
 // ---------- boot ----------
 installShortcuts({
-  focusSearch: () => { if (searchInput?.isConnected) { searchInput.focus(); searchInput.select(); } },
+  // A page with its own search box (Settings) takes the shortcut first; pressed
+  // again from there, it goes to the app's search.
+  focusSearch: () => {
+    const local = mainEl?.querySelector('[data-page-search]');
+    const box = local && document.activeElement !== local ? local : searchInput;
+    if (box?.isConnected) { box.focus(); box.select(); }
+  },
   go: (hash) => { location.hash = hash; },
   libraries: () => state.libraries,
   liveTv: () => !!state.caps.liveTv,
@@ -259,6 +266,9 @@ function leaveSearch() {
 
 function userMenu(anchor) {
   const items = [
+    { label: 'Watchlist', icon: 'bookmark', onClick: () => { location.hash = '#/watchlist'; } },
+    { label: 'Favorites', icon: 'heart', onClick: () => { location.hash = '#/favorites'; } },
+    '-',
     { label: 'Settings', icon: 'gear', onClick: () => { location.hash = '#/settings'; } },
   ];
   if (state.me.isAdmin) items.push({ label: 'Dashboard & stats', icon: 'stats', onClick: () => { location.hash = '#/dashboard'; } });
@@ -395,7 +405,11 @@ export async function route({ soft = false } = {}) {
   const focusWasInMain = mainEl.contains(active) && active !== mainEl;
   pendingFocusKey = null;
   const ctx = { token, query, restore, isCurrent: () => token === routeToken };
-  const spin = soft ? 0 : setTimeout(() => { if (ctx.isCurrent()) clear(mainEl).appendChild(spinner()); }, 200);
+  // A view can stay up while the next one loads (Settings keeps its side
+  // column and dims its page) instead of being swapped for a spinner.
+  const shown = mainEl.firstElementChild;
+  const kept = !soft && typeof shown?.pendingRoute === 'function' && shown.pendingRoute(section, id);
+  const spin = soft || kept ? 0 : setTimeout(() => { if (ctx.isCurrent()) clear(mainEl).appendChild(spinner()); }, 200);
   let view;
   try {
     switch (section) {
@@ -404,6 +418,7 @@ export async function route({ soft = false } = {}) {
       case 'item': view = await itemView(ctx, +id); break;
       case 'search': view = await searchView(ctx, query.get('q') || ''); break;
       case 'watchlist': view = await watchlistView(ctx); break;
+      case 'favorites': view = await favoritesView(ctx); break;
       case 'collection': view = await collectionView(ctx, +id); break;
       case 'person': view = await personView(ctx, query.get('name') || ''); break;
       case 'tv': view = await tvView(ctx); break;
@@ -549,7 +564,7 @@ export function posterCard(it, { sub } = {}) {
   const left = ud.position > 0 && it.duration ? `${fmtDuration(it.duration - ud.position)} left` : '';
   if (left) art.appendChild(progressBar(ud.position, it.duration));
   const line = sub ?? subtitleFor(it);
-  const label = [it.title, line, parent && it.unplayedCount > 0 ? `${it.unplayedCount} unwatched` : watched ? 'watched' : '', ud.watchlist ? 'on your watchlist' : '', left].filter(Boolean).join(', ');
+  const label = [it.title, line, parent && it.unplayedCount > 0 ? `${it.unplayedCount} unwatched` : watched ? 'watched' : '', ud.watchlist ? 'on your watchlist' : '', ud.favorite ? 'a favorite' : '', left].filter(Boolean).join(', ');
   const link = h('a', { class: 'card-link', href: `#/item/${it.id}`, 'aria-label': label, dataset: { focusKey: `card-${it.id}` } },
     art, h('div', { class: 'meta' }, h('div', { class: 't', title: it.title }, it.title), h('div', { class: 's' }, line)));
   const more = it.kind === 'movie' || it.kind === 'show' ? posterMenuButton(it) : null;
@@ -564,13 +579,24 @@ async function setWatchlist(it, on) {
   return !!ok;
 }
 
-// The ⋯ on a movie or show poster: Watchlist and watched toggles. The view
-// re-renders in place afterwards (Watchlist rows and filters change).
+// setFavorite marks a title as a favorite or not, like setWatchlist.
+async function setFavorite(it, on) {
+  const ok = await run(null, () => api(`/api/items/${it.id}/favorite`, { method: 'POST', body: { favorite: on } }), on ? 'Added to Favorites' : 'Removed from Favorites');
+  if (ok) (it.userData ||= {}).favorite = on;
+  return !!ok;
+}
+
+// The ⋯ on a movie or show poster: Watchlist, Favorites and watched
+// toggles. The view re-renders in place afterwards (Watchlist and Favorites
+// rows and filters change).
 function posterMenuButton(it) {
   const ud = it.userData || {};
   const items = [ud.watchlist
     ? { label: 'Remove from Watchlist', icon: 'bookmarkFill', onClick: async () => { if (await setWatchlist(it, false)) refreshSoft(); } }
-    : { label: 'Add to Watchlist', icon: 'bookmark', onClick: async () => { if (await setWatchlist(it, true)) refreshSoft(); } }];
+    : { label: 'Add to Watchlist', icon: 'bookmark', onClick: async () => { if (await setWatchlist(it, true)) refreshSoft(); } },
+  ud.favorite
+    ? { label: 'Remove from Favorites', icon: 'heartFill', onClick: async () => { if (await setFavorite(it, false)) refreshSoft(); } }
+    : { label: 'Add to Favorites', icon: 'heart', onClick: async () => { if (await setFavorite(it, true)) refreshSoft(); } }];
   if (it.kind === 'movie') {
     items.push(ud.played
       ? { label: 'Mark unwatched', icon: 'check', onClick: async () => { if (await run(null, () => api(`/api/items/${it.id}/played`, { method: 'POST', body: { played: false } }), 'Marked unwatched')) refreshSoft(); } }
@@ -686,10 +712,13 @@ async function homeView(ctx) {
     }
   }
   for (const row of data.rows) {
-    wrap.appendChild(shelf(row.title, row.items, row.kind, row.libraryId ? `#/library/${row.libraryId}?sort=latest&desc=1` : row.id === 'watchlist' ? '#/watchlist' : null));
+    wrap.appendChild(shelf(row.title, row.items, row.kind, row.libraryId ? `#/library/${row.libraryId}?sort=latest&desc=1` : HOME_ROW_PAGES[row.id] || null));
   }
   return wrap;
 }
+
+// The Home rows with a page of their own behind "See all".
+const HOME_ROW_PAGES = { watchlist: '#/watchlist', favorites: '#/favorites' };
 
 // ---------- library ----------
 async function libraryView(ctx, id) {
@@ -830,7 +859,7 @@ async function libraryView(ctx, id) {
         if (!filtered && !scanned) { await loadLibraries(); scanned = state.libraries.find((l) => l.id === id)?.lastScan; }
         grid.replaceWith(emptyState({ level: 'h2',
           title: favs ? 'No favorites yet' : wl ? 'Your Watchlist is empty' : filtered ? 'Nothing here' : scanned ? 'No titles found' : 'Still scanning',
-          text: favs ? 'Open a title and select the heart to add it to your favorites.' : wl ? WATCHLIST_HINT : filtered ? 'No titles match these filters.' : scanned ? 'No titles found in this library.' : 'This library is still being scanned.',
+          text: favs ? FAVORITES_HINT : wl ? WATCHLIST_HINT : filtered ? 'No titles match these filters.' : scanned ? 'No titles found in this library.' : 'This library is still being scanned.',
           actions: filtered ? [h('button', { class: 'btn', onclick: () => setQ({ filter: '', genre: '', kind: '' }, 'filter-select') }, 'Clear filters')] : [] }));
       }
     } finally {
@@ -948,6 +977,7 @@ function favButton(it) {
     show();
     try {
       await api(`/api/items/${it.id}/favorite`, { method: 'POST', body: { favorite: fav } });
+      (it.userData ||= {}).favorite = fav;
     } catch (ex) {
       fav = !fav;
       show();
@@ -1089,7 +1119,7 @@ function mediaView(ctx, d) {
   }
   info.push(h('h1', null, it.title));
   info.push(facts(it, [
-    isEp ? h('span', null, fmtEpisode(it)) : null,
+    isEp && !datedEpisode(it) ? h('span', null, fmtEpisode(it)) : null, // a dated one's code is its air date, already shown
     file ? h('span', { class: 'pill' }, [resLabel(file.width, file.height), file.hdr].filter(Boolean).join(' ') || file.container) : null,
     compat?.pill,
     file?.cached ? h('span', { class: 'pill', title: 'Plays from the SSD cache' }, 'SSD') : null,
@@ -1294,6 +1324,11 @@ async function showView(ctx, d) {
   const episodeChanged = (s, played) => {
     s.unplayedCount = Math.max(0, (s.unplayedCount || 0) + (played ? -1 : 1));
     seasonTabLabel(tabFor(s), s);
+    refetchShow(400);
+  };
+  // refetchShow updates the play button, Up next and every season count
+  // after a change in the list (debounced: toggles come in bursts).
+  const refetchShow = (delay) => {
     clearTimeout(refetch);
     const mine = ++seq;
     refetch = setTimeout(async () => {
@@ -1310,12 +1345,37 @@ async function showView(ctx, d) {
       cta.replaceWith(n);
       cta = n;
       if (key) n.querySelector(`[data-focus-key="${key}"]`)?.focus({ preventScroll: true });
-    }, 400);
+    }, delay);
   };
   const wanted = +ctx.query.get('season');
   let active = seasons.find((s) => s.id === wanted) || (next && seasons.find((s) => s.id === next.parentId)) || seasons.find((s) => s.season > 0) || seasons[0];
+  const renderEpisodes = (s, eps) => clear(list).append(...(s.overview ? [h('p', { class: 'muted', style: { maxWidth: '760px', margin: '0 0 8px' } }, s.overview)] : []), ...eps.map((e) => episodeRow(e, (played) => episodeChanged(s, played))));
+  // The selected season's ⋯ menu: mark it watched/unwatched, shuffle it.
+  // Always shown at a fixed size beside the tabs, so switching seasons or
+  // acting on one never moves the layout; the menu is built on open.
+  const markSeason = async (s, played, btn) => {
+    if (!(await confirmDialog(seasonConfirm(s, it.title, played)))) return;
+    if (!(await run(btn, () => api(`/api/items/${s.id}/played`, { method: 'POST', body: { played } }), played ? 'Marked watched' : 'Marked unwatched'))) return;
+    s.unplayedCount = played ? 0 : s.childCount || 0;
+    seasonTabLabel(tabFor(s), s);
+    refetchShow(0);
+    // Redraw the checks and progress bars in place (no spinner, no jump).
+    if (active !== s) return;
+    let eps;
+    try { eps = await api(`/api/items/${s.id}/children`); } catch { return; }
+    if (active !== s || !ctx.isCurrent()) return;
+    const key = list.contains(document.activeElement) ? document.activeElement.dataset.focusKey : null;
+    renderEpisodes(s, eps);
+    if (key) list.querySelector(`[data-focus-key="${key}"]`)?.focus({ preventScroll: true });
+  };
+  const more = seasons.length ? h('button', { class: 'btn icon ghost sm season-more', type: 'button', title: 'Season actions', 'aria-label': 'Season actions', 'aria-haspopup': 'menu', dataset: { focusKey: `season-more-${it.id}` }, html: icons.more, onclick: (e) => {
+    const btn = e.currentTarget, s = active;
+    if (!s) return;
+    popupMenu(btn, seasonMenuItems(s, { mark: (played) => markSeason(s, played, btn), shuffle: () => playShuffle(s, btn) }));
+  } }) : null;
   const showSeason = async (s) => {
     active = s;
+    more?.setAttribute('aria-label', `Actions for ${s.title}`);
     for (const b of tabs.children) {
       const selected = +b.dataset.id === s.id;
       b.classList.toggle('active', selected);
@@ -1326,7 +1386,7 @@ async function showView(ctx, d) {
     try {
       const eps = await api(`/api/items/${s.id}/children`);
       if (active !== s || !ctx.isCurrent()) return;
-      clear(list).append(...(s.overview ? [h('p', { class: 'muted', style: { maxWidth: '760px', margin: '0 0 8px' } }, s.overview)] : []), ...eps.map((e) => episodeRow(e, (played) => episodeChanged(s, played))));
+      renderEpisodes(s, eps);
       replaceHash(`#/item/${it.id}?season=${s.id}`);
     } catch (e) {
       if (active === s && ctx.isCurrent()) clear(list).append(h('p', { class: 'bad', role: 'alert' }, e.message), h('button', { class: 'btn', onclick: () => showSeason(s) }, 'Retry'));
@@ -1340,7 +1400,7 @@ async function showView(ctx, d) {
     tabs.appendChild(tab);
   }
   const page = h('div', null, hero(it, poster, info),
-    h('div', { class: 'page', style: { paddingTop: 0 } }, h('h2', { class: 'sr-only' }, 'Episodes'), tabs, list),
+    h('div', { class: 'page', style: { paddingTop: 0 } }, h('h2', { class: 'sr-only' }, 'Episodes'), h('div', { class: 'season-bar' }, tabs, more), list),
     castRow(it));
   if (active) await showSeason(active);
   // Many seasons: bring the selected tab into view once the page is laid out.
@@ -1355,7 +1415,10 @@ async function showView(ctx, d) {
 function episodeRow(e, onChange) {
   const ud = e.userData || {};
   let busy = false;
-  const art = h('button', { class: 'art', type: 'button', dataset: { focusKey: `episode-play-${e.id}` }, 'aria-label': `${ud.position > 0 && !ud.played ? 'Resume' : 'Play'} episode ${e.episode}: ${e.title}`, onclick: () => play(e.id) }, lazyImg(img(e, 'thumb', 480), ''), h('span', { class: 'ep-play', 'aria-hidden': 'true', html: icons.play }));
+  // Unplaced daily-show episodes go by air date, which the line below the title shows.
+  const dated = datedEpisode(e);
+  const epName = dated ? fmtAirDate(e.premiere) : `episode ${e.episode}`;
+  const art = h('button', { class: 'art', type: 'button', dataset: { focusKey: `episode-play-${e.id}` }, 'aria-label': `${ud.position > 0 && !ud.played ? 'Resume' : 'Play'} ${epName}: ${e.title}`, onclick: () => play(e.id) }, lazyImg(img(e, 'thumb', 480), ''), h('span', { class: 'ep-play', 'aria-hidden': 'true', html: icons.play }));
   if (ud.position > 0 && e.duration) art.appendChild(progressBar(ud.position, e.duration));
   const badge = h('div', { class: 'badge check', 'aria-hidden': 'true', title: 'Watched', html: icons.check });
   const wbtn = h('button', { class: 'watched-btn', type: 'button', html: icons.check, dataset: { focusKey: `episode-watched-${e.id}` }, onclick: async (ev) => {
@@ -1379,7 +1442,7 @@ function episodeRow(e, onChange) {
     const action = ud.played ? 'Mark unwatched' : 'Mark watched';
     wbtn.classList.toggle('on', !!ud.played);
     wbtn.title = action;
-    wbtn.setAttribute('aria-label', `${action}: episode ${e.episode}, ${e.title}`);
+    wbtn.setAttribute('aria-label', `${action}: ${epName}, ${e.title}`);
     if (ud.played) art.appendChild(badge); else badge.remove();
   };
   show();
@@ -1388,7 +1451,7 @@ function episodeRow(e, onChange) {
   return h('div', { class: 'episode' },
     art,
     h('a', { class: 'episode-info', href: `#/item/${e.id}`, 'aria-labelledby': `${id}-t`, 'aria-describedby': e.overview ? `${id}-m ${id}-o` : `${id}-m` },
-      h('h3', { id: `${id}-t` }, h('span', { class: 'num' }, `${e.episode}${e.episodeEnd ? '–' + e.episodeEnd : ''}.`), ' ', e.title),
+      h('h3', { id: `${id}-t` }, dated ? null : h('span', { class: 'num' }, `${e.episode}${e.episodeEnd ? '–' + e.episodeEnd : ''}.`), dated ? null : ' ', e.title),
       h('div', { class: 'dim small', id: `${id}-m` }, [e.premiere ? fmtAirDate(e.premiere) : '', e.duration ? fmtDuration(e.duration) : '', ud.position > 0 && !ud.played ? `${fmtDuration(e.duration - ud.position)} left` : ''].filter(Boolean).join(' · ')),
       e.overview ? h('p', { id: `${id}-o` }, e.overview) : null),
     h('div', { class: 'side' }, wbtn));
@@ -1396,6 +1459,7 @@ function episodeRow(e, onChange) {
 
 // ---------- watchlist, collections, people ----------
 const WATCHLIST_HINT = 'Open a movie or show and select the bookmark, or use a poster’s ⋯ menu, to save it for later.';
+const FAVORITES_HINT = 'Open a movie or show and select the heart, or use a poster’s ⋯ menu, to add it to your favorites.';
 
 // titlesPage: a heading block over a grid of posters (or an empty state).
 function titlesPage({ kicker, title, count, head, items, sub, empty }) {
@@ -1412,6 +1476,11 @@ function titlesPage({ kicker, title, count, head, items, sub, empty }) {
 async function watchlistView() {
   const r = await api('/api/watchlist');
   return titlesPage({ title: 'Watchlist', items: r.items, empty: { title: 'Your Watchlist is empty', text: WATCHLIST_HINT, actions: [h('a', { class: 'btn primary', href: '#/' }, 'Browse titles')] } });
+}
+
+async function favoritesView() {
+  const r = await api('/api/favorites');
+  return titlesPage({ title: 'Favorites', items: r.items, empty: { title: 'No favorites yet', text: FAVORITES_HINT, actions: [h('a', { class: 'btn primary', href: '#/' }, 'Browse titles')] } });
 }
 
 async function collectionView(ctx, id) {

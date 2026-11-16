@@ -54,6 +54,7 @@ type Server struct {
 	HLS        *stream.HLS
 	TV         *tv.Guide // Live TV; New(St) if nil
 	Web        fs.FS
+	ListenAddr string // -addr, used to suggest LAN webhook URLs
 
 	static    map[string]*asset
 	loginMu   sync.Mutex
@@ -95,7 +96,9 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.HandleFunc("POST /api/setup", s.setup)
 	mux.HandleFunc("POST /api/auth/login", s.login)
 	mux.HandleFunc("POST /api/auth/logout", s.logout)
+	// Sonarr/Radarr let the user pick POST or PUT for webhooks.
 	mux.HandleFunc("POST /api/webhook/scan", s.webhookScan)
+	mux.HandleFunc("PUT /api/webhook/scan", s.webhookScan)
 
 	// Signed-in users
 	u := func(h http.HandlerFunc) http.Handler { return s.auth(h, false) }
@@ -117,6 +120,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("POST /api/items/{id}/favorite", u(s.setFavorite))
 	mux.Handle("POST /api/items/{id}/watchlist", u(s.setWatchlist))
 	mux.Handle("GET /api/watchlist", u(s.watchlist))
+	mux.Handle("GET /api/favorites", u(s.favorites))
 	mux.Handle("GET /api/collections/{id}", u(s.collection))
 	mux.Handle("GET /api/person", u(s.person))
 	mux.Handle("GET /api/tv", u(s.liveTV(s.tvGuide)))
