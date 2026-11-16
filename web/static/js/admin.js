@@ -1,7 +1,7 @@
 import { h, clear, icons, toast, modal, confirmDialog, spinner, toggle, fmtBytes, fmtBitrate, fmtTime, fmtDate, timeAgo, fmtUptime, fmtDuration, LANG_OPTIONS, $, run, staleBanner, motionOK, KIND_LABELS, METHOD_LABEL, reasonLabel, emptyState } from './ui.js';
 import { api, img } from './api.js';
 import { state, loadLibraries, refreshSoft, setLeaveGuard, focusAfterRoute, renderNav } from './app.js';
-import { prefs, DEFAULTS, QUALITIES } from './prefs.js';
+import { prefs, DEFAULTS, QUALITIES, qualityOptions } from './prefs.js';
 import { capsSummary, compatRequest, TIERS, TIER_ORDER, causeLabel } from './caps.js';
 import { lineChart, columnChart, barList, axisHours, axisBitrate } from './charts.js';
 
@@ -127,7 +127,7 @@ function prefsSection() {
     h('div', { class: 'form-section' }, h('h2', null, 'Quality & method'),
       h('p', { class: 'help', style: { margin: 0 } }, 'These settings are stored in this browser, so each device can have its own (e.g. lower quality on your phone).'),
       h('div', { class: 'form-grid' },
-        field('Streaming quality', select(p.quality, QUALITIES, set('quality', Number)), 'Max bitrate. "Original" direct-plays when the browser supports the file.'),
+        field('Streaming quality', select(p.quality, qualityOptions({ maxHeight: state.caps.maxTranscodeHeight}), set('quality', Number)), 'Max bitrate. "Original" direct-plays when the browser supports the file. The resolution is the most a transcode delivers on this server.'),
         field('Playback method', select(p.mode, [['auto', 'Automatic (recommended)'], ['direct', 'Prefer Direct Play'], ['remux', 'Always Direct Stream (remux)'], ['transcode', 'Always Transcode']], set('mode')), 'Automatic picks the lightest method that works here. Try “Always Transcode” if a video stutters or won’t play.'))),
     h('div', { class: 'form-section' }, h('h2', null, 'Buffering'),
       h('div', { class: 'form-grid' },
@@ -395,7 +395,7 @@ async function configForm(build, { check } = {}) {
 
 // The webhook URL carries a secret token: offer a copy button, falling back
 // to selecting the text where the clipboard API is unavailable (plain http).
-function webhookHelp(url) {
+function copyableUrl(url) {
   const code = h('code', { class: 'mono' }, url);
   const copy = async () => {
     try {
@@ -406,8 +406,21 @@ function webhookHelp(url) {
       toast('Press Ctrl+C (⌘C) to copy the selected URL');
     }
   };
-  return h('div', { class: 'help' }, 'Sonarr/Radarr: add a Webhook connection pointing at ', code, ' to rescan instantly after imports. ',
-    h('button', { class: 'btn sm', type: 'button', onclick: copy }, 'Copy URL'));
+  return h('div', { class: 'webhook-url' }, code, ' ', h('button', { class: 'btn sm', type: 'button', onclick: copy }, 'Copy'));
+}
+
+// Radarr/Sonarr usually run in a container, which often can't reach the
+// address this browser uses (a Tailscale serve name, a reverse proxy), so
+// also list the server's direct LAN addresses.
+function webhookHelp(path, lanBases) {
+  const lan = (lanBases || []).filter(b => b !== location.origin).map(b => copyableUrl(b + path));
+  return h('div', { class: 'help' },
+    'Sonarr/Radarr: add a Webhook connection (method POST or PUT) to rescan instantly after imports. URL as this browser reaches Lex:',
+    copyableUrl(location.origin + path),
+    lan.length ? [
+      'If the Test button fails with “connection refused” or a timeout (common when Radarr runs in Docker/Podman and this address is a Tailscale or proxy name), use a direct LAN address instead:',
+      ...lan,
+    ] : null);
 }
 
 // titlePicker edits a list of movies and shows (item ids): chips for the
@@ -549,7 +562,7 @@ async function serverSection() {
         field('Rescan every (minutes)', num('scanIntervalMin', { min: 0 }), '0 disables periodic scans. Scans only stat files, so they are cheap.'),
         field('Probe workers', num('probeWorkers', { min: 1, max: 8 }), 'Parallel ffprobe processes for new files. 1 is best on a Pi.')),
       tg('scanOnStartup', 'Scan on startup'),
-      webhookHelp(`${location.origin}${info.webhookUrl}`)),
+      webhookHelp(info.webhookUrl, info.webhookLanUrls)),
     h('div', { class: 'form-section' }, h('h2', null, 'Playback history'),
       field('Keep history for (days)', num('historyRetentionDays', { min: 0, max: 36500 }), '0 keeps it forever. Older plays are deleted hourly, and the Playback dashboard only covers what is kept.')),
     h('div', { class: 'form-section' }, h('h2', null, 'Network & remote access'),
@@ -586,7 +599,8 @@ function transcodingSection() {
           field('x264 CRF', num('x264Crf', { min: 15, max: 35 }), 'Quality target (capped by the bitrate limit). Lower = better.'),
           field('Threads', num('transcodeThreads', { min: 0, max: 64 }), '0 = automatic.'),
           field('Process priority (nice)', num('ffmpegNice', { min: 0, max: 19 }), 'Higher = yields CPU to other services.')),
-        tg('hwDecode', 'Hardware HEVC decoding (Raspberry Pi)', info.ffmpeg.hevcHwDecode ? 'Uses the Pi\'s HEVC decoder (/dev/video19) when transcoding HEVC; falls back to software automatically.' : 'Unavailable: needs dtoverlay=vc4-kms-v3d in /boot/firmware/config.txt (then reboot) and an ffmpeg with the drm hwaccel.', { disabled: !info.ffmpeg.hevcHwDecode }),
+        tg('hwDecode', 'Hardware HEVC decoding (Raspberry Pi)', info.ffmpeg.hevcHwDecode ? 'Uses the Pi\'s HEVC decoder (/dev/video19) when transcoding HEVC; falls back to software automatically.' : info.ffmpeg.hevcHwDecodeIssue ? `Unavailable: ${info.ffmpeg.hevcHwDecodeIssue}` : 'Unavailable: needs dtoverlay=vc4-kms-v3d in /boot/firmware/config.txt (then reboot) and an ffmpeg with the drm hwaccel.', { disabled: !info.ffmpeg.hevcHwDecode }),
+        info.hwFallback ? h('p', { class: 'help warn' }, `Hardware decoding last fell back to software ${new Date(info.hwFallback.at).toLocaleString()} (${info.hwFallback.source}, ${info.hwFallback.count}× since start): ${info.hwFallback.message}`) : null,
         tg('tonemap', 'HDR → SDR tone mapping', info.ffmpeg.hasZscale ? 'Converts HDR colours when transcoding. Expensive.' : 'Unavailable: this ffmpeg has no zscale filter.', { disabled: !info.ffmpeg.hasZscale })),
       h('div', { class: 'form-section' }, h('h2', null, 'Audio'),
         h('div', { class: 'form-grid' },

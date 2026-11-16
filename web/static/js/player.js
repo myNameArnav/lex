@@ -5,7 +5,7 @@ import { h, icons, resLabel, fmtTime, fmtBitrate, fmtBytes, streamLabel, toast, 
 import { api, img } from './api.js';
 import { state } from './app.js';
 import { detectCaps } from './caps.js';
-import { prefs, QUALITIES } from './prefs.js';
+import { prefs, QUALITIES, qualityOptions } from './prefs.js';
 import { MseEngine, clock } from './mse.js';
 
 let current = null;
@@ -1730,7 +1730,7 @@ class Player {
 
   qualityLabel(k) {
     const q = QUALITIES.find(([v]) => v === k);
-    return q ? q[1].split(' · ')[0] : 'Original';
+    return q ? q[1] : 'Original';
   }
 
   // Re-renders the open menu. Focus follows: to Back when a sub-page opens,
@@ -1822,7 +1822,8 @@ class Player {
     ].filter(([k]) => k !== 'hls' || this.mode === 'hls' || this.nativeHls());
     switch (this.menuPage) {
       case 'quality':
-        return page('Quality', QUALITIES.filter(([k]) => !k || !src || k <= src * 1.5 || k === this.quality).map(([k, l]) => ({
+        return page('Quality', qualityOptions({ maxHeight: state.caps?.maxTranscodeHeight, srcHeight: this.file?.height, srcKbps: src})
+          .filter(([k]) => !k || !src || k <= src * 1.5 || k === this.quality).map(([k, l]) => ({
           label: l, active: this.quality === k, right: k === 0 && src ? fmtBitrate(src * 1000) : '',
           on: () => { this.quality = k; prefs.set('quality', k); this.closeMenu(); this.replan(); },
         })));

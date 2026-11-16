@@ -597,6 +597,7 @@ func (h *HLS) startLocked(j *hlsJob, cfg store.Config, ff FFInfo, f *store.File,
 	j.cmd, j.cancel, j.done, j.start = cmd, cancel, done, seg
 	go func() {
 		err := cmd.Wait()
+		CheckHWFallback("hls", args, stderr.String())
 		// Not j.mu: startLocked and dropLocked wait for done while holding it.
 		j.errMu.Lock()
 		switch {

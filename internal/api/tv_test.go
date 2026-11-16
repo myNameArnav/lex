@@ -145,9 +145,11 @@ func TestLiveTVIsOffByDefault(t *testing.T) {
 		}
 	}
 	var me struct {
-		Caps map[string]bool `json:"caps"`
+		Caps struct {
+			LiveTV bool `json:"liveTv"`
+		} `json:"caps"`
 	}
-	if code := getJSON(t, h, token, "/api/me", &me); code != 200 || me.Caps["liveTv"] {
+	if code := getJSON(t, h, token, "/api/me", &me); code != 200 || me.Caps.LiveTV {
 		t.Fatalf("/api/me: %d, caps %v", code, me.Caps)
 	}
 	c := s.St.Config()
@@ -158,8 +160,8 @@ func TestLiveTVIsOffByDefault(t *testing.T) {
 	if code := getJSON(t, h, token, "/api/tv", nil); code != 200 {
 		t.Fatalf("turned on: %d", code)
 	}
-	me.Caps = nil
-	if code := getJSON(t, h, token, "/api/me", &me); code != 200 || !me.Caps["liveTv"] {
+	me.Caps.LiveTV = false
+	if code := getJSON(t, h, token, "/api/me", &me); code != 200 || !me.Caps.LiveTV {
 		t.Fatalf("turned on: %d, caps %v", code, me.Caps)
 	}
 }

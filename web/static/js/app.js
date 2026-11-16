@@ -4,7 +4,7 @@ import { openPlayer, isPlayerOpen, closePlayer } from './player.js';
 import { installShortcuts, showShortcuts, MOD } from './shortcuts.js';
 import { compatRequest, TIERS, causeLabel, verdictCauses } from './caps.js';
 
-// caps: { subtitleSearch, cacheEnabled, liveTv } from the server (see /api/me).
+// caps: { subtitleSearch, cacheEnabled, liveTv, maxTranscodeHeight } from the server (see /api/me).
 export const state = { me: null, caps: {}, serverName: 'Lex', libraries: [], version: '' };
 const app = document.getElementById('app');
 let mainEl = null, navEl = null, searchInput = null;

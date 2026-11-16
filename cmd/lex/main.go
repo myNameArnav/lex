@@ -96,6 +96,10 @@ func main() {
 		st.SaveConfig(c)
 		log.Infof("hardware video detected: HEVC decode=%v, H.264 encode=%v; enabled", ff.HEVCHWDecode, ff.V4L2Device)
 	}
+	if ff.HEVCHWDecodeIssue != "" {
+		log.Warnf("hardware: HEVC decode unavailable: %s", ff.HEVCHWDecodeIssue)
+	}
+	stream.HWFallbackLog = log.Warnf
 	log.Infof("hardware: HEVC decode available=%v (enabled=%v), H.264 encoder available=%v (using %s)", ff.HEVCHWDecode, st.Config().HWDecode, ff.V4L2Device, st.Config().VideoEncoder)
 
 	images := meta.NewImageCache(filepath.Join(abs, "images"))
@@ -131,6 +135,7 @@ func main() {
 	srv := &api.Server{
 		Version: version, DataDir: abs, St: st, Log: log, Scanner: scanner, Agent: agent, Images: images,
 		Subs: subs, Sess: sessions, Stats: sampler, FF: ff, Web: web.FS(), Cache: mediaCache, Intro: intros, Trick: tricks, HLS: hls,
+		ListenAddr: *addr,
 	}
 	// Derived files (subtitles, previews, thumbnails) of removed or replaced
 	// media go right away, and a sweep after each scan (and daily) catches
