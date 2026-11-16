@@ -674,21 +674,21 @@ func (s *Store) NextUp(uid int64, limit int) ([]*Item, error) {
 // latest started or watched episode (ties go to the later one in episode
 // order); nxt is the first unwatched non-special episode after it, if that
 // one was watched.
-var nextUpSQL = `WITH shows AS (
+var nextUpSQL = `WITH shows AS MATERIALIZED (
 		SELECT i.show_id sid, MAX(ud.last_played) lp FROM user_data ud JOIN items i ON i.id=ud.item_id
 		WHERE ud.user_id=:uid AND i.kind='episode' AND (ud.played=1 OR ud.position>0) AND ` + libAccess + `
 		GROUP BY i.show_id ORDER BY lp DESC, i.show_id LIMIT :shows),
-	last AS (
+	last AS MATERIALIZED (
 		SELECT sid, lp, (SELECT e.id FROM items e JOIN user_data u ON u.item_id=e.id AND u.user_id=:uid
 			WHERE e.show_id=sid AND e.kind='episode' AND (u.played=1 OR u.position>0)
 			ORDER BY u.last_played DESC, e.season DESC, e.episode DESC, e.id DESC LIMIT 1) lid
 		FROM shows),
-	nxt AS (
+	nxt AS MATERIALIZED (
 		SELECT l.sid, l.lp, (SELECT n.id FROM items n LEFT JOIN user_data u ON u.item_id=n.id AND u.user_id=:uid
 			WHERE n.show_id=l.sid AND n.kind='episode' AND n.season<>0 AND COALESCE(u.played,0)=0
 			AND (n.season,n.episode,n.id) > (le.season,le.episode,le.id)
 			ORDER BY n.season, n.episode, n.id LIMIT 1) nid
-		FROM last l JOIN items le ON le.id=l.lid JOIN user_data lu ON lu.item_id=le.id AND lu.user_id=:uid
+		FROM last l CROSS JOIN items le ON le.id=l.lid CROSS JOIN user_data lu ON lu.item_id=le.id AND lu.user_id=:uid
 		WHERE lu.played=1)
 	` + udSelectCols(cardCols, `WHERE i.id IN (SELECT nid FROM nxt)
 		ORDER BY (SELECT lp FROM nxt WHERE nxt.nid=i.id) DESC, i.show_id LIMIT :limit`)

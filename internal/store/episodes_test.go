@@ -1,9 +1,11 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"math/rand/v2"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -303,5 +305,36 @@ func TestAdjacentEpisodesCarryUserData(t *testing.T) {
 	first, _ := f.st.Item(eps[0])
 	if prev, _, _ := f.st.AdjacentEpisodes(first, 1); prev != nil {
 		t.Fatalf("first episode has a previous one: %d", prev.ID)
+	}
+}
+
+// NextUp reads the user's whole watch history once, to pick the recent
+// shows, and then works per show. Without materialized CTEs SQLite drove
+// nxt from every user_data row and re-ran the per-show subqueries for each
+// one and again for every result row, which took /api/home to several
+// seconds on a Raspberry Pi for a user with a real history.
+func TestNextUpPlanScansHistoryOnce(t *testing.T) {
+	st := testStore(t)
+	rows, err := st.db.Query(`EXPLAIN QUERY PLAN `+nextUpSQL, sql.Named("uid", 1), sql.Named("shows", 40), sql.Named("limit", 20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan []string
+	scans := 0
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan = append(plan, detail)
+		// A user_data lookup by user alone walks the whole history.
+		if strings.Contains(detail, "user_data") && strings.Contains(detail, "(user_id=?)") {
+			scans++
+		}
+	}
+	if scans != 1 {
+		t.Fatalf("next up walks the watch history %d times, want 1; plan:\n%s", scans, strings.Join(plan, "\n"))
 	}
 }
