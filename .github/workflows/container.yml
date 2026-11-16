@@ -5,10 +5,11 @@ name: Container image
 #   every pushed build     -> :sha-<commit>
 # Pull requests that touch the image's inputs build it without pushing; a
 # newer push to the PR cancels the older build.
-# The arm64 runtime layer (apt under emulation) takes most of a build, so
-# layers are kept in :buildcache. Tags and manual runs write it; pull
-# requests only read it. The cache follows debian:trixie-slim: a new base
-# image rebuilds the layer and picks up package updates.
+# Compiling FFmpeg (cross-compiled natively, not under emulation) takes most
+# of a build, so layers are kept in :buildcache. Tags and manual runs write
+# it; pull requests only read it. The cache follows the debian:trixie and
+# debian:trixie-slim base images: a new base rebuilds the layers and picks up
+# package updates. FFmpeg's own version is pinned in the Dockerfile.
 on:
   push:
     tags: ['v*']
