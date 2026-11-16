@@ -600,6 +600,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .compat-bar { display: flex; gap: 2px; height: 14px; border-radius: 7px; overflow: hidden; margin-bottom: 14px; }
 .compat-bar i { display: block; min-width: 3px; }
 h3.compat-why { font-size: 14px; margin: 20px 0 10px; }
+.compat-panel { margin-bottom: 14px; }
+.compat-help { margin: 12px 0 0; }
 .bar-item.wrap > .ellipsis { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
 /* Horizontal drags scrub the read-out; vertical ones still scroll the page. */
 .chart { width: 100%; height: 180px; display: block; touch-action: pan-y; }

@@ -120,11 +120,7 @@ function select(value, options, onchange) {
 let capsOpen = false; // stays open across re-renders
 function prefsSection() {
   const p = prefs.all();
-  const set = (k, conv = (x) => x) => (v) => {
-    prefs.set(k, conv(v));
-    toast('Saved on this device', 'ok');
-    if (['quality', 'mode', 'audioLang'].includes(k)) refreshCompat();
-  };
+  const set = (k, conv = (x) => x) => (v) => { prefs.set(k, conv(v)); toast('Saved on this device', 'ok'); };
   const langs = [['', 'File default'], ...LANG_OPTIONS];
   const caps = capsSummary();
   return h('div', { class: 'form cols' },
@@ -156,30 +152,25 @@ function prefsSection() {
         field('Autoplay countdown', select(p.countdown, [[5, '5 seconds'], [10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds']], set('countdown', Number))),
         field('Skip back', select(p.skipBack, [[5, '5 seconds'], [10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds']], set('skipBack', Number))),
         field('Skip forward', select(p.skipFwd, [[10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds'], [60, '60 seconds']], set('skipFwd', Number))))),
-    compatSection(),
     h('div', { class: 'form-section' }, h('details', { class: 'caps', open: capsOpen, ontoggle: (e) => { capsOpen = e.target.open; } }, h('summary', null, h('h2', null, 'Technical: this browser’s codecs')),
+      state.me.isAdmin ? h('p', { class: 'small', style: { margin: '0 0 12px' } }, h('a', { href: '#/dashboard/library' }, 'See how your library plays in this browser →')) : null,
       h('dl', { class: 'kv' }, Object.entries(caps).map(([k, v]) => [h('dt', null, k), h('dd', null, v)])))),
     h('div', null, h('button', { class: 'btn', dataset: { focusKey: 'prefs-reset' }, onclick: resetPrefs }, 'Reset to defaults')));
 }
 
-// compatSection shows how the user's library plays in this browser with
-// this device's settings: how many files play as they are, how many the
-// server must repackage or convert, and why. It fills in once the server
-// has checked every file.
-let refreshCompat = () => {};
-function compatSection() {
-  const body = h('div', { 'aria-live': 'polite' });
-  let gen = 0;
-  refreshCompat = () => {
-    const mine = ++gen, req = compatRequest();
-    clear(body).append(h('div', { class: 'row' }, h('div', { class: 'spinner sm' }), h('span', { class: 'muted small' }, 'Checking your library…')));
-    api('/api/compat', { method: 'POST', body: req }).then((sum) => {
-      // h() flattens the nested arrays and skips nulls; append() wouldn't.
-      if (mine === gen) clear(body).append(h('div', null, compatSummary(sum, req)));
-    }).catch((e) => { if (mine === gen) clear(body).append(h('p', { class: 'bad', style: { margin: 0 } }, e.message)); });
-  };
-  refreshCompat();
-  return h('div', { class: 'form-section' }, h('h2', null, 'How your library plays here'), body);
+// compatPanel shows, on the Library dashboard, how the library plays in
+// this browser with this device's playback settings: how many files play as
+// they are, how many the server must repackage or convert, and why. It
+// loads on its own so the rest of the tab doesn't wait for every file to be
+// checked.
+function compatPanel() {
+  const body = h('div', { 'aria-live': 'polite' }, h('div', { class: 'row' }, h('div', { class: 'spinner sm' }), h('span', { class: 'muted small' }, 'Checking every file…')));
+  const req = compatRequest();
+  api('/api/admin/compat', { method: 'POST', body: req })
+    // h() flattens the nested arrays and skips nulls; append() wouldn't.
+    .then((sum) => clear(body).append(h('div', null, compatSummary(sum, req))))
+    .catch((e) => clear(body).append(h('p', { class: 'bad', style: { margin: 0 } }, e.message)));
+  return h('div', { class: 'panel compat-panel' }, h('h2', { class: 'panel-title' }, 'How it plays in this browser'), body);
 }
 
 const TIER_COLOR = { direct: 'var(--method-direct)', browser: 'var(--good-ink)', remux: 'var(--method-remux)', transcode: 'var(--method-transcode)', unplayable: 'var(--bad-strong)', unknown: 'var(--bg4)' };
@@ -191,7 +182,7 @@ function compatSummary(sum, req) {
   const easy = (sum.tiers.direct || 0) + (sum.tiers.browser || 0) + (sum.tiers.remux || 0);
   const pct = (n) => `${Math.round((n / sum.files) * 100)}%`;
   const open = (tier, cause) => titlesModal(cause ? causeLabel(cause, sum) : TIERS[tier].label,
-    () => api('/api/compat/titles', { method: 'POST', body: { ...req, tier, cause } }),
+    () => api('/api/admin/compat/titles', { method: 'POST', body: { ...req, tier, cause } }),
     h('p', { class: 'small muted', style: { margin: '0 0 10px' } }, TIERS[tier].text));
   const headline = sum.tiers.transcode || sum.tiers.unplayable
     ? `${pct(easy)} of your files play here without being converted.`
@@ -203,7 +194,8 @@ function compatSummary(sum, req) {
     .sort((a, b) => TIER_ORDER.indexOf(b.tier) - TIER_ORDER.indexOf(a.tier) || (a.kind === 'audio') - (b.kind === 'audio') || b.files - a.files);
   // Being remote only matters when the server's remote bitrate limit applies.
   const capped = !req.maxBitrate && sum.remote && sum.causes.some((c) => c.kind === 'bitrate');
-  const notes = [req.maxBitrate ? 'this device’s quality setting' : null, req.mode !== 'auto' ? 'this device’s playback method' : null, capped ? 'the server’s limit for streaming from outside your network' : null].filter(Boolean);
+  const quality = (QUALITIES.find(([v]) => v === req.maxBitrate) || [0, `${req.maxBitrate} kbps`])[1];
+  const method = { auto: 'Automatic', direct: 'Prefer Direct Play', remux: 'Always Direct Stream', transcode: 'Always Transcode' }[req.mode] || 'Automatic';
   return [
     h('p', { style: { margin: '0 0 10px' } }, headline),
     h('div', { class: 'compat-bar', role: 'img', 'aria-label': tiers.map((t) => `${TIERS[t].label}: ${sum.tiers[t]}`).join(', ') },
@@ -212,8 +204,9 @@ function compatSummary(sum, req) {
     causes.length ? [h('h3', { class: 'compat-why' }, 'Why files aren’t played as they are'),
       barList(causes.map((c) => ({ label: causeLabel(c, sum), value: c.files, tier: c.tier, onClick: () => open(c.tier, { stage: c.stage, kind: c.kind, key: c.key }) })),
         (v) => plural(v, 'file'), (it) => TIER_COLOR[it.tier], { wrap: true })] : null,
-    h('p', { class: 'help', style: { margin: '10px 0 0' } },
-      `For your libraries in this browser${notes.length ? `, taking into account ${notes.join(' and ')}` : ''}. Assumes each file’s default audio track and no subtitles. Picking image subtitles (PGS, VobSub) means the server converts the video so it can burn them in. A file can have more than one reason. Select a row to see its titles.`),
+    h('p', { class: 'help compat-help' },
+      'This browser’s codecs with this device’s ', h('a', { href: '#/settings/preferences' }, 'playback settings'), ` (${quality} quality, ${method.toLowerCase()} method)${capped ? ' and the server’s limit for streaming from outside your network' : ''}. `,
+      'Assumes each file’s default audio track and no subtitles: picking image subtitles (PGS, VobSub) makes the server convert the video to burn them in. A file can have more than one reason. Select a row to see its titles.'),
   ];
 }
 
@@ -1558,6 +1551,7 @@ async function libraryTab() {
       stat('Shows', st.shows.toLocaleString(), `${st.seasons} seasons · ${st.episodes.toLocaleString()} episodes`),
       stat('Storage', fmtBytes(st.totalBytes), `${st.files.toLocaleString()} files · ${fmtHours(st.totalDuration / 3600)} of video${st.unprobed ? ` · ${st.unprobed} awaiting analysis` : ''}${st.probeErrors ? ` · ${st.probeErrors} unreadable` : ''}`),
       stat('Metadata', `${st.metaMatched} matched`, `${st.metaMissing} not found · ${st.metaPending} pending`)),
+    st.files ? compatPanel() : null,
     st.files ? h('p', { class: 'small dim', style: { margin: '0 0 10px' } }, 'Bars show storage used; file counts are in brackets. Select a row to see its titles.') : null,
     h('div', { class: 'dash-3' },
       panel('Libraries', bucketList('library', st.libraries)),

@@ -14,7 +14,7 @@ import (
 const mp4Caps = `"caps":{"mse":true,"direct":{"mp4":true},"video":{"h264":true},"nativeVideo":{"h264":true},"audio":{"aac":true},"nativeAudio":{"aac":true}}`
 const noMP4Caps = `"caps":{"mse":true,"direct":{},"video":{"h264":true},"nativeVideo":{"h264":true},"audio":{"aac":true},"nativeAudio":{"aac":true}}`
 
-func TestCompatSummaryIsScopedToTheUser(t *testing.T) {
+func TestCompat(t *testing.T) {
 	f := newAccessFixture(t)
 	post := func(token, path, body string, out any) {
 		t.Helper()
@@ -28,31 +28,34 @@ func TestCompatSummaryIsScopedToTheUser(t *testing.T) {
 	}
 
 	var sum compatSummary
-	post(f.admin, "/api/compat", `{`+mp4Caps+`}`, &sum)
+	post(f.admin, "/api/admin/compat", `{`+mp4Caps+`}`, &sum)
 	if sum.Files != 6 || sum.Tiers["direct"] != 6 || len(sum.Causes) != 0 {
-		t.Errorf("admin, mp4 browser: %+v", sum)
+		t.Errorf("mp4 browser: %+v", sum)
 	}
 	sum = compatSummary{}
-	post(f.kid, "/api/compat", `{`+noMP4Caps+`}`, &sum)
-	container := compatCause{Tier: "remux", Cause: stream.Cause{Stage: "direct", Kind: "container", Key: "mp4"}, Files: 3, Bytes: 54}
-	if sum.Files != 3 || sum.Tiers["remux"] != 3 || !slices.Contains(sum.Causes, container) {
-		t.Errorf("kid, no mp4: %+v", sum)
+	post(f.admin, "/api/admin/compat", `{`+noMP4Caps+`}`, &sum)
+	container := compatCause{Tier: "remux", Cause: stream.Cause{Stage: "direct", Kind: "container", Key: "mp4"}, Files: 6, Bytes: 108}
+	if sum.Files != 6 || sum.Tiers["remux"] != 6 || !slices.Contains(sum.Causes, container) {
+		t.Errorf("no mp4: %+v", sum)
 	}
 	// This device's quality setting is taken into account.
 	sum = compatSummary{}
-	post(f.kid, "/api/compat", `{`+mp4Caps+`,"maxBitrate":500}`, &sum)
-	if sum.Tiers["transcode"] != 3 {
-		t.Errorf("kid, 500 kbps: %+v", sum)
+	post(f.admin, "/api/admin/compat", `{`+mp4Caps+`,"maxBitrate":500}`, &sum)
+	if sum.Tiers["transcode"] != 6 {
+		t.Errorf("500 kbps: %+v", sum)
 	}
 
 	var titles []store.LibraryTitle
-	post(f.kid, "/api/compat/titles", `{`+noMP4Caps+`,"tier":"remux","cause":{"stage":"direct","kind":"container","key":"mp4"}}`, &titles)
-	if len(titles) != 2 {
-		t.Fatalf("kid titles: %+v", titles)
+	post(f.admin, "/api/admin/compat/titles", `{`+noMP4Caps+`,"tier":"remux","cause":{"stage":"direct","kind":"container","key":"mp4"}}`, &titles)
+	if len(titles) != 4 {
+		t.Errorf("titles: %+v", titles)
 	}
-	for _, x := range titles {
-		if x.ItemID != familyMovie && x.ItemID != familyShow {
-			t.Errorf("kid sees title %d from another library", x.ItemID)
+
+	// The library-wide report is the admin's; titles are anyone's, within
+	// their libraries.
+	for _, p := range []string{"/api/admin/compat", "/api/admin/compat/titles"} {
+		if code, _ := f.do(t, f.all, "POST", p, `{`+mp4Caps+`,"tier":"direct"}`); code != 403 {
+			t.Errorf("non-admin %s: %d, want 403", p, code)
 		}
 	}
 
