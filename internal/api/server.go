@@ -106,6 +106,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("GET /api/home", u(s.home))
 	mux.Handle("GET /api/items", u(s.listItems))
 	mux.Handle("GET /api/genres", u(s.genres))
+	mux.Handle("GET /api/letters", u(s.letters))
 	mux.Handle("GET /api/search", u(s.search))
 	mux.Handle("GET /api/items/{id}", u(s.itemDetail))
 	mux.Handle("GET /api/items/{id}/children", u(s.itemChildren))

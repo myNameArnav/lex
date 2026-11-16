@@ -228,3 +228,20 @@ test('staleBanner shows the oldest failure until every poller recovers', async (
   b.fail(null, 'start');
   assert.equal(b.el.textContent, 'Can’t reach the server. Retrying…');
 });
+
+test('letterOffsets gives where each rail letter starts in either direction', async () => {
+  const { ui: { letterOffsets, RAIL_LETTERS } } = await loadUI();
+  const counts = { '#': 2, a: 3, c: 1, z: 1, '~': 4 };
+  const asc = letterOffsets(counts);
+  assert.deepEqual(Object.keys(asc).sort(), [...RAIL_LETTERS].sort());
+  assert.equal(asc['#'], 0);
+  assert.equal(asc.a, 2);
+  assert.equal(asc.b, 5); // no "b": the first title after it, a "c"
+  assert.equal(asc.c, 5);
+  assert.equal(asc.z, 6);
+  const desc = letterOffsets(counts, true);
+  assert.equal(desc.z, 4); // after the four past "z"
+  assert.equal(desc.c, 5);
+  assert.equal(desc.a, 6);
+  assert.equal(desc['#'], 9);
+});

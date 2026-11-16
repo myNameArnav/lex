@@ -148,6 +148,24 @@ export function fmtProgram(it) {
 // fmtClock: a time of day (Unix ms) in the viewer's locale, e.g. "9:30 PM".
 export const fmtClock = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
+// The A–Z rail's letters: "#" stands for titles that sort before "a"
+// (digits, punctuation).
+export const RAIL_LETTERS = ['#', ...'abcdefghijklmnopqrstuvwxyz'];
+
+// letterOffsets turns /api/letters counts into where a title-sorted grid
+// reaches each rail letter: the offset of its first title, or where it would
+// be (the next title after it). "~" counts titles past "z", which come after
+// the letters in A→Z order and before them in Z→A order.
+export function letterOffsets(counts, desc = false) {
+  const seq = [...RAIL_LETTERS, '~'];
+  if (desc) seq.reverse();
+  const out = {};
+  let off = 0;
+  for (const b of seq) { out[b] = off; off += counts[b] || 0; }
+  delete out['~'];
+  return out;
+}
+
 export const KIND_LABELS = { movies: 'Movies', shows: 'TV Shows', mixed: 'Mixed' };
 
 // Playback method names, Title Case everywhere in the UI.

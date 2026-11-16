@@ -1,6 +1,7 @@
 package store
 
 import (
+	"maps"
 	"slices"
 	"testing"
 )
@@ -239,5 +240,80 @@ func TestMarkTreePlayedDoesNotRecountWatched(t *testing.T) {
 	}
 	if err := st.MarkTreePlayed(u.ID, 9999, true); err != ErrNotFound {
 		t.Fatalf("MarkTreePlayed(missing) = %v, want ErrNotFound", err)
+	}
+}
+
+// Each letter's offset (the titles in earlier buckets, in either
+// direction) must be where the title-sorted listing reaches that letter.
+func TestLetterCountsMatchTitleOrder(t *testing.T) {
+	st := testStore(t)
+	lib, err := st.CreateLibrary("Mixed", "mixed", []string{"/m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := func(kind, title string) {
+		if _, err := st.InsertItem(&Item{LibraryID: lib.ID, Kind: kind, Title: title, Path: "/m/" + title}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, m := range []string{"2001", "The Abyss", "alien", "Brazil", "brick", "Zodiac", "Élite", "東京", "[REC]"} {
+		add("movie", m)
+	}
+	for _, sh := range []string{"Andor", "Dark", "Zorro"} {
+		add("show", sh)
+	}
+	order := []string{"#"}
+	for c := 'a'; c <= 'z'; c++ {
+		order = append(order, string(c))
+	}
+	order = append(order, "~")
+	bucket := func(sortTitle string) string {
+		switch {
+		case sortTitle < "a":
+			return "#"
+		case sortTitle >= "{":
+			return "~"
+		}
+		return sortTitle[:1]
+	}
+	for _, q := range []ListQuery{{LibraryID: lib.ID}, {LibraryID: lib.ID, Kind: "movie"}, {LibraryID: lib.ID, Kind: "show"}} {
+		counts, err := st.LetterCounts(0, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, desc := range []bool{false, true} {
+			lq := q
+			lq.Desc, lq.Limit = desc, 500
+			items, total, err := st.ListItems(0, lq)
+			if err != nil {
+				t.Fatal(err)
+			}
+			seq := slices.Clone(order)
+			if desc {
+				slices.Reverse(seq)
+			}
+			off, sum := 0, 0
+			for _, b := range seq {
+				n := counts[b]
+				for i := off; i < off+n; i++ {
+					if got := bucket(items[i].SortTitle); got != b {
+						t.Errorf("%+v desc=%v: title %q at %d is in %q, want %q", q, desc, items[i].SortTitle, i, got, b)
+					}
+				}
+				off += n
+				sum += n
+			}
+			if sum != total {
+				t.Errorf("%+v: counts %v sum to %d, total %d", q, counts, sum, total)
+			}
+		}
+	}
+	counts, _ := st.LetterCounts(0, ListQuery{LibraryID: lib.ID, Kind: "show"})
+	if want := map[string]int{"a": 1, "d": 1, "z": 1}; !maps.Equal(counts, want) {
+		t.Errorf("show counts %v, want %v", counts, want)
+	}
+	counts, _ = st.LetterCounts(0, ListQuery{LibraryID: lib.ID, Kind: "movie"})
+	if want := map[string]int{"#": 2, "a": 2, "b": 2, "z": 1, "~": 2}; !maps.Equal(counts, want) {
+		t.Errorf("movie counts %v, want %v", counts, want)
 	}
 }
