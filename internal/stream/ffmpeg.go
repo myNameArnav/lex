@@ -29,6 +29,9 @@ type FFInfo struct {
 	V4L2Device    bool     `json:"v4l2Device"`   // hardware H.264 encoder works
 	HEVCHWDecode  bool     `json:"hevcHwDecode"` // Raspberry Pi 4/5 stateless HEVC decoder (rpivid)
 	HasDRMHwaccel bool     `json:"hasDrmHwaccel"`
+	// Why HEVC hardware decoding is unavailable although /dev/video19
+	// exists (e.g. /dev/media* not passed to the container).
+	HEVCHWDecodeIssue string `json:"hevcHwDecodeIssue,omitempty"`
 }
 
 func DetectFFmpeg(ffmpeg, ffprobe string) FFInfo {
@@ -55,7 +58,8 @@ func DetectFFmpeg(ffmpeg, ffprobe string) FFInfo {
 		fi.HasDRMHwaccel = bytes.Contains(out, []byte("\ndrm"))
 	}
 	if _, err := os.Stat("/dev/video19"); err == nil && fi.HasDRMHwaccel {
-		fi.HEVCHWDecode = true
+		fi.HEVCHWDecodeIssue = hevcDecodeIssue("/dev")
+		fi.HEVCHWDecode = fi.HEVCHWDecodeIssue == ""
 	}
 	// Only trust the hardware encoder after a real (tiny) test encode.
 	if _, err := os.Stat("/dev/video11"); err == nil && slices.Contains(fi.Encoders, "h264_v4l2m2m") {
@@ -466,8 +470,13 @@ func StartJob(ffmpeg string, c Command, p Params, nice int) (*Job, error) {
 	go func() {
 		defer stderr.Close()
 		sc := bufio.NewScanner(stderr)
+		hw := usesHWAccel(args)
 		for sc.Scan() {
 			line := sc.Text()
+			if hw && hwDecodeFailure(line) {
+				NoteHWFallback("transcode", line)
+				hw = false // once per job
+			}
 			j.mu.Lock()
 			j.stderr = append(j.stderr, line)
 			if len(j.stderr) > 30 {

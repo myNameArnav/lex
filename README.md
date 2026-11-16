@@ -127,7 +127,10 @@ docker run -d --name lex -p 127.0.0.1:8420:8420 --user 1000:1000 \
 Or edit the media path in `docker-compose.yml` and run `docker compose up -d`.
 Add `/media` as the library path in Lex. On a Raspberry Pi, add
 `-f docker-compose.rpi.yml` to pass the hardware codec devices through; for
-other arm64 boards build with `--build-arg RPI_FFMPEG=no`.
+other arm64 boards build with `--build-arg RPI_FFMPEG=no`. HEVC hardware
+decoding also needs the media controllers (`/dev/media*`) and a read-only
+`/run/udev`; without them FFmpeg decodes in software and Settings → Transcoding
+says why.
 
 ## Running as a service
 

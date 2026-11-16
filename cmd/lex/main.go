@@ -96,6 +96,10 @@ func main() {
 		st.SaveConfig(c)
 		log.Infof("hardware video detected: HEVC decode=%v, H.264 encode=%v; enabled", ff.HEVCHWDecode, ff.V4L2Device)
 	}
+	if ff.HEVCHWDecodeIssue != "" {
+		log.Warnf("hardware: HEVC decode unavailable: %s", ff.HEVCHWDecodeIssue)
+	}
+	stream.HWFallbackLog = log.Warnf
 	log.Infof("hardware: HEVC decode available=%v (enabled=%v), H.264 encoder available=%v (using %s)", ff.HEVCHWDecode, st.Config().HWDecode, ff.V4L2Device, st.Config().VideoEncoder)
 
 	images := meta.NewImageCache(filepath.Join(abs, "images"))

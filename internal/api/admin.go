@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"lex/internal/store"
+	"lex/internal/stream"
 	"lex/internal/sysstats"
 )
 
@@ -63,6 +64,7 @@ func (s *Server) adminInfo(w http.ResponseWriter, r *http.Request) {
 		"go":         runtime.Version(),
 		"dataDir":    s.DataDir,
 		"ffmpeg":     s.FF,
+		"hwFallback": stream.LastHWFallback(),
 		"imageCache": sysstats.DirSize(s.Images.Dir),
 		"subsCache":  sysstats.DirSize(filepath.Join(s.DataDir, "subs")),
 		"dbSize":     fileSize(filepath.Join(s.DataDir, "lex.db")) + fileSize(filepath.Join(s.DataDir, "lex.db-wal")),
