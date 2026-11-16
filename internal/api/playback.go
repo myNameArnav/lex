@@ -309,6 +309,10 @@ func (s *Server) direct(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if stream.OverRemoteLimit(s.St.Config(), f.Info, s.isRemote(s.clientIP(r))) {
+		writeErr(w, 403, "this file is over the remote streaming limit")
+		return
+	}
 	fh, err := os.Open(s.Cache.Resolve(f))
 	if err != nil {
 		writeErr(w, 404, "file missing on disk")
@@ -389,6 +393,7 @@ func (s *Server) streamFile(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.St.Config()
 	p := stream.ParseParams(f.ID, r.URL.Query())
+	stream.LimitParams(&p, cfg, f.Info, s.isRemote(s.clientIP(r)))
 	if !p.VideoCopy && !cfg.EnableTranscode {
 		writeErr(w, 403, "transcoding is disabled")
 		return
