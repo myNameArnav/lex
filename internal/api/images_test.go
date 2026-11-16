@@ -81,6 +81,7 @@ func TestCastImages(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest("GET", "http://lex.test"+tc.path, nil)
+			r.Header.Set("Accept-Encoding", "gzip")
 			if tc.auth {
 				r.AddCookie(&http.Cookie{Name: "lex_token", Value: token})
 			}
@@ -90,6 +91,9 @@ func TestCastImages(t *testing.T) {
 				t.Fatalf("got %d: %s", w.Code, w.Body.String())
 			}
 			if tc.want == 200 {
+				if ce := w.Header().Get("Content-Encoding"); ce != "" {
+					t.Fatalf("portrait served with Content-Encoding %q", ce)
+				}
 				if !strings.HasPrefix(w.Header().Get("Cache-Control"), "private,") {
 					t.Fatal("portrait response must remain private")
 				}
@@ -154,6 +158,7 @@ func TestMetadataPosterProxy(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest("GET", "http://lex.test"+"/api/admin/metadata/poster?url="+url.QueryEscape(tc.url), nil)
+			r.Header.Set("Accept-Encoding", "gzip")
 			if tc.token != "" {
 				r.AddCookie(&http.Cookie{Name: "lex_token", Value: tc.token})
 			}
@@ -163,6 +168,9 @@ func TestMetadataPosterProxy(t *testing.T) {
 				t.Fatalf("got %d: %s", w.Code, w.Body.String())
 			}
 			if tc.want == 200 {
+				if ce := w.Header().Get("Content-Encoding"); ce != "" {
+					t.Fatalf("poster served with Content-Encoding %q", ce)
+				}
 				if !strings.HasPrefix(w.Header().Get("Cache-Control"), "private,") {
 					t.Fatal("poster response must be private")
 				}
