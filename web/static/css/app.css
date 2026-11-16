@@ -322,6 +322,10 @@ main { padding: var(--top) var(--sar) 0 var(--sal); min-height: 100vh; }
 .hero-info h1 { font-size: 40px; line-height: 1.1; margin: 4px 0 8px; letter-spacing: -.025em; font-weight: 800; }
 .hero-info .kicker { color: var(--accent); font-weight: 700; font-size: 14px; }
 .facts { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--text2); font-weight: 600; margin-bottom: 10px; align-items: center; }
+.facts .pill.compat[data-tier="direct"], .facts .pill.compat[data-tier="browser"] { border-color: var(--method-direct); color: var(--method-direct); }
+.facts .pill.compat[data-tier="remux"] { border-color: var(--method-remux); color: var(--method-remux); }
+.facts .pill.compat[data-tier="transcode"], .facts .pill.compat[data-tier="unplayable"] { border-color: var(--method-transcode); color: var(--method-transcode); }
+.compat-note { color: var(--text3); margin: 4px 0 0; }
 .facts .pill { border: 1px solid rgba(255,255,255,.25); border-radius: 4px; padding: 0 6px; font-size: 12px; }
 .facts .star { color: var(--accent); }
 .tagline { font-style: italic; color: var(--text2); margin: 12px 0 6px; }
@@ -593,6 +597,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .bar-item { display: grid; grid-template-columns: minmax(90px, 180px) 1fr auto; gap: 10px; align-items: center; font-size: 13px; }
 .bar-item .track { height: 10px; background: var(--bg4); border-radius: 6px; overflow: hidden; }
 .bar-item .track i { display: block; height: 100%; border-radius: 6px; background: var(--accent); }
+.compat-bar { display: flex; gap: 2px; height: 14px; border-radius: 7px; overflow: hidden; margin-bottom: 14px; }
+.compat-bar i { display: block; min-width: 3px; }
+h3.compat-why { font-size: 14px; margin: 20px 0 10px; }
 .bar-item.wrap > .ellipsis { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
 /* Horizontal drags scrub the read-out; vertical ones still scroll the page. */
 .chart { width: 100%; height: 180px; display: block; touch-action: pan-y; }

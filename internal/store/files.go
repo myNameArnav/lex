@@ -392,3 +392,8 @@ func (s *Store) ClearHistory() error {
 	_, err := s.db.Exec(`DELETE FROM history`)
 	return err
 }
+
+// FilesForUser returns the files in the libraries user uid may see.
+func (s *Store) FilesForUser(uid int64) ([]*File, error) {
+	return s.queryFiles(`SELECT `+fileCols+` FROM files WHERE item_id IN (SELECT i.id FROM items i WHERE `+libAccess+`)`, sql.Named("uid", uid))
+}

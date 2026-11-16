@@ -169,10 +169,25 @@ func (s *Store) LibraryTitles(dim, key string) ([]LibraryTitle, error) {
 	if dim == "container" {
 		arg = strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(strings.ToLower(key))
 	}
+	return s.titlesWhere(cond, arg)
+}
+
+// TitlesForFiles lists the titles the given files belong to, like
+// LibraryTitles.
+func (s *Store) TitlesForFiles(ids []int64) ([]LibraryTitle, error) {
+	if len(ids) == 0 {
+		return []LibraryTitle{}, nil
+	}
+	return s.titlesWhere(`f.id IN (SELECT value FROM json_each(?))`, jsonString(ids))
+}
+
+// titlesWhere groups the files matching cond by title (episodes under their
+// show), largest first.
+func (s *Store) titlesWhere(cond string, args ...any) ([]LibraryTitle, error) {
 	rows, err := s.db.Query(`SELECT g.id, g.kind, g.title, g.year, x.n, x.b FROM (
 		SELECT CASE WHEN i.kind='episode' AND i.show_id>0 THEN i.show_id ELSE i.id END gid, COUNT(*) n, SUM(f.size) b
 		FROM files f JOIN items i ON i.id=f.item_id WHERE `+cond+` GROUP BY gid) x
-		JOIN items g ON g.id=x.gid ORDER BY x.b DESC LIMIT 500`, arg)
+		JOIN items g ON g.id=x.gid ORDER BY x.b DESC LIMIT 500`, args...)
 	if err != nil {
 		return nil, err
 	}

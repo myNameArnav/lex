@@ -2,6 +2,7 @@ import { h, $, clear, icons, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrat
 import { api, img, castImg } from './api.js';
 import { openPlayer, isPlayerOpen, closePlayer } from './player.js';
 import { installShortcuts, showShortcuts, MOD } from './shortcuts.js';
+import { compatRequest, TIERS, causeLabel, verdictCauses } from './caps.js';
 
 // caps: { subtitleSearch, cacheEnabled, liveTv } from the server (see /api/me).
 export const state = { me: null, caps: {}, serverName: 'Lex', libraries: [], version: '' };
@@ -1027,6 +1028,7 @@ function mediaView(ctx, d) {
   const isEp = it.kind === 'episode';
   const poster = heroPoster(it, isEp ? 'thumb' : 'poster', isEp);
   const file = d.files?.[0];
+  const compat = file ? compatBadge(it, file) : null;
   const info = [];
   if (isEp && d.show) {
     info.push(h('a', { class: 'kicker', href: `#/item/${d.show.id}?season=${it.parentId}` }, `${d.show.title} · Season ${it.season}`));
@@ -1035,6 +1037,7 @@ function mediaView(ctx, d) {
   info.push(facts(it, [
     isEp ? h('span', null, fmtEpisode(it)) : null,
     file ? h('span', { class: 'pill' }, [resLabel(file.width, file.height), file.hdr].filter(Boolean).join(' ') || file.container) : null,
+    compat?.pill,
     file?.cached ? h('span', { class: 'pill', title: 'Plays from the SSD cache' }, 'SSD') : null,
     d.segments?.find((s) => s.kind === 'intro') ? h('span', { class: 'pill', title: 'Intro detected' }, 'Intro ✓') : null,
     d.segments?.find((s) => s.kind === 'credits') ? h('span', { class: 'pill', title: 'End credits detected' }, 'Credits ✓') : null,
@@ -1051,7 +1054,7 @@ function mediaView(ctx, d) {
   if (it.tagline) info.push(h('div', { class: 'tagline' }, it.tagline));
   info.push(h('p', { class: 'overview' }, it.overview || (it.metaStatus === 0 ? 'Fetching details…' : 'No description available.')));
   retryWhileFetching(ctx, it);
-  if (file) info.push(fileSummary(file));
+  if (file) info.push(fileSummary(file), compat.note);
   if (isEp) {
     // Long titles truncate inside the button rather than widen the page.
     const epLink = (e, dir) => {
@@ -1066,6 +1069,30 @@ function mediaView(ctx, d) {
   if (director.length) info.push(h('p', { class: 'muted small' }, 'Directed by ', director.map((p, i) => [i ? ', ' : '', h('a', { class: 'plain-link', href: personHref(p.name) }, p.name)])));
   if (it.studios?.length) info.push(h('p', { class: 'muted small', style: { marginTop: '4px' } }, it.studios.slice(0, 4).join(' · ')));
   return h('div', null, hero(it, poster, info, isEp && d.show ? d.show : it), castRow(it, true));
+}
+
+// compatBadge says how the file the Play button plays (the first) plays in
+// this browser: a pill next to the resolution, and the reasons below the
+// file summary when the server has to do the work. Both stay empty until the
+// server answers, and on error.
+function compatBadge(it, file) {
+  const pill = h('span', { class: 'pill compat', hidden: true });
+  const note = h('p', { class: 'small compat-note', hidden: true });
+  api(`/api/items/${it.id}/compat`, { method: 'POST', body: compatRequest() }).then((r) => {
+    const v = r.files.find((f) => f.fileId === file.id);
+    if (!v || v.tier === 'unknown') return;
+    const tier = TIERS[v.tier];
+    const why = verdictCauses(v.tier, v.causes).map((c) => causeLabel(c, r));
+    pill.textContent = tier.label;
+    pill.dataset.tier = v.tier;
+    pill.title = [`In this browser: ${tier.text}`, ...why].join('\n');
+    pill.hidden = false;
+    if (['remux', 'transcode', 'unplayable'].includes(v.tier) && why.length) {
+      note.textContent = `${tier.label} in this browser: ${why.join('; ')}.`;
+      note.hidden = false;
+    }
+  }).catch(() => {});
+  return { pill, note };
 }
 
 function fileSummary(f) {
