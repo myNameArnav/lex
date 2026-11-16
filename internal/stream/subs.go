@@ -3,6 +3,8 @@ package stream
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -55,7 +57,7 @@ func IsASS(codec string) bool { return codec == "ass" || codec == "ssa" }
 // GetASS returns a path to the raw ASS/SSA script for a styled subtitle
 // stream, so the browser can render it with libass (JASSUB).
 func (s *Subs) GetASS(ctx context.Context, f *store.File, idx int) (string, error) {
-	if idx >= 1000 {
+	if IsExternal(idx) {
 		for _, ext := range library.ExternalSubs(f.Path) {
 			if ext.Index == idx && IsASS(ext.Codec) {
 				return ext.ExternalPath, nil
@@ -286,20 +288,58 @@ func exists(p string) bool {
 
 // Get returns a path to a WebVTT file for the given subtitle stream.
 func (s *Subs) Get(ctx context.Context, f *store.File, idx int) (string, error) {
+	if IsExternal(idx) {
+		return s.getExternal(ctx, f, idx)
+	}
 	dst := s.cachePath(f, idx)
 	if exists(dst) {
 		return dst, nil
 	}
-	if idx >= 1000 {
-		for _, ext := range library.ExternalSubs(f.Path) {
-			if ext.Index == idx {
-				return dst, s.run(ctx, fmt.Sprintf("ext-%d-%d", f.ID, idx), func() error { return s.convertExternal(ext.ExternalPath, dst) })
-			}
-		}
-		return "", fmt.Errorf("subtitle %d not found", idx)
-	}
 	p, _, err := s.Serve(ctx, f, idx, "vtt", 24*time.Hour)
 	return p, err
+}
+
+// IsExternal reports whether idx is a sidecar subtitle's index (see
+// library.ExternalSubs); downloaded subtitles are above that range.
+func IsExternal(idx int) bool {
+	return idx >= library.ExternalSubBase && idx < store.DownloadedSubBase
+}
+
+// getExternal converts a sidecar subtitle to WebVTT. The cache is keyed on
+// the sidecar itself (path, size and mtime), so an edited, replaced or
+// renamed sidecar is converted again rather than served stale.
+func (s *Subs) getExternal(ctx context.Context, f *store.File, idx int) (string, error) {
+	for _, ext := range library.ExternalSubs(f.Path) {
+		if ext.Index != idx {
+			continue
+		}
+		dst, err := s.externalCachePath(f, &ext)
+		if err != nil {
+			return "", err
+		}
+		if exists(dst) {
+			return dst, nil
+		}
+		return dst, s.run(ctx, "ext-"+filepath.Base(dst), func() error { return s.convertExternal(ext.ExternalPath, dst) })
+	}
+	return "", fmt.Errorf("subtitle %d not found", idx)
+}
+
+// externalCachePath is where the WebVTT conversion of a sidecar goes:
+// <fileID>-<video mtime>-<index>-<sidecar key>.vtt. The leading fields match
+// the other cache entries so cleanup can treat them alike.
+func (s *Subs) externalCachePath(f *store.File, ext *store.Stream) (string, error) {
+	st, err := os.Stat(ext.ExternalPath)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(s.dir, fmt.Sprintf("%d-%d-%d-%s.vtt", f.ID, f.Mtime, ext.Index, sidecarKey(ext.ExternalPath, st))), nil
+}
+
+// sidecarKey is a short hash identifying one version of a sidecar file.
+func sidecarKey(path string, st os.FileInfo) string {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%d", path, st.Size(), st.ModTime().UnixNano())))
+	return hex.EncodeToString(h[:6])
 }
 
 // Prefetch starts extracting embedded text subtitles in the background so

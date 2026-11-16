@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"lex/internal/library"
 	"lex/internal/store"
 	"lex/internal/stream"
 )
@@ -557,7 +558,7 @@ func (s *Server) subtitle(w http.ResponseWriter, r *http.Request) {
 		format = "ass"
 	}
 	switch {
-	case idx < 1000:
+	case idx < library.ExternalSubBase:
 		// Embedded: may still be extracting; then send what's ready and let
 		// the player come back for the rest.
 		p, partial, err = s.Subs.Serve(r.Context(), f, idx, format, 3*time.Second)
@@ -591,7 +592,13 @@ func (s *Server) subtitle(w http.ResponseWriter, r *http.Request) {
 		w.Write(partial)
 		return
 	}
-	w.Header().Set("Cache-Control", "private, max-age=86400")
+	if stream.IsExternal(idx) {
+		// Sidecars can be edited in place while the URL stays the same:
+		// revalidate (cheap, by Last-Modified of the cached conversion).
+		w.Header().Set("Cache-Control", "private, no-cache")
+	} else {
+		w.Header().Set("Cache-Control", "private, max-age=86400")
+	}
 	http.ServeFile(w, r, p)
 }
 
