@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"lex/internal/fsx"
 	"lex/internal/store"
 )
 
@@ -297,6 +298,35 @@ func (c *ImageCache) Path(ref string) string {
 // ThumbPath is where generated video thumbnails for an item go.
 func (c *ImageCache) ThumbPath(itemID int64) string {
 	return filepath.Join(c.Dir, fmt.Sprintf("thumb-%d.jpg", itemID))
+}
+
+// ForgetThumb removes an item's generated thumbnail, e.g. because the file
+// behind it was replaced; it's generated again on the next request.
+func (c *ImageCache) ForgetThumb(itemID int64) {
+	fsx.Remove(c.Dir, filepath.Base(c.ThumbPath(itemID)))
+}
+
+// SweepThumbs removes generated thumbnails (and leftover temporary files)
+// of items that no longer exist. Files modified after cutoff are kept.
+func (c *ImageCache) SweepThumbs(items map[int64]bool, cutoff time.Time) (removed int) {
+	for _, e := range fsx.List(c.Dir) {
+		rest, ok := strings.CutPrefix(e.Name, "thumb-")
+		if !ok || e.Dir || e.ModTime.After(cutoff) {
+			continue
+		}
+		rest, ok = strings.CutSuffix(rest, ".jpg.tmp.jpg")
+		if !ok {
+			rest, ok = strings.CutSuffix(rest, ".jpg")
+		}
+		id, err := strconv.ParseInt(rest, 10, 64)
+		if !ok || err != nil || id <= 0 || items[id] {
+			continue
+		}
+		if fsx.Remove(c.Dir, e.Name) == nil {
+			removed++
+		}
+	}
+	return removed
 }
 
 func yearOf(date string) int {

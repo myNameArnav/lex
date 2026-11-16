@@ -68,6 +68,7 @@ func (s *Server) adminInfo(w http.ResponseWriter, r *http.Request) {
 		"hwFallback": stream.LastHWFallback(),
 		"imageCache": sysstats.DirSize(s.Images.Dir),
 		"subsCache":  sysstats.DirSize(filepath.Join(s.DataDir, "subs")),
+		"trickplay":  trickplaySize(s),
 		"dbSize":     fileSize(filepath.Join(s.DataDir, "lex.db")) + fileSize(filepath.Join(s.DataDir, "lex.db-wal")),
 		"webhookUrl": "/api/webhook/scan?token=" + cfg.WebhookToken,
 		// Containers (e.g. Radarr under Docker/Podman) often can't reach the
@@ -118,6 +119,13 @@ func lanBases(listen string, ifaceAddrs []string) []string {
 		}
 	}
 	return out
+}
+
+func trickplaySize(s *Server) int64 {
+	if s.Trick == nil {
+		return 0
+	}
+	return sysstats.DirSize(s.Trick.Dir())
 }
 
 func fileSize(p string) int64 {
