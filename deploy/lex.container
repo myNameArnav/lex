@@ -28,6 +28,17 @@ AddDevice=-/dev/dri
 AddDevice=-/dev/dma_heap
 AddDevice=-/dev/vchiq
 AddDevice=-/dev/vcio
+# The HEVC decoder (/dev/video19) is found through the media controller and
+# libudev; without these FFmpeg prints "Failed to find a device for V4L2 HEVC
+# stateless" and decodes on the CPU. Normally media0 is rpi-hevc-dec and
+# media1 bcm2835-codec, but the numbers follow driver load order (and reloads
+# of bcm2835_codec), so a couple of spares are passed too. Owned by the video
+# group (GroupAdd=44 above). Check: cat /sys/bus/media/devices/media*/model
+AddDevice=-/dev/media0
+AddDevice=-/dev/media1
+AddDevice=-/dev/media2
+AddDevice=-/dev/media3
+Volume=/run/udev:/run/udev:ro
 Volume=/srv/media:/media:ro
 Volume=/var/lib/lex:/data
 Environment=LEX_DATA=/data

@@ -19,6 +19,7 @@ import (
 	"lex/internal/logx"
 	"lex/internal/proc"
 	"lex/internal/store"
+	"lex/internal/stream"
 )
 
 const (
@@ -282,6 +283,7 @@ func (g *Generator) generate(f *store.File) error {
 	for {
 		select {
 		case err := <-done:
+			stream.CheckHWFallback("trickplay", args, stderr.String())
 			if err != nil {
 				os.RemoveAll(tmp)
 				return fmt.Errorf("%v %s", err, strings.TrimSpace(stderr.String()))

@@ -1,4 +1,5 @@
-# Raspberry Pi 4 hardware video: HEVC decoder (/dev/video19), H.264
+# Raspberry Pi 4 hardware video: HEVC decoder (/dev/video19, found via the
+# media controller /dev/media* and /run/udev), H.264
 # encoder (/dev/video10-12), DMA heaps and vchiq (for vcgencmd stats).
 # Needs dtoverlay=vc4-kms-v3d, gpu_mem >= 128 and the codec modules loaded.
 services:
@@ -15,3 +16,10 @@ services:
       - /dev/dma_heap
       - /dev/vchiq
       - /dev/vcio
+      # Media controllers (rpi-hevc-dec, bcm2835-codec). Without them FFmpeg
+      # can't find the HEVC decoder and silently decodes in software. Check
+      # the numbering with: cat /sys/bus/media/devices/media*/model
+      - /dev/media0
+      - /dev/media1
+    volumes:
+      - /run/udev:/run/udev:ro
