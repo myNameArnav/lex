@@ -249,6 +249,29 @@ func (t *TVmaze) Season(ctx context.Context, id string, season int) (*SeasonMeta
 	return sm, nil
 }
 
+// EpisodesByDate finds the regular episodes that aired on the given dates
+// (YYYY-MM-DD). When several aired on one day, the first is used.
+func (t *TVmaze) EpisodesByDate(ctx context.Context, id string, dates []string) (map[string]EpisodeMeta, error) {
+	eps, err := t.episodes(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	want := map[string]bool{}
+	for _, d := range dates {
+		want[d] = true
+	}
+	out := map[string]EpisodeMeta{}
+	for _, e := range eps {
+		if e.Number == nil || e.Season <= 0 || e.Type == "significant_special" || e.Type == "insignificant_special" || !want[e.Airdate] {
+			continue
+		}
+		if cur, ok := out[e.Airdate]; !ok || e.Season < cur.Season || e.Season == cur.Season && *e.Number < cur.Episode {
+			out[e.Airdate] = tvEp(e, e.Season, *e.Number)
+		}
+	}
+	return out, nil
+}
+
 func tvEp(e tvmazeEpisode, season, num int) EpisodeMeta {
 	em := EpisodeMeta{Season: season, Episode: num, Title: e.Name, Overview: stripHTML(e.Summary), Premiere: e.Airdate, Rating: e.Rating.Average, Runtime: e.Runtime}
 	if e.Image != nil {

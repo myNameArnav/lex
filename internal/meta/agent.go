@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -450,6 +452,63 @@ func urlRef(u string) string {
 
 type showSource interface {
 	Season(ctx context.Context, id string, season int) (*SeasonMeta, error)
+	// EpisodesByDate finds the regular episodes that aired on the given
+	// dates (YYYY-MM-DD), keyed by date.
+	EpisodesByDate(ctx context.Context, id string, dates []string) (map[string]EpisodeMeta, error)
+}
+
+var reDatedKey = regexp.MustCompile(`\|D(\d{4})-(\d{2})-(\d{2})$`)
+
+// unplacedDate returns the air date of a date-named episode the scanner
+// grouped by year (season = year, episode = MMDD) that hasn't been placed
+// in its provider's season yet.
+func unplacedDate(e *store.Item) (string, bool) {
+	m := reDatedKey.FindStringSubmatch(e.Path)
+	if m == nil {
+		return "", false
+	}
+	y, _ := strconv.Atoi(m[1])
+	mo, _ := strconv.Atoi(m[2])
+	d, _ := strconv.Atoi(m[3])
+	if e.Season != y || e.Episode != mo*100+d {
+		return "", false
+	}
+	return m[1] + "-" + m[2] + "-" + m[3], true
+}
+
+// placeDated moves date-named episodes into the season and number their
+// provider gives the episode that aired that day.
+func (a *Agent) placeDated(ctx context.Context, src showSource, id string, episodes []*store.Item, pendingOnly bool) (placed int, err error) {
+	byDate := map[string][]*store.Item{}
+	var dates []string
+	for _, e := range episodes {
+		d, ok := unplacedDate(e)
+		if !ok || pendingOnly && e.MetaStatus != store.MetaPending {
+			continue
+		}
+		if byDate[d] == nil {
+			dates = append(dates, d)
+		}
+		byDate[d] = append(byDate[d], e)
+	}
+	if len(dates) == 0 {
+		return 0, nil
+	}
+	found, err := src.EpisodesByDate(ctx, id, dates)
+	for d, em := range found {
+		// Two items on one date (e.g. two parts) can't both take the
+		// provider's single episode: the first gets it, the rest stay
+		// grouped by year.
+		e := byDate[d][0]
+		ok, perr := a.st.PlaceEpisode(e.ID, em.Season, em.Episode)
+		if perr != nil {
+			return placed, perr
+		}
+		if ok {
+			placed++
+		}
+	}
+	return placed, err
 }
 
 func (a *Agent) refreshShow(ctx context.Context, it *store.Item, g *store.MatchGuard) (bool, error) {
@@ -574,7 +633,27 @@ func (a *Agent) refreshChildren(ctx context.Context, show *store.Item, pendingOn
 		bySeason[e.ParentID] = append(bySeason[e.ParentID], e)
 	}
 	src, id := a.showSource(show)
-	var fetchErr error
+	var fetchErr, placeErr error
+	if src != nil && id != "" {
+		var placed int
+		placed, placeErr = a.placeDated(ctx, src, id, episodes, pendingOnly)
+		if placeErr != nil {
+			placeErr = fmt.Errorf("episodes by air date: %w", placeErr)
+			fetchErr = placeErr
+		}
+		if placed > 0 {
+			if seasons, err = a.st.Children(show.ID, 0); err != nil {
+				return err
+			}
+			if episodes, err = a.st.ShowEpisodes(show.ID, 0); err != nil {
+				return err
+			}
+			bySeason = map[int64][]*store.Item{}
+			for _, e := range episodes {
+				bySeason[e.ParentID] = append(bySeason[e.ParentID], e)
+			}
+		}
+	}
 	sort.Slice(seasons, func(i, j int) bool { return seasons[i].Season < seasons[j].Season })
 	for _, season := range seasons {
 		eps := bySeason[season.ID]
@@ -587,8 +666,15 @@ func (a *Agent) refreshChildren(ctx context.Context, show *store.Item, pendingOn
 				continue
 			}
 		}
+		// A year of date-named episodes the provider didn't place isn't
+		// one of its seasons.
+		allDated := len(eps) > 0
+		for _, e := range eps {
+			_, dated := unplacedDate(e)
+			allDated = allDated && dated
+		}
 		var sm *SeasonMeta
-		if src != nil && id != "" {
+		if src != nil && id != "" && !allDated {
 			sm, err = src.Season(ctx, id, season.Season)
 			if err != nil && !errors.Is(err, ErrNoMatch) {
 				// A network error, not a miss: leave the season and its
@@ -628,12 +714,16 @@ func (a *Agent) refreshChildren(ctx context.Context, show *store.Item, pendingOn
 			}
 		}
 		for _, e := range eps {
+			_, dated := unplacedDate(e)
+			if dated && placeErr != nil {
+				continue // retried on the next run
+			}
 			files, _ := a.st.ItemFiles(e.ID)
 			thumb := ""
 			if cfg.UseLocalMetadata && len(files) > 0 {
 				thumb = localEpisodeThumb(files[0].Path)
 			}
-			if em, ok := epMeta[e.Episode]; ok {
+			if em, ok := epMeta[e.Episode]; ok && !dated {
 				e.Title = em.Title
 				if e.EpisodeEnd > e.Episode {
 					if em2, ok := epMeta[e.EpisodeEnd]; ok && em2.Title != "" && em2.Title != em.Title {
