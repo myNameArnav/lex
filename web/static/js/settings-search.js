@@ -15,6 +15,7 @@ export const PAGES = [
   ['transcoding', 'Transcoding', 'cpu', true],
   ['metadata', 'Metadata', 'film', true],
   ['cache', 'SSD cache', 'drive', true],
+  ['backups', 'Backups', 'archive', true],
   ['libraries', 'Libraries', 'library', true],
   ['users', 'Users', 'users', true],
   ['devices', 'Devices', 'devices', true],
@@ -163,6 +164,14 @@ const INDEX = {
     ]],
     ['Status', 'cache usage', []],
     ['Cached files', 'clear cache remove', []],
+  ],
+  backups: [
+    ['Database backups', 'backup restore database snapshot', [
+      ['Back up daily', 'schedule automatic'],
+      ['Backup folder', 'path directory disk'],
+      ['Backups to keep', 'retention count'],
+    ]],
+    ['Saved backups', 'download delete restore back up now', []],
   ],
   libraries: [],
   users: [

@@ -112,6 +112,7 @@ use `-addr :8420` for LAN access behind a firewall, and read
 | `-ffmpeg` / `-ffprobe` | `LEX_FFMPEG` / `LEX_FFPROBE` | from `PATH` |
 | `-debug` | `LEX_DEBUG=1` | off |
 | `-version`, `-healthcheck` | — | print version / probe the server and exit |
+| `-restore <file>` | — | replace the database with a backup and exit (stop Lex first) |
 
 ## Docker
 
@@ -145,6 +146,23 @@ peers**. Clients outside **Local networks** get the **Remote bitrate limit**.
 Settings → Server → **Sonarr & Radarr** connects Lex's rescan webhook with one
 click (Lex adds it through their API, trying its addresses until the app's own
 Test passes). The webhook URL carries its own token; keep it private.
+
+## Backups
+
+Lex backs up its database (users, watch history, matches, collections and
+settings) daily and before every upgrade that changes it, into
+`<data>/backups` or the folder set in Settings → Backups, keeping the newest
+seven of each kind. Settings → Backups lists them and can back up now or
+download one. Artwork, subtitles and seek previews aren't backed up; Lex
+rebuilds them.
+
+To restore, stop Lex and run `lex -data <data> -restore <file>`; the current
+database is backed up first. With the container image:
+
+```sh
+docker run --rm -v lex-data:/data ghcr.io/mynamearnav/lex:latest \
+  -restore /data/backups/<file>
+```
 
 ## Development
 

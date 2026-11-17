@@ -108,6 +108,13 @@ type Config struct {
 	// HistoryRetentionDays is how long playback history is kept; older plays
 	// are pruned in the background. 0 keeps it forever.
 	HistoryRetentionDays int `json:"historyRetentionDays"`
+
+	// Database backups. BackupDir empty = <data>/backups (otherwise a
+	// "lex-backups" folder inside it). BackupKeep is how many of each kind
+	// (daily, manual, pre-migration, pre-restore) are kept.
+	BackupDaily bool   `json:"backupDaily"`
+	BackupDir   string `json:"backupDir"`
+	BackupKeep  int    `json:"backupKeep"`
 }
 
 // TVChannel is a Live TV channel an admin made. Kind "picked" airs just
@@ -177,6 +184,9 @@ func DefaultConfig() Config {
 		CreditsMinSecs:     15,
 
 		HistoryRetentionDays: 365,
+
+		BackupDaily: true,
+		BackupKeep:  7,
 	}
 }
 
@@ -288,6 +298,10 @@ func (c *Config) normalize() {
 	if c.HistoryRetentionDays > 36500 {
 		c.HistoryRetentionDays = 36500
 	}
+	if c.BackupKeep < 1 || c.BackupKeep > 100 {
+		c.BackupKeep = d.BackupKeep
+	}
+	c.BackupDir = strings.TrimSpace(c.BackupDir)
 	if c.WebhookToken == "" {
 		c.WebhookToken = RandomToken(12)
 	}

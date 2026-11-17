@@ -233,6 +233,13 @@ func Open(dataDir string) (*Store, error) {
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(2)
 	db.SetConnMaxIdleTime(5 * time.Minute)
+	// A failed or unwanted upgrade must be recoverable, so a database that
+	// has migrations to apply is backed up first. If that fails, Lex stops
+	// rather than migrate without a way back.
+	if _, err := backupBeforeMigrating(context.Background(), db, dataDir); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("back up before migrating (free some space or fix the backup folder, then start again): %w", err)
+	}
 	if err := migrate(context.Background(), db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
