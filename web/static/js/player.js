@@ -10,6 +10,7 @@ import { MseEngine, clock } from './mse.js';
 import { bufferingCause } from './buffering.js';
 import { AudioFX, audioFxSupported, fxLabel } from './audio-fx.js';
 import { PgsRenderer } from './pgs.js';
+import { versionLabel, orderFiles, chosenFile, rememberFile } from './versions.js';
 
 let current = null;
 
@@ -456,8 +457,8 @@ class Player {
       this.detail = d;
       this.item = d.item;
       this.segments = d.segments || [];
-      this.files = d.files || [];
-      this.file = this.files[0];
+      this.files = orderFiles(d.files || []);
+      this.file = chosenFile(this.item.id, this.files);
       if (!this.file) throw new Error('No playable file for this item');
       const aud = pickAudio(this.file, prefs.get('audioLang'));
       this.audio = aud === -1 ? -1 : aud.index;
@@ -1953,7 +1954,7 @@ class Player {
         return page('Chapters', list.map((c, i) => ({ label: c.label, right: fmtTime(c.start), active: i === cur, on: () => { this.seekTo(c.start); this.closeMenu(); } })));
       }
       case 'version':
-        return page('Version', this.files.map((f) => ({ label: `${resLabel(f.width, f.height)} ${(f.vcodec || '').toUpperCase()}`, right: fmtBytes(f.size), active: this.file.id === f.id, on: () => { this.file = { ...f, subtitles: f.subtitles }; this.chaptersDrawn = false; this.closeMenu(); this.replan(); } })));
+        return page('Version', this.files.map((f) => ({ label: versionLabel(f, this.files, { size: false }), right: fmtBytes(f.size), active: this.file.id === f.id, on: () => { this.file = { ...f, subtitles: f.subtitles }; rememberFile(this.item.id, f.id, this.files); this.chaptersDrawn = false; this.closeMenu(); this.replan(); } })));
     }
     m.append(h('div', { class: 'pm-title' }, 'Settings'));
     m.append(row('Quality', this.qualityLabel(this.quality), 'quality'));
@@ -1961,7 +1962,7 @@ class Player {
     m.append(row('Speed', this.video.playbackRate === 1 ? 'Normal' : `${this.video.playbackRate}x`, 'speed'));
     const chaps = this.chapters();
     if (chaps.length > 1) m.append(row('Chapters', chaps[this.chapterAt(this.video.currentTime, chaps)]?.label || chaps[0].label, 'chapters'));
-    if (this.files.length > 1) m.append(row('Version', `${resLabel(this.file.width, this.file.height)} ${(this.file.vcodec || '').toUpperCase()}`, 'version'));
+    if (this.files.length > 1) m.append(row('Version', versionLabel(this.files.find((f) => f.id === this.file.id) || this.file, this.files, { size: false }), 'version'));
     m.append(h('div', { class: 'pm-sep' }));
     m.append(sw('Stats for nerds', !!this.statsEl, () => this.toggleStats(), 'Shortcut: I'));
     m.append(sw('Autoplay next episode', prefs.get('autoplayNext'), (v) => { prefs.set('autoplayNext', v); if (!v) this.cancelUpNext(false); }));

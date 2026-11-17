@@ -212,6 +212,8 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 type fileView struct {
 	*store.File
 	Name      string         `json:"name"`
+	Edition   string         `json:"edition,omitempty"` // from the file name: tells versions apart
+	Part      int            `json:"part,omitempty"`    // cd1/part 2…: one part of a split film
 	Subtitles []store.Stream `json:"subtitles"`
 	Cached    bool           `json:"cached"`
 }
@@ -220,7 +222,8 @@ func (s *Server) fileViews(itemID int64, admin bool) []fileView {
 	files, _ := s.St.ItemFiles(itemID)
 	out := []fileView{}
 	for _, f := range files {
-		fv := fileView{File: f, Name: filepath.Base(f.Path), Subtitles: []store.Stream{}, Cached: s.Cache.IsCached(f.ID)}
+		fv := fileView{File: f, Name: filepath.Base(f.Path), Edition: library.Edition(f.Path), Part: library.Part(f.Path),
+			Subtitles: []store.Stream{}, Cached: s.Cache.IsCached(f.ID)}
 		if f.Info != nil {
 			for _, st := range f.Info.Streams {
 				if st.Type == "subtitle" {
