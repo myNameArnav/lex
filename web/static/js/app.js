@@ -661,20 +661,20 @@ export function landCard(it, { playOnClick = true } = {}) {
   return card;
 }
 
-// The ⋯ on a Continue Watching / Next Up card. Unwatching an in-progress
-// title clears its resume point, which takes it off Continue Watching.
+// The ⋯ on a Continue Watching / Next Up card. Removing a title from
+// Continue Watching clears its resume point and leaves its watched state be.
 function landMenuButton(it, title, card) {
   const ud = it.userData || {};
-  const act = async (played, msg) => {
+  const act = async (req, msg) => {
     // The card goes away: keep focus in the row on its neighbour.
     const c = card(), near = c.nextElementSibling || c.previousElementSibling;
-    if (!(await run(null, () => api(`/api/items/${it.id}/played`, { method: 'POST', body: { played } }), msg))) return;
+    if (!(await run(null, req, msg))) return;
     const key = near?.querySelector('[data-focus-key]')?.dataset.focusKey;
     if (key && c.contains(document.activeElement)) focusAfterRoute(key);
     refreshSoft();
   };
-  const items = [{ label: 'Mark watched', icon: 'check', onClick: () => act(true, 'Marked watched') }];
-  if (ud.position > 0 && !ud.played) items.push({ label: 'Remove from Continue Watching', icon: 'close', onClick: () => act(false, 'Removed from Continue Watching') });
+  const items = [{ label: 'Mark watched', icon: 'check', onClick: () => act(() => api(`/api/items/${it.id}/played`, { method: 'POST', body: { played: true } }), 'Marked watched') }];
+  if (ud.position > 0) items.push({ label: 'Remove from Continue Watching', icon: 'close', onClick: () => act(() => api(`/api/items/${it.id}/progress`, { method: 'DELETE' }), 'Removed from Continue Watching') });
   return h('button', { class: 'btn icon ghost sm card-more', type: 'button', title: 'More', 'aria-label': `More for ${title}`, dataset: { focusKey: `land-more-${it.id}` }, html: icons.more, onclick: (e) => {
     e.stopPropagation();
     popupMenu(e.currentTarget, items);
@@ -978,7 +978,7 @@ function facts(it, extra = []) {
 function playButtons(it, playId = it.id, label = 'Play') {
   const ud = it.userData || {};
   const btns = [];
-  if (ud.position > 0 && !ud.played) {
+  if (ud.position > 0) {
     btns.push(h('button', { class: 'btn primary lg', dataset: { focusKey: `play-${playId}` }, onclick: () => play(playId, ud.position) }, h('span', { html: icons.play }), `Resume from ${fmtTime(ud.position)}`));
     btns.push(h('button', { class: 'btn lg', dataset: { focusKey: `restart-${playId}` }, onclick: () => play(playId, 0) }, 'Play from start'));
   } else {
@@ -1077,9 +1077,9 @@ function moreItems(it, d) {
   const items = [];
   if (d.files?.length) items.push({ label: 'Media info', icon: 'info', onClick: () => mediaInfoModal(d.files) });
   const ud = it.userData || {};
-  if (it.kind !== 'show' && ud.position > 0 && !ud.played) {
+  if (it.kind !== 'show' && ud.position > 0) {
     items.push({ label: 'Remove from Continue Watching', icon: 'close', onClick: async () => {
-      if (await run(null, () => api(`/api/items/${it.id}/played`, { method: 'POST', body: { played: false } }), 'Removed from Continue Watching')) refreshSoft();
+      if (await run(null, () => api(`/api/items/${it.id}/progress`, { method: 'DELETE' }), 'Removed from Continue Watching')) refreshSoft();
     } });
   }
   if (!state.me.isAdmin) return items;
@@ -1453,7 +1453,7 @@ function episodeRow(e, onChange) {
   // Unplaced daily-show episodes go by air date, which the line below the title shows.
   const dated = datedEpisode(e);
   const epName = dated ? fmtAirDate(e.premiere) : `episode ${e.episode}`;
-  const art = h('button', { class: 'art', type: 'button', dataset: { focusKey: `episode-play-${e.id}` }, 'aria-label': `${ud.position > 0 && !ud.played ? 'Resume' : 'Play'} ${epName}: ${e.title}`, onclick: () => play(e.id) }, lazyImg(img(e, 'thumb', 480), ''), h('span', { class: 'ep-play', 'aria-hidden': 'true', html: icons.play }));
+  const art = h('button', { class: 'art', type: 'button', dataset: { focusKey: `episode-play-${e.id}` }, 'aria-label': `${ud.position > 0 ? 'Resume' : 'Play'} ${epName}: ${e.title}`, onclick: () => play(e.id) }, lazyImg(img(e, 'thumb', 480), ''), h('span', { class: 'ep-play', 'aria-hidden': 'true', html: icons.play }));
   if (ud.position > 0 && e.duration) art.appendChild(progressBar(ud.position, e.duration));
   const badge = h('div', { class: 'badge check', 'aria-hidden': 'true', title: 'Watched', html: icons.check });
   const wbtn = h('button', { class: 'watched-btn', type: 'button', html: icons.check, dataset: { focusKey: `episode-watched-${e.id}` }, onclick: async (ev) => {
@@ -1487,7 +1487,7 @@ function episodeRow(e, onChange) {
     art,
     h('a', { class: 'episode-info', href: `#/item/${e.id}`, 'aria-labelledby': `${id}-t`, 'aria-describedby': e.overview ? `${id}-m ${id}-o` : `${id}-m` },
       h('h3', { id: `${id}-t` }, dated ? null : h('span', { class: 'num' }, `${e.episode}${e.episodeEnd ? '–' + e.episodeEnd : ''}.`), dated ? null : ' ', e.title),
-      h('div', { class: 'dim small', id: `${id}-m` }, [e.premiere ? fmtAirDate(e.premiere) : '', e.duration ? fmtDuration(e.duration) : '', ud.position > 0 && !ud.played ? `${fmtDuration(e.duration - ud.position)} left` : ''].filter(Boolean).join(' · ')),
+      h('div', { class: 'dim small', id: `${id}-m` }, [e.premiere ? fmtAirDate(e.premiere) : '', e.duration ? fmtDuration(e.duration) : '', ud.position > 0 ? `${fmtDuration(e.duration - ud.position)} left` : ''].filter(Boolean).join(' · ')),
       e.overview ? h('p', { id: `${id}-o` }, e.overview) : null),
     h('div', { class: 'side' }, wbtn));
 }

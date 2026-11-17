@@ -467,7 +467,7 @@ class Player {
       this.nextBtn.classList.toggle('hidden', !d.next && !(this.live?.channels.length > 1));
       if (start == null) {
         const ud = this.item.userData;
-        start = ud && ud.position > 0 && !ud.played ? ud.position : 0;
+        start = ud?.position > 0 ? ud.position : 0;
       }
       // Retry resumes here even if this first plan fails before attach().
       this.started = false;
@@ -2139,7 +2139,7 @@ class Player {
     if (this.shuffle) this.shuffle.pos++;
     this.resetForNext();
     const ud = next.userData;
-    await this.start(next.id, ud && ud.position > 0 && !ud.played ? ud.position : 0);
+    await this.start(next.id, ud?.position > 0 ? ud.position : 0);
     if (this.onClose) this.onChanged = true;
   }
 

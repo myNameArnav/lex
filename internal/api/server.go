@@ -126,6 +126,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("GET /api/items/{id}/image/{kind}", u(s.itemImage))
 	mux.Handle("GET /api/items/{id}/cast/{index}/image", u(s.castImage))
 	mux.Handle("POST /api/items/{id}/played", u(s.setPlayed))
+	mux.Handle("DELETE /api/items/{id}/progress", u(s.clearProgress))
 	mux.Handle("POST /api/items/{id}/favorite", u(s.setFavorite))
 	mux.Handle("POST /api/items/{id}/watchlist", u(s.setWatchlist))
 	mux.Handle("GET /api/watchlist", u(s.watchlist))
