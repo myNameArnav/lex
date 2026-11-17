@@ -9,12 +9,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"html"
 	"io"
 	"io/fs"
 	"mime"
 	"net"
 	"net/http"
 	"path"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -479,7 +481,66 @@ func (s *Server) loadStatic() error {
 	if err != nil {
 		return err
 	}
+	s.preloadModules()
 	return s.stampServiceWorker()
+}
+
+var (
+	// entryModuleRe finds the page's module script; staticImportRe the
+	// specifier of each static import (or re-export) in a module. Dynamic
+	// import() calls are left alone: those load on demand.
+	entryModuleRe  = regexp.MustCompile(`<script type="module" src="([^"]+)"></script>`)
+	staticImportRe = regexp.MustCompile(`(?m)^\s*(?:import|export)\s+(?:[^'";]*?\s+from\s+)?['"]([^'"]+)['"]`)
+)
+
+// moduleGraph lists the modules entry imports statically, directly or
+// through other modules, in the order found (entry itself left out).
+func (s *Server) moduleGraph(entry string) []string {
+	seen := map[string]bool{entry: true}
+	var out []string
+	for queue := []string{entry}; len(queue) > 0; queue = queue[1:] {
+		a := s.static[queue[0]]
+		if a == nil {
+			continue
+		}
+		for _, m := range staticImportRe.FindAllSubmatch(a.body, -1) {
+			spec := string(m[1])
+			if !strings.HasPrefix(spec, "/") {
+				spec = path.Join(path.Dir(queue[0]), spec)
+			}
+			if seen[spec] || s.static[spec] == nil {
+				continue
+			}
+			seen[spec] = true
+			out = append(out, spec)
+			queue = append(queue, spec)
+		}
+	}
+	return out
+}
+
+// preloadModules adds a modulepreload link to index.html for every module
+// the page's script imports. The UI is unbundled modules, which a browser
+// otherwise finds one import level per round trip; with the links it asks
+// for them all at once.
+func (s *Server) preloadModules() {
+	index := s.static["/index.html"]
+	if index == nil {
+		return
+	}
+	loc := entryModuleRe.FindSubmatchIndex(index.body)
+	if loc == nil {
+		return
+	}
+	var links bytes.Buffer
+	for _, m := range s.moduleGraph(string(index.body[loc[2]:loc[3]])) {
+		links.WriteString(`<link rel="modulepreload" href="` + html.EscapeString(m) + `">` + "\n")
+	}
+	if links.Len() == 0 {
+		return
+	}
+	body := slices.Concat(index.body[:loc[0]], links.Bytes(), index.body[loc[0]:])
+	s.static["/index.html"] = newAsset("index.html", body)
 }
 
 func newAsset(p string, b []byte) *asset {
