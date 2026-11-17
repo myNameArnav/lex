@@ -464,6 +464,11 @@ func (c *Cache) worker() {
 		if err != nil && !errors.Is(err, context.Canceled) {
 			c.log.Warnf("cache: %s: %v", job.Name, err)
 		}
+		// Once the job is no longer current, so the hook sees the file as
+		// cached and not pending.
+		if err == nil && c.OnCached != nil {
+			c.OnCached(job.FileID)
+		}
 	}
 }
 
@@ -536,9 +541,6 @@ func (c *Cache) copy(ctx context.Context, job *Job) error {
 	c.mu.Unlock()
 	secs := time.Since(start).Seconds()
 	c.log.Infof("cache: cached %s in %.0fs (%.1f MB/s)", job.Name, secs, float64(f.Size)/1e6/max(secs, 0.001))
-	if c.OnCached != nil {
-		c.OnCached(f.ID)
-	}
 	return nil
 }
 
