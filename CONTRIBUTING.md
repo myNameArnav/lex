@@ -67,12 +67,12 @@ and issues. See the
 ## Releases
 
 The version number lives in `internal/version/VERSION`; builds add the commit
-they came from (`lex -version` prints e.g. `lex 0.0.18 (2b8f74d)`, and it's shown
+they came from (`lex -version` prints e.g. `lex 0.0.19 (2b8f74d)`, and it's shown
 in Settings → About and the account menu). To release, bump that file, commit,
 and push a matching tag:
 
 ```sh
-git tag -a v0.0.18 -m "Lex v0.0.18" && git push origin v0.0.18
+git tag -a v0.0.19 -m "Lex v0.0.19" && git push origin v0.0.19
 ```
 
 The Container image workflow checks the tag against the file, publishes the
