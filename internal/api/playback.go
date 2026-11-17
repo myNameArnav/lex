@@ -546,9 +546,14 @@ func (s *Server) subtitle(w http.ResponseWriter, r *http.Request) {
 	}
 	raw := r.PathValue("idx")
 	wantASS := strings.HasSuffix(raw, ".ass")
-	idx, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSuffix(raw, ".vtt"), ".ass"))
+	wantSup := strings.HasSuffix(raw, ".sup")
+	idx, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(raw, ".vtt"), ".ass"), ".sup"))
 	if err != nil {
 		writeErr(w, 400, "bad index")
+		return
+	}
+	if wantSup {
+		s.serveSup(w, r, f, idx)
 		return
 	}
 	var p string
@@ -600,6 +605,34 @@ func (s *Server) subtitle(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "private, max-age=86400")
 	}
 	http.ServeFile(w, r, p)
+}
+
+// serveSup sends an embedded PGS track for the player to draw: what has
+// been copied out so far while that's still running (X-Lex-Partial), then
+// the whole file.
+func (s *Server) serveSup(w http.ResponseWriter, r *http.Request, f *store.File, idx int) {
+	p, data, partial, err := s.Subs.ServeSup(r.Context(), f, idx, 3*time.Second)
+	if err != nil {
+		if r.Context().Err() == nil {
+			s.Log.Errorf("subtitle file %d/%d: %v", f.ID, idx, err)
+			writeErr(w, 500, "could not extract subtitles; see admin logs")
+		}
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	switch {
+	case partial:
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Lex-Partial", "1")
+		w.Write(data)
+	case p == "":
+		// The track has no subtitles at all.
+		w.Header().Set("Cache-Control", "private, max-age=86400")
+		w.WriteHeader(200)
+	default:
+		w.Header().Set("Cache-Control", "private, max-age=86400")
+		http.ServeFile(w, r, p)
+	}
 }
 
 // cacheAround queues the file being played, and the next few episodes, for

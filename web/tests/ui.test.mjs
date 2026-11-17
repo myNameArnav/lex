@@ -92,7 +92,9 @@ test('streamLabel normalises codecs and names tracks once', async () => {
   const { ui } = await loadUI();
   assert.equal(ui.streamLabel({ type: 'subtitle', language: 'eng', codec: 'srt', forced: true, external: true, textSub: true }), 'English · Forced · SRT · External');
   assert.equal(ui.streamLabel({ type: 'subtitle', language: 'spa', codec: 'subrip', textSub: true }), 'Spanish · SRT');
-  assert.equal(ui.streamLabel({ type: 'subtitle', language: 'eng', codec: 'hdmv_pgs_subtitle', textSub: false }), 'English · PGS · burn-in');
+  // PGS is drawn by the player; other image subtitles are burned in.
+  assert.equal(ui.streamLabel({ type: 'subtitle', language: 'eng', codec: 'hdmv_pgs_subtitle', textSub: false }), 'English · PGS');
+  assert.equal(ui.streamLabel({ type: 'subtitle', language: 'eng', codec: 'dvd_subtitle', textSub: false }), 'English · DVD_SUBTITLE · burn-in');
   assert.equal(ui.streamLabel({ type: 'subtitle', language: 'eng', title: 'SDH', codec: 'ass', textSub: true }), 'English – SDH · ASS');
   assert.equal(ui.streamLabel({ type: 'audio', language: 'eng', title: 'Commentary', codec: 'aac', channels: 2 }), 'English · Commentary · AAC · Stereo');
   assert.equal(ui.streamLabel({ type: 'audio', language: 'eng', title: 'English Stereo', codec: 'aac', channels: 2 }), 'English Stereo · AAC · Stereo');

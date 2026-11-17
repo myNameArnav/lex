@@ -56,6 +56,8 @@ export function detectCaps() {
   caps.clientAudio = mse && caps.audio.aac && clientAudioSupported() ? CLIENT_AUDIO : [];
   // Containers the player remuxes to fragmented MP4 itself (client-remux.js).
   caps.clientRemux = mse && clientRemuxSupported() ? CLIENT_REMUX : [];
+  // PGS subtitles drawn on a canvas over the video (pgs.js).
+  caps.pgs = typeof ResizeObserver === 'function' && typeof ImageData === 'function' && !!document.createElement('canvas').getContext;
   caps.direct.mp4 = nativeOK('video/mp4');
   caps.direct.webm = nativeOK('video/webm');
   caps.direct.mkv = nativeOK('video/x-matroska') || nativeOK('video/mkv');
@@ -87,6 +89,7 @@ export function capsSummary(c = detectCaps()) {
     'Streamed audio (MSE)': on(c.audio),
     'Audio converted in the browser': c.clientAudio.map((k) => LABELS[k] || k).join(', ') || 'none',
     'Remuxed in the browser': c.clientRemux.map((k) => LABELS[k] || k).join(', ') || 'none',
+    'PGS subtitles': c.pgs ? 'drawn in the browser' : 'burned in by the server',
   };
 }
 

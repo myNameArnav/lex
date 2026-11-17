@@ -8,6 +8,7 @@ import { detectCaps } from './caps.js';
 import { prefs, QUALITIES, qualityOptions } from './prefs.js';
 import { MseEngine, clock } from './mse.js';
 import { AudioFX, audioFxSupported, fxLabel } from './audio-fx.js';
+import { PgsRenderer } from './pgs.js';
 
 let current = null;
 
@@ -142,6 +143,12 @@ async function fetchSub(url) {
   return { text: await res.text(), partial: res.headers.get('X-Lex-Partial') === '1' };
 }
 
+async function fetchSubBytes(url) {
+  const res = await fetch(url, { credentials: 'same-origin' });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+  return { data: await res.arrayBuffer(), partial: res.headers.get('X-Lex-Partial') === '1' };
+}
+
 // A server restart briefly makes the proxy unavailable: retry with backoff.
 // Permission and media errors stay terminal; cancelled() stops the retries.
 async function retryApi(path, opts, { cancelled = () => false, retries = 6, onRetry } = {}) {
@@ -202,6 +209,7 @@ class Player {
     this.statusEl = h('div', { class: 'p-status', role: 'status' });
     // Subtitles are drawn by us (not ::cue) so we control position and size.
     this.subsEl = h('div', { class: 'p-subs', 'aria-live': 'polite' });
+    this.pgsCanvas = h('canvas', { class: 'p-pgs', 'aria-hidden': 'true' });
     this.seek = h('div', { class: 'seek', role: 'slider', tabindex: '0', 'aria-label': 'Playback position', 'aria-valuemin': '0', 'aria-valuemax': '0', 'aria-valuenow': '0', 'aria-valuetext': '0:00 of 0:00', 'aria-disabled': 'true' }, h('div', { class: 'rail' }), h('div', { class: 'knob' }));
     this.rail = this.seek.firstChild;
     this.knob = this.seek.lastChild;
@@ -227,7 +235,7 @@ class Player {
     this.titleEl.id = 'player-title';
     this.restoreFocus = document.activeElement;
     this.root = h('div', { class: 'player', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'player-title', tabindex: '-1' },
-      this.video,
+      this.video, this.pgsCanvas,
       h('div', { class: 'shade-top' }), h('div', { class: 'shade-bot' }),
       this.subsEl,
       this.center,
@@ -497,6 +505,8 @@ class Player {
     if (this.noClientAudio) caps = { ...caps, clientAudio: [] };
     // So did remuxing it in the browser: the server remuxes.
     if (this.noClientRemux) caps = { ...caps, clientRemux: [] };
+    // Drawing PGS failed, or burning in was asked for in Settings.
+    if (this.noPgs || prefs.get('burnImageSubs')) caps = { ...caps, pgs: false };
     let mode = overrides.mode || this.mode;
     // "HLS" isn't a server mode: it asks for HLS delivery with automatic
     // direct/remux/transcode choice. Only browsers with native HLS can use it.
@@ -871,8 +881,10 @@ class Player {
     this.subTrack = null;
     this.renderCues(null);
     this.destroyASS();
+    this.destroyPGS();
     if (this.subBlob) { URL.revokeObjectURL(this.subBlob); this.subBlob = null; }
     const s = this.subById(idx);
+    if (s && !s.textSub && this.plan?.drawSubs === 'pgs' && this.plan.subtitle === idx) return this.setPGS(s, token);
     if (!s || !s.textSub) return true;
     // Styled (ASS/SSA) subtitles are rendered with libass so positioning,
     // fonts and karaoke survive; anything else goes through our overlay.
@@ -916,14 +928,14 @@ class Player {
 
   // The server is still extracting this track (big file, slow disk) and sent
   // what it has so far: keep fetching until it's complete.
-  async pollSub(token, url, apply) {
+  async pollSub(token, url, apply, fetcher = fetchSub) {
     for (let wait = 3000; ; wait = Math.min(wait * 1.5, 15000)) {
       await new Promise((r) => setTimeout(r, wait));
       if (token !== this.subToken || this.closed) return;
       try {
-        const { text, partial } = await fetchSub(url);
+        const { text, data, partial } = await fetcher(url);
         if (token !== this.subToken || this.closed) return;
-        await apply(text);
+        await apply(data ?? text);
         if (!partial) return;
       } catch (e) {
         if (token === this.subToken) toast(`Could not load subtitles: ${e.message}`, 'error');
@@ -979,6 +991,38 @@ class Player {
     }
   }
 
+  // PGS subtitles drawn on a canvas (pgs.js) from the track the server
+  // copies out. If that fails, the next plan burns them in instead.
+  async setPGS(s, token) {
+    const url = `/api/files/${this.file.id}/subs/${s.index}.sup?v=${this.file.mtime || 0}`;
+    const slow = setTimeout(() => { if (token === this.subToken) toast('Extracting subtitles from the file… they will appear shortly'); }, 1500);
+    try {
+      const { data, partial } = await fetchSubBytes(url);
+      if (token !== this.subToken || this.closed) return false;
+      this.pgs = new PgsRenderer(this.video, this.pgsCanvas, { offset: this.subOffset || 0 });
+      this.pgs.setTrack(data);
+      if (partial) {
+        const r = this.pgs;
+        this.pollSub(token, url, (d) => { if (this.pgs === r) r.setTrack(d); }, fetchSubBytes);
+      }
+      return true;
+    } catch (e) {
+      if (token !== this.subToken || this.closed) return false;
+      console.warn('PGS renderer failed; burning in', e);
+      this.destroyPGS();
+      this.noPgs = true;
+      toast('Could not draw these subtitles here: burning them in (transcoding)');
+      this.replan();
+      return false;
+    } finally {
+      clearTimeout(slow);
+    }
+  }
+
+  destroyPGS() {
+    if (this.pgs) { this.pgs.destroy(); this.pgs = null; }
+  }
+
   destroyASS() {
     if (this.jassub) { this.jassub.destroy().catch(() => {}); this.jassub = null; }
   }
@@ -990,13 +1034,14 @@ class Player {
       this.jassub.timeOffset = -this.subOffset;
       if (this.jassub._lastDemandTime) this.jassub.manualRender(this.jassub._lastDemandTime, true).catch(() => {});
     }
+    if (this.pgs) this.pgs.setOffset(this.subOffset);
     this.cueKey = null;
     this.renderCues(this.subTrack);
     if (this.menu && this.menuName === 'tracks' && !this.menuPage) this.renderMenu();
   }
 
   nudgeSubs(d) {
-    if (!this.subById(this.subtitle)?.textSub) { toast('Turn on text subtitles to adjust timing', '', { key: 'subOffset' }); return; }
+    if (!this.subById(this.subtitle)?.textSub && !this.pgs) { toast('Turn on text subtitles to adjust timing', '', { key: 'subOffset' }); return; }
     this.setSubOffset(this.subOffset + d);
     toast(`Subtitle timing ${this.subOffset > 0 ? '+' : ''}${this.subOffset.toFixed(1)}s`, '', { key: 'subOffset' });
   }
@@ -1116,8 +1161,11 @@ class Player {
     const prev = this.subById(this.subtitle);
     const next = this.subById(idx);
     this.subtitle = idx;
-    const needBurn = next && !next.textSub;
-    const hadBurn = prev && !prev.textSub;
+    // PGS is drawn here when the current plan allows it (not native HLS);
+    // other image subtitles, or burning in from Settings, need a transcode.
+    const draw = next && !next.textSub && this.canDrawPGS(next);
+    const needBurn = next && !next.textSub && !draw;
+    const hadBurn = !!this.plan?.burnSubs;
     const mode = prefs.get('subMode');
     if (!next && mode === 'always') prefs.set('subMode', 'auto');
     let ok = true;
@@ -1125,12 +1173,17 @@ class Player {
       if (needBurn) toast('Image-based subtitles need to be burned in: transcoding');
       await this.replan();
     } else {
+      if (draw) this.plan = { ...this.plan, drawSubs: 'pgs', subtitle: idx };
       ok = await this.setSubtitleTrack(idx);
     }
     if (!next || !ok || this.subtitle !== idx) return;
     if (next.forced) { if (mode === 'off') prefs.set('subMode', 'auto'); return; }
     if (next.language) prefs.set('subLang', next.language);
     if (mode === 'off') prefs.set('subMode', 'always');
+  }
+
+  canDrawPGS(s) {
+    return s.codec === 'hdmv_pgs_subtitle' && !s.external && !!detectCaps().pgs && !this.noPgs && !prefs.get('burnImageSubs') && !!this.plan && !this.plan.hls;
   }
 
   // iPhone native fullscreen shows only <track> cues: show ours there (the
@@ -1820,7 +1873,7 @@ class Player {
         m.append(sw('Night mode', !!prefs.get('nightMode'), (v) => { prefs.set('nightMode', v); this.applyFx(); }, 'Quiet parts louder, loud parts quieter'));
         m.append(sw('Boost voices', !!prefs.get('voiceBoost'), (v) => { prefs.set('voiceBoost', v); this.applyFx(); if (this.voiceNeedsReplan()) this.replan(); }, 'Clearer dialogue'));
       }
-      if (cur && cur.textSub) {
+      if (cur && (cur.textSub || this.pgs)) {
         const off = this.subOffset || 0;
         const fmt = `${off > 0 ? '+' : ''}${off.toFixed(1)}s`;
         const step = (d) => h('button', { class: 'pm-step', 'data-key': `step-${d}`, 'aria-label': `Subtitles ${d > 0 ? 'later' : 'earlier'} by ${Math.abs(d)} seconds`, onclick: () => this.setSubOffset(Math.round((off + d) * 10) / 10) }, d > 0 ? `+${d}` : `${d}`);
@@ -2078,6 +2131,7 @@ class Player {
     this.swEncode = false;
     this.noClientAudio = false;
     this.noClientRemux = false;
+    this.noPgs = false;
     this.stalls = { count: 0, secs: 0, since: 0 };
     this.teardown();
   }
@@ -2216,6 +2270,7 @@ class Player {
     this.teardown();
     this.destroyASS();
     this.fx.close();
+    this.destroyPGS();
     this.root.remove();
     releaseToasts(this.root);
     if (this.background?.isConnected) this.background.inert = this.backgroundWasInert;

@@ -14,6 +14,7 @@ export const DEFAULTS = {
   subSize: 'medium',
   subBg: true,
   subPos: 'normal',    // low | normal | high
+  burnImageSubs: false, // burn PGS in on the server instead of drawing it (pgs.js)
   autoSkipIntro: false,
   autoSkipCredits: false,
   autoplayNext: true,
