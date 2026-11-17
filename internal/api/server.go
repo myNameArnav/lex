@@ -63,8 +63,12 @@ type Server struct {
 	loginFail map[string]*failWindow
 	thumbSem  chan struct{}
 	resizeSem chan struct{}
-	backupMu  sync.Mutex // one backup at a time; guards backupErr
-	backupErr string     // why the last scheduled backup failed ("" if it didn't)
+	// Files whose subtitle prefetch waits for their SSD cache copy
+	// (prefetchSubs).
+	subsAfterCacheMu sync.Mutex
+	subsAfterCache   map[int64]bool
+	backupMu         sync.Mutex // one backup at a time; guards backupErr
+	backupErr        string     // why the last scheduled backup failed ("" if it didn't)
 }
 
 type asset struct {

@@ -123,8 +123,8 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 		writeSessionErr(w, err)
 		return
 	}
-	s.Subs.Prefetch(f)
 	s.cacheAround(it, f, u.ID)
+	s.prefetchSubs(f)
 	s.Trick.Prioritize(f.ID)
 	if plan.HLS {
 		plan.URL += "&k=" + s.Sess.StreamKey(plan.SessionID)
@@ -632,6 +632,40 @@ func (s *Server) serveSup(w http.ResponseWriter, r *http.Request, f *store.File,
 	default:
 		w.Header().Set("Cache-Control", "private, max-age=86400")
 		http.ServeFile(w, r, p)
+	}
+}
+
+// prefetchSubs extracts the file's embedded text subtitles in the
+// background so they're ready when turned on. That reads the whole file, so
+// while it's going to the SSD cache the extraction waits for the copy and
+// then reads the copy: three readers (playback, the copy and ffmpeg) on one
+// hard drive make it seek constantly and playback stall. Subtitles turned
+// on meanwhile are still extracted at once (Subs.Serve).
+func (s *Server) prefetchSubs(f *store.File) {
+	if s.Cache != nil && s.Cache.Pending(f.ID) {
+		s.subsAfterCacheMu.Lock()
+		if s.subsAfterCache == nil {
+			s.subsAfterCache = map[int64]bool{}
+		}
+		s.subsAfterCache[f.ID] = true
+		s.subsAfterCacheMu.Unlock()
+		return
+	}
+	s.Subs.Prefetch(f)
+}
+
+// FileCached is called by the SSD cache when a file's copy is complete: a
+// subtitle prefetch put off for it runs now, from the copy.
+func (s *Server) FileCached(fileID int64) {
+	s.subsAfterCacheMu.Lock()
+	want := s.subsAfterCache[fileID]
+	delete(s.subsAfterCache, fileID)
+	s.subsAfterCacheMu.Unlock()
+	if !want {
+		return
+	}
+	if f, err := s.St.File(fileID); err == nil {
+		s.Subs.Prefetch(f)
 	}
 }
 
