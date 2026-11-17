@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -147,7 +148,17 @@ func TestServiceWorker(t *testing.T) {
 	if !strings.Contains(csp, "script-src 'self'") || strings.Contains(csp, "worker-src") && !strings.Contains(csp, "worker-src 'self'") {
 		t.Errorf("CSP %q does not allow a same-origin service worker", csp)
 	}
-	want := []string{"/", "/css/app.css", "/icons/icon-192.png", "/js/app.js", "/manifest.json", "/offline.html"}
+	// The stylesheet and modules are this build's immutable copies.
+	var prefix string
+	for _, p := range build.Shell {
+		if strings.HasSuffix(p, "/css/app.css") {
+			prefix = strings.TrimSuffix(p, "/css/app.css")
+		}
+	}
+	if !strings.HasPrefix(prefix, "/b/") {
+		t.Fatalf("shell %v: css not under /b/<build>/", build.Shell)
+	}
+	want := []string{"/", prefix + "/css/app.css", prefix + "/js/app.js", "/icons/icon-192.png", "/manifest.json", "/offline.html"}
 	if strings.Join(build.Shell, ",") != strings.Join(want, ",") {
 		t.Errorf("shell %v, want %v", build.Shell, want)
 	}
@@ -182,13 +193,14 @@ func TestEmbeddedServiceWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, build := swBuild(t, h)
-	for _, p := range []string{"/", "/offline.html", "/js/offline.js", "/css/app.css", "/js/app.js", "/favicon.svg", "/manifest.json"} {
+	v := s.versioned
+	for _, p := range []string{"/", "/offline.html", v("/js/offline.js"), v("/css/app.css"), v("/js/app.js"), "/favicon.svg", "/manifest.json"} {
 		if !slices.Contains(build.Shell, p) {
 			t.Errorf("shell is missing %s", p)
 		}
 	}
 	for _, p := range build.Shell {
-		if strings.HasPrefix(p, "/vendor/") || strings.HasPrefix(p, "/api/") || p == "/sw.js" {
+		if strings.Contains(p, "/vendor/") || strings.HasPrefix(p, "/api/") || p == "/sw.js" {
 			t.Errorf("shell must not include %s", p)
 		}
 	}
@@ -220,38 +232,116 @@ func TestIndexPreloadsTheModuleGraph(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", "http://lex.test/", nil))
 	// Every module app.js reaches through static imports, once each, before
-	// the script; nothing that is only imported on demand.
-	want := `<head><link rel="modulepreload" href="/js/ui.js">` + "\n" +
-		`<link rel="modulepreload" href="/js/side.js">` + "\n" +
-		`<link rel="modulepreload" href="/vendor/codecs.js">` + "\n" +
-		`<link rel="modulepreload" href="/js/abs.js">` + "\n" +
-		`<script type="module" src="/js/app.js"></script></head>`
+	// the script; nothing that is only imported on demand. All of them from
+	// this build's prefix.
+	b := "/b/" + s.buildID
+	want := `<head><link rel="modulepreload" href="` + b + `/js/ui.js">` + "\n" +
+		`<link rel="modulepreload" href="` + b + `/js/side.js">` + "\n" +
+		`<link rel="modulepreload" href="` + b + `/vendor/codecs.js">` + "\n" +
+		`<link rel="modulepreload" href="` + b + `/js/abs.js">` + "\n" +
+		`<script type="module" src="` + b + `/js/app.js"></script></head>`
 	if got := w.Body.String(); got != want {
 		t.Errorf("index.html:\n got %s\nwant %s", got, want)
 	}
 }
 
-// The real UI: the player and its helpers are several import levels below
-// app.js, and each level left out of the preload list is a round trip.
-func TestEmbeddedIndexPreloadsThePlayer(t *testing.T) {
+// The real UI: the modules a page needs are preloaded from the build
+// prefix; the player and its helpers load on demand (player-loader.js), and
+// nothing imports a UI file by absolute path, which would leave the prefix.
+func TestEmbeddedIndexPreloadsTheShellNotThePlayer(t *testing.T) {
 	st, err := store.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	s := &Server{St: st, Log: logx.New(10, false), Web: web.FS()}
+	s := &Server{Version: "test", St: st, Log: logx.New(10, false), Web: web.FS()}
 	if _, err := s.Handler(); err != nil {
 		t.Fatal(err)
 	}
 	index := string(s.static["/index.html"].body)
-	for _, m := range []string{"/js/ui.js", "/js/player.js", "/js/mse.js", "/js/mp4.js"} {
-		if !strings.Contains(index, `<link rel="modulepreload" href="`+m+`">`) {
+	for _, m := range []string{"/js/ui.js", "/js/api.js", "/js/player-loader.js", "/js/caps.js"} {
+		if !strings.Contains(index, `<link rel="modulepreload" href="`+s.versioned(m)+`">`) {
 			t.Errorf("index.html doesn't preload %s", m)
 		}
 	}
-	for _, m := range []string{"/js/app.js", "/js/admin.js", "/js/remux-worker.js"} {
-		if strings.Contains(index, `href="`+m+`"`) {
+	for _, m := range []string{"/js/app.js", "/js/admin.js", "/js/remux-worker.js", "/js/player.js", "/js/mse.js"} {
+		if strings.Contains(index, `<link rel="modulepreload" href="`+s.versioned(m)+`">`) {
 			t.Errorf("index.html preloads %s, which the page doesn't import statically", m)
 		}
+	}
+	if !strings.Contains(index, `<script type="module" src="`+s.versioned("/js/app.js")+`">`) || !strings.Contains(index, `href="`+s.versioned("/css/app.css")+`"`) {
+		t.Errorf("index.html doesn't load the build's script and stylesheet:\n%s", index)
+	}
+	for p, a := range s.static {
+		if !strings.HasPrefix(p, "/js/") {
+			continue
+		}
+		for _, m := range staticImportRe.FindAllSubmatch(a.body, -1) {
+			if strings.HasPrefix(string(m[1]), "/") {
+				t.Errorf("%s imports %s by absolute path", p, m[1])
+			}
+		}
+		if regexp.MustCompile(`import\(\s*['"]/`).Match(a.body) {
+			t.Errorf("%s has a dynamic import by absolute path", p)
+		}
+	}
+}
+
+// /b/<build>/ serves this build's files as immutable; anything else keeps
+// revalidating.
+func TestBuildPrefixCaching(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	s := &Server{St: st, Log: logx.New(10, false), Web: fstest.MapFS{
+		"index.html":         &fstest.MapFile{Data: []byte(`<link rel="stylesheet" href="/css/app.css"><script type="module" src="/js/app.js"></script>`)},
+		"css/app.css":        &fstest.MapFile{Data: []byte("body{}")},
+		"js/app.js":          &fstest.MapFile{Data: []byte("import './ui.js';")},
+		"js/ui.js":           &fstest.MapFile{Data: []byte("export {};")},
+		"vendor/x/x.wasm":    &fstest.MapFile{Data: []byte("\x00asm")},
+		"icons/icon-192.png": &fstest.MapFile{Data: []byte("\x89PNG")},
+	}}
+	h, err := s.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(p string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", "http://lex.test"+p, nil))
+		return w
+	}
+	const immutable = "public, max-age=31536000, immutable"
+	for _, p := range []string{"/js/app.js", "/js/ui.js", "/css/app.css", "/vendor/x/x.wasm"} {
+		w := get(s.versioned(p))
+		if w.Code != 200 || w.Header().Get("Cache-Control") != immutable {
+			t.Errorf("%s: %d %q", s.versioned(p), w.Code, w.Header().Get("Cache-Control"))
+		}
+		// The plain path still works, revalidated.
+		if w := get(p); w.Code != 200 || w.Header().Get("Cache-Control") != "no-cache" {
+			t.Errorf("%s: %d %q", p, w.Code, w.Header().Get("Cache-Control"))
+		}
+	}
+	// A page from an older build gets today's file, but not cached for long.
+	if w := get("/b/0123456789ab/js/app.js"); w.Code != 200 || w.Header().Get("Cache-Control") != "no-cache" || w.Body.String() != "import './ui.js';" {
+		t.Errorf("old build: %d %q", w.Code, w.Header().Get("Cache-Control"))
+	}
+	// Pages, icons and unknown files aren't served from the prefix.
+	for _, p := range []string{"/index.html", "/icons/icon-192.png", "/js/missing.js"} {
+		if w := get(s.versioned(p)); w.Code != 404 {
+			t.Errorf("%s: %d, want 404", s.versioned(p), w.Code)
+		}
+	}
+	// The page itself always revalidates, and loads from the prefix.
+	w := get("/")
+	if w.Header().Get("Cache-Control") != "no-cache" || !strings.Contains(w.Body.String(), `src="`+s.versioned("/js/app.js")+`"`) {
+		t.Errorf("index: %q %s", w.Header().Get("Cache-Control"), w.Body)
+	}
+	// A different UI gets a different prefix; the same UI the same one.
+	other := &Server{St: st, Log: logx.New(10, false), Web: fstest.MapFS{"js/app.js": &fstest.MapFile{Data: []byte("x")}}}
+	other.Handler()
+	if other.buildID == s.buildID || other.buildID == "" {
+		t.Errorf("build ids %q and %q", other.buildID, s.buildID)
 	}
 }
