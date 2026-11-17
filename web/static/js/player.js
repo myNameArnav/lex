@@ -10,6 +10,7 @@ import { MseEngine, clock } from './mse.js';
 import { bufferingCause } from './buffering.js';
 import { AudioFX, audioFxSupported, fxLabel } from './audio-fx.js';
 import { PgsRenderer } from './pgs.js';
+import { SUB_SIZES, SUB_POSITIONS, SUB_FONTS, SUB_COLORS, SUB_OPACITIES, SUB_BG_OPACITIES, SUB_EDGES, SUB_STYLE_DEFAULTS, subLabel, subStyleVars, assStyleOverrides } from './substyle.js';
 
 let current = null;
 
@@ -98,13 +99,11 @@ function pickSubtitle(file, audio) {
 // Style names used for signs, songs and effects rather than dialogue.
 const ASS_SIGN_STYLE = /sign|^ts\b|title|kara|romaji|kanji|song|lyric|^op\b|^ed\d*\b|opening|ending|screen|insert|note|logo/i;
 
-// Applies the viewer's subtitle size, position and background preferences to
-// an ASS script's dialogue styles (signs and karaoke keep the release's look,
+// Applies the viewer's subtitle preferences (substyle.js) to an ASS
+// script's dialogue styles (signs and karaoke keep the release's look,
 // since they're positioned over the picture on purpose).
 function styleASS(text) {
-  const size = { small: 0.8, medium: 1, large: 1.3 }[prefs.get('subSize')] || 1;
-  const pos = prefs.get('subPos');
-  const box = prefs.get('subBg');
+  const p = prefs.all();
   const end = text.indexOf('[Events]');
   if (end < 0) return text;
   const head = text.slice(0, end);
@@ -120,17 +119,8 @@ function styleASS(text) {
     const align = +fields[at('alignment')];
     // Only bottom-aligned (numpad 1-3) dialogue styles.
     if (ASS_SIGN_STYLE.test(fields[at('name')]) || !(align >= 1 && align <= 3)) return line;
-    const set = (k, v) => { if (at(k) >= 0) fields[at(k)] = String(v); };
-    set('fontsize', Math.round(+fields[at('fontsize')] * size * 10) / 10);
-    const mv = +fields[at('marginv')] || Math.round(resY * 0.04);
-    set('marginv', Math.round(pos === 'low' ? mv * 0.4 : pos === 'high' ? mv + resY * 0.1 : mv));
-    if (box) {
-      // BorderStyle 3 draws an opaque box in the outline colour.
-      set('borderstyle', 3);
-      set('outlinecolour', '&H60000000');
-      set('outline', Math.max(1, Math.round(resY / 150)));
-      set('shadow', 0);
-    }
+    const cur = Object.fromEntries(format.map((k, i) => [k, fields[i]]));
+    for (const [k, v] of Object.entries(assStyleOverrides(p, cur, resY))) if (at(k) >= 0) fields[at(k)] = String(v);
     return `Style: ${fields.join(',')}`;
   });
   return out.join('\n') + text.slice(end);
@@ -1257,9 +1247,8 @@ class Player {
 
   applySubStyle() {
     const r = this.root;
-    r.dataset.subSize = prefs.get('subSize');
     r.dataset.subPos = prefs.get('subPos');
-    r.classList.toggle('subs-nobg', !prefs.get('subBg'));
+    for (const [k, v] of Object.entries(subStyleVars(prefs.all()))) r.style.setProperty(k, v);
     // Styled subtitles: apply the same preferences to the dialogue styles.
     const j = this.jassub;
     if (j && this.assRaw) {
@@ -1867,9 +1856,11 @@ class Player {
       h('span', { class: 'pm-label' }, label, hint ? h('small', null, hint) : null),
       h('span', { class: 'switch' }, h('input', { type: 'checkbox', 'data-key': `sw-${label}`, checked: on, onchange: (e) => set(e.target.checked) }), h('i')));
     // Choices are a radio group; actions (e.g. 'Search online…') follow it.
-    const page = (title, items) => {
-      m.append(h('div', { class: 'pm-head' },
-        h('button', { class: 'pm-back', 'data-key': 'back', html: icons.chevL, 'aria-label': 'Back', onclick: () => this.openPage(null) }), h('b', null, title)));
+    // back: the page Back returns to (the main list by default).
+    const head = (title, back = null) => m.append(h('div', { class: 'pm-head' },
+      h('button', { class: 'pm-back', 'data-key': 'back', html: icons.chevL, 'aria-label': 'Back', onclick: () => this.openPage(back) }), h('b', null, title)));
+    const page = (title, items, back = null) => {
+      head(title, back);
       const opt = (it, role) => h('button', { class: `pm-opt ${it.active ? 'on' : ''}`, role, 'aria-checked': role ? String(!!it.active) : null, onclick: it.on },
         h('span', { class: 'ck', html: it.active ? icons.check : '' }),
         h('span', { class: 'pm-opt-l' }, it.label, it.sub ? h('small', null, it.sub) : null),
@@ -1880,7 +1871,15 @@ class Player {
     const auds = (this.file.info?.streams || []).filter((s) => s.type === 'audio');
     const subs = this.file.subtitles || [];
     // Below 900px the menu spans the subtitles: close it so the change shows.
-    const styled = () => (matchMedia('(max-width: 900px)').matches ? this.closeMenu() : this.openPage(null));
+    const styled = (back = null) => (matchMedia('(max-width: 900px)').matches ? this.closeMenu() : this.openPage(back));
+    // A subtitle style choice: saved, applied at once, then back to Style.
+    const choose = (title, key, list) => page(title, list.map(([k, l, sub]) => ({
+      label: l, sub: typeof sub === 'string' ? sub : null, active: String(prefs.get(key)) === String(k),
+      right: list === colors ? swatch(k) : null,
+      on: () => { prefs.set(key, k); this.applySubStyle(); styled('style'); },
+    })), 'style');
+    const swatch = (k) => h('i', { class: 'pm-swatch', style: { background: (SUB_COLORS.find((c) => c[0] === k) || [])[2] } });
+    const colors = SUB_COLORS.map(([k, l]) => [k, l]);
 
     if (this.menuName === 'tracks') {
       switch (this.menuPage) {
@@ -1895,9 +1894,44 @@ class Player {
         case 'audio':
           return page('Audio', auds.map((a) => ({ label: streamLabel(a), active: this.audio === a.index, on: () => { if (a.index !== this.audio) this.chooseAudio(a.index); this.closeMenu(); } })));
         case 'size':
-          return page('Subtitle size', [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']].map(([k, l]) => ({ label: l, active: prefs.get('subSize') === k, on: () => { prefs.set('subSize', k); this.applySubStyle(); styled(); } })));
+          return page('Subtitle size', SUB_SIZES.map(([k, l]) => ({ label: l, active: prefs.get('subSize') === k, on: () => { prefs.set('subSize', k); this.applySubStyle(); styled(); } })));
         case 'pos':
-          return page('Subtitle position', [['low', 'Low'], ['normal', 'Normal'], ['high', 'High']].map(([k, l]) => ({ label: l, active: prefs.get('subPos') === k, on: () => { prefs.set('subPos', k); this.applySubStyle(); styled(); } })));
+          return page('Subtitle position', SUB_POSITIONS.map(([k, l]) => ({ label: l, active: prefs.get('subPos') === k, on: () => { prefs.set('subPos', k); this.applySubStyle(); styled(); } })));
+        case 'style': {
+          const srow = (label, value, pg, sw2) => {
+            const r = row(label, value, pg);
+            if (sw2) r.querySelector('.pm-val').prepend(swatch(sw2));
+            return r;
+          };
+          head('Subtitle style');
+          m.append(srow('Font', subLabel(SUB_FONTS, prefs.get('subFont')) || 'Sans-serif', 'sFont'));
+          m.append(srow('Text color', subLabel(SUB_COLORS, prefs.get('subColor')) || 'White', 'sColor', prefs.get('subColor')));
+          m.append(srow('Text opacity', subLabel(SUB_OPACITIES, prefs.get('subOpacity')) || '100%', 'sOpacity'));
+          m.append(sw('Bold', prefs.get('subWeight') !== 'normal', (v) => { prefs.set('subWeight', v ? 'bold' : 'normal'); this.applySubStyle(); }));
+          m.append(h('div', { class: 'pm-sep' }));
+          m.append(sw('Background box', prefs.get('subBg'), (v) => { prefs.set('subBg', v); this.applySubStyle(); this.renderMenu(); }));
+          if (prefs.get('subBg')) {
+            m.append(srow('Background color', subLabel(SUB_COLORS, prefs.get('subBgColor')) || 'Black', 'sBgColor', prefs.get('subBgColor')));
+            m.append(srow('Background opacity', subLabel(SUB_BG_OPACITIES, prefs.get('subBgOpacity')) || `${Math.round(prefs.get('subBgOpacity') * 100)}%`, 'sBgOpacity'));
+          }
+          m.append(srow('Edge', subLabel(SUB_EDGES, prefs.get('subEdge')) || 'Automatic', 'sEdge'));
+          if (prefs.get('subEdge') !== 'none') m.append(srow('Edge color', subLabel(SUB_COLORS, prefs.get('subEdgeColor')) || 'Black', 'sEdgeColor', prefs.get('subEdgeColor')));
+          m.append(h('div', { class: 'pm-sep' }));
+          m.append(h('button', { class: 'pm-opt', 'data-key': 'sReset', onclick: () => {
+            for (const k of Object.keys(SUB_STYLE_DEFAULTS)) if (k !== 'subSize' && k !== 'subPos') prefs.set(k, SUB_STYLE_DEFAULTS[k]);
+            this.applySubStyle(); this.renderMenu();
+          } }, h('span', { class: 'ck' }), h('span', { class: 'pm-opt-l' }, 'Reset style', h('small', null, 'Size and position stay'))));
+          if (this.jassub) m.append(h('p', { class: 'pm-note' }, 'Styled (ASS) subtitles keep their own font.'));
+          else if (this.pgs) m.append(h('p', { class: 'pm-note' }, 'Image (PGS) subtitles can’t be restyled.'));
+          return;
+        }
+        case 'sFont': return choose('Font', 'subFont', SUB_FONTS.map(([k, l]) => [k, l]));
+        case 'sColor': return choose('Text color', 'subColor', colors);
+        case 'sOpacity': return choose('Text opacity', 'subOpacity', SUB_OPACITIES);
+        case 'sBgColor': return choose('Background color', 'subBgColor', colors);
+        case 'sBgOpacity': return choose('Background opacity', 'subBgOpacity', SUB_BG_OPACITIES);
+        case 'sEdge': return choose('Edge', 'subEdge', SUB_EDGES);
+        case 'sEdgeColor': return choose('Edge color', 'subEdgeColor', colors);
       }
       const cur = this.subById(this.subtitle);
       m.append(h('div', { class: 'pm-title' }, 'Subtitles & audio'));
@@ -1919,9 +1953,10 @@ class Player {
             step(0.1), step(0.5))));
       }
       m.append(h('div', { class: 'pm-sep' }));
-      m.append(row('Size', { small: 'Small', medium: 'Medium', large: 'Large' }[prefs.get('subSize')] || 'Medium', 'size'));
-      m.append(row('Position', { low: 'Low', normal: 'Normal', high: 'High' }[prefs.get('subPos')] || 'Normal', 'pos'));
-      m.append(sw('Background box', prefs.get('subBg'), (v) => { prefs.set('subBg', v); this.applySubStyle(); }));
+      m.append(row('Size', subLabel(SUB_SIZES, prefs.get('subSize')) || 'Medium', 'size'));
+      m.append(row('Position', subLabel(SUB_POSITIONS, prefs.get('subPos')) || 'Normal', 'pos'));
+      const custom = Object.keys(SUB_STYLE_DEFAULTS).some((k) => k !== 'subSize' && k !== 'subPos' && String(prefs.get(k)) !== String(SUB_STYLE_DEFAULTS[k]));
+      m.append(row('Style', custom ? 'Custom' : 'Default', 'style'));
       return;
     }
 

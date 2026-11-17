@@ -11,9 +11,18 @@ export const DEFAULTS = {
   audioLang: '',       // preferred audio language (ISO 639-2), '' = file default
   subLang: 'eng',      // preferred subtitle language
   subMode: 'auto',     // off | auto (forced / foreign audio) | always
-  subSize: 'medium',
-  subBg: true,
+  // Subtitle appearance; the choices are in substyle.js.
+  subSize: 'medium',   // xsmall | small | medium | large | xlarge | huge
   subPos: 'normal',    // low | normal | high
+  subFont: 'sans',
+  subWeight: 'bold',   // normal | bold
+  subColor: 'white',
+  subOpacity: 1,
+  subBg: true,         // background box behind each line
+  subBgColor: 'black',
+  subBgOpacity: 0.6,
+  subEdge: 'auto',     // auto | none | outline | shadow | raised | depressed
+  subEdgeColor: 'black',
   burnImageSubs: false, // burn PGS in on the server instead of drawing it (pgs.js)
   autoSkipIntro: false,
   autoSkipCredits: false,

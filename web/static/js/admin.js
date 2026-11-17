@@ -2,6 +2,7 @@ import { h, clear, icons, toast, modal, confirmDialog, spinner, toggle, fmtBytes
 import { api, img } from './api.js';
 import { state, loadLibraries, refreshSoft, setLeaveGuard, focusAfterRoute, renderNav } from './app.js';
 import { prefs, DEFAULTS, QUALITIES, qualityOptions } from './prefs.js';
+import { SUB_SIZES, SUB_POSITIONS, SUB_FONTS, SUB_COLORS, SUB_OPACITIES, SUB_BG_OPACITIES, SUB_EDGES, SUB_WEIGHTS, subStyleVars } from './substyle.js';
 import { capsSummary, compatRequest, TIERS, TIER_ORDER, causeLabel } from './caps.js';
 import { PAGES, searchBox, reveal } from './settings-search.js';
 import { lineChart, columnChart, barList, axisHours, axisBitrate } from './charts.js';
@@ -135,6 +136,39 @@ function select(value, options, onchange) {
   return h('select', { onchange: (e) => onchange(e.target.value) }, options.map(([v, l]) => h('option', { value: String(v), selected: String(v) === String(value) }, l)));
 }
 
+// Subtitle appearance (substyle.js), with a sample line that follows the
+// choices. Also changeable from the player's Subtitles & audio menu.
+function subStyleSection(p, set) {
+  const sample = h('div', { class: 'p-subs' }, h('div', { class: 'cue' }, 'This is how your subtitles look.'), h('div', { class: 'cue' }, h('i', null, 'And a second line, in italics.')));
+  const preview = h('div', { class: 'sub-preview', 'aria-hidden': 'true' }, sample);
+  const paint = () => { for (const [k, v] of Object.entries(subStyleVars(prefs.all()))) preview.style.setProperty(k, v); };
+  // Changes repaint the preview; the background ones also show or hide their rows.
+  const show = (el, on) => { el.style.display = on ? '' : 'none'; };
+  const sync = () => { paint(); show(bgRows, prefs.get('subBg')); show(edgeColor, prefs.get('subEdge') !== 'none'); };
+  const live = (k, conv) => (v) => { set(k, conv)(v); sync(); };
+  const pick = (label, k, list, conv, help) => field(label, select(p[k], list.map(([v, l]) => [v, l]), live(k, conv)), help);
+  const bgRows = h('div', { class: 'form-grid' },
+    pick('Background color', 'subBgColor', SUB_COLORS),
+    pick('Background opacity', 'subBgOpacity', SUB_BG_OPACITIES, Number));
+  const edgeColor = pick('Edge color', 'subEdgeColor', SUB_COLORS);
+  const section = h('div', { class: 'form-section' }, h('h2', null, 'Subtitle style'),
+    h('p', { class: 'help', style: { margin: 0 } }, 'Applies to text subtitles (SRT, WebVTT) and the dialogue of styled ASS subtitles, which keep their own font. Image subtitles (PGS) can’t be restyled.'),
+    preview,
+    h('div', { class: 'form-grid' },
+      pick('Subtitle size', 'subSize', SUB_SIZES),
+      pick('Subtitle position', 'subPos', SUB_POSITIONS),
+      pick('Font', 'subFont', SUB_FONTS),
+      pick('Font weight', 'subWeight', SUB_WEIGHTS),
+      pick('Text color', 'subColor', SUB_COLORS),
+      pick('Text opacity', 'subOpacity', SUB_OPACITIES, Number),
+      pick('Edge', 'subEdge', SUB_EDGES, undefined, 'Automatic outlines the text when there’s no background box.'),
+      edgeColor),
+    toggleRow('Subtitle background box', null, p.subBg, live('subBg')),
+    bgRows);
+  sync();
+  return section;
+}
+
 // ---------- per-device playback prefs ----------
 let capsOpen = false; // stays open across re-renders
 function prefsSection() {
@@ -157,11 +191,9 @@ function prefsSection() {
       h('div', { class: 'form-grid' },
         field('Preferred audio language', select(p.audioLang, langs, set('audioLang'))),
         field('Subtitles', select(p.subMode, [['off', 'Off'], ['auto', 'Auto (forced / foreign audio)'], ['always', 'Always on']], set('subMode'))),
-        field('Subtitle language', select(p.subLang, LANG_OPTIONS, set('subLang'))),
-        field('Subtitle size', select(p.subSize, [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']], set('subSize'))),
-        field('Subtitle position', select(p.subPos, [['low', 'Low'], ['normal', 'Normal'], ['high', 'High']], set('subPos')))),
-      toggleRow('Subtitle background box', null, p.subBg, set('subBg')),
+        field('Subtitle language', select(p.subLang, LANG_OPTIONS, set('subLang')))),
       toggleRow('Burn in image subtitles', 'Blu-ray (PGS) subtitles are drawn over the video in the browser. Turn this on to have the server burn them into the picture instead, which means transcoding.', p.burnImageSubs, set('burnImageSubs'))),
+    subStyleSection(p, set),
     h('div', { class: 'form-section' }, h('h2', null, 'Player'),
       toggleRow('Autoplay next episode', 'Shows an "Up next" card near the end with a countdown.', p.autoplayNext, set('autoplayNext')),
       toggleRow('Skip intros automatically', 'Otherwise a "Skip Intro" button appears while an intro plays.', p.autoSkipIntro, set('autoSkipIntro')),

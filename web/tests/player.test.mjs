@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import * as substyle from '../static/js/substyle.js';
 
 // Run the actual Player methods with a native video whose play() stays
 // pending and never emits an error, as in the Firefox MKV startup hang.
@@ -71,6 +72,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
     './caps.js': { detectCaps: () => ({ mse: true }) },
     './buffering.js': { bufferingCause: () => null },
     './audio-fx.js': { AudioFX: class {}, audioFxSupported: () => false, fxLabel: () => '' },
+    './substyle.js': { ...substyle },
     './pgs.js': { PgsRenderer: class { setTrack() {} setOffset() {} destroy() {} } },
     './app.js': { state: { me: { id: 1, isAdmin: false }, caps: {} } },
     './prefs.js': { prefs: { get: k => k in prefValues ? prefValues[k] : k === 'heartbeat' ? 10 : 0, set: (k, v) => { prefValues[k] = v; } }, QUALITIES: [], qualityOptions: () => [] },
