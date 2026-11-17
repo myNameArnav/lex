@@ -49,7 +49,9 @@ const DIRECT_STARTUP_TIMEOUT = 15000;
 const REMUX_FAULT = /Browser remux|CHUNK_DEMUXER_ERROR_APPEND_FAILED|unplayable gap/;
 const remuxFault = (reason, err) => REMUX_FAULT.test(`${reason} ${err?.message || ''}`);
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
-const DEFAULT_FONT = '/vendor/jassub/default.woff2';
+// Relative to this module, so they come from the same build prefix (and
+// long-lived cache) as the code; see buildPrefix in internal/api/server.go.
+const vendorURL = (p) => new URL(`../vendor/${p}`, import.meta.url).href;
 const LANG_CHOICES = ['eng', 'spa', 'fre', 'ger', 'ita', 'por', 'hin', 'jpn', 'kor', 'chi', 'ara', 'rus', 'dut', 'swe', 'nor', 'dan', 'fin', 'pol', 'tur', 'tam', 'tel', 'ukr', 'heb', 'gre', 'cze', 'hun', 'rum', 'tha', 'vie', 'ind', 'may']
   .map((k) => [k, langName(k)]).sort((a, b) => a[1].localeCompare(b[1]));
 const LANG1 = { en: 'eng', es: 'spa', fr: 'fre', de: 'ger', it: 'ita', pt: 'por', 'pt-pt': 'por', 'pt-br': 'por', hi: 'hin', ja: 'jpn', ko: 'kor', zh: 'chi', 'zh-cn': 'chi', 'zh-tw': 'chi', ar: 'ara', ru: 'rus', nl: 'dut', sv: 'swe', no: 'nor', da: 'dan', fi: 'fin', pl: 'pol', tr: 'tur', ta: 'tam', te: 'tel', uk: 'ukr', he: 'heb', el: 'gre', cs: 'cze', hu: 'hun', ro: 'rum', th: 'tha', vi: 'vie', id: 'ind', ms: 'may' };
@@ -984,7 +986,7 @@ class Player {
     if (!Player.assSupported()) return false;
     try {
       const [{ default: JASSUB }, fonts] = await Promise.all([
-        import('/vendor/jassub/jassub.js'),
+        import(vendorURL('jassub/jassub.js')),
         api(`/api/files/${this.file.id}/fonts`).catch(() => []),
       ]);
       if (token !== this.subToken || this.closed) return true;
@@ -995,11 +997,11 @@ class Player {
       if (token !== this.subToken || this.closed) return true;
       this.jassub = new JASSUB({
         video: this.video, subContent, fonts,
-        workerUrl: '/vendor/jassub/worker.js',
-        wasmUrl: '/vendor/jassub/jassub-worker.wasm',
-        modernWasmUrl: '/vendor/jassub/jassub-worker-modern.wasm',
+        workerUrl: vendorURL('jassub/worker.js'),
+        wasmUrl: vendorURL('jassub/jassub-worker.wasm'),
+        modernWasmUrl: vendorURL('jassub/jassub-worker-modern.wasm'),
         // Liberation Sans is metric-compatible with Arial, the usual ASS default.
-        availableFonts: { 'liberation sans': DEFAULT_FONT, arial: DEFAULT_FONT, helvetica: DEFAULT_FONT, 'arial unicode ms': DEFAULT_FONT },
+        availableFonts: Object.fromEntries(['liberation sans', 'arial', 'helvetica', 'arial unicode ms'].map((f) => [f, vendorURL('jassub/default.woff2')])),
         queryFonts: false, // querying the OS font list can stall rendering for seconds
         timeOffset: -this.subOffset,
         prescaleHeightLimit: 1080, maxRenderHeight: 1440,

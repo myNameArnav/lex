@@ -3,6 +3,8 @@
 //
 // - Only the app shell (index, css, the /js modules, icons, manifest) is
 //   cached, network-first, so a new build is picked up on the next load.
+//   The css and modules are this build's /b/<id>/ copies, which the server
+//   marks immutable, so "network" is usually the browser's HTTP cache.
 // - Navigations that fail show /offline.html ("Can't reach your Lex server").
 // - Everything else bypasses the worker untouched: /api/ (authenticated data,
 //   images, HLS, files), range and media requests, the wasm vendor bundles,
@@ -15,7 +17,8 @@ const BUILD = /*LEX_BUILD*/null || { version: 'dev', shell: ['/', '/css/app.css'
 const CACHE_PREFIX = 'lex-shell-';
 const CACHE = CACHE_PREFIX + BUILD.version;
 const OFFLINE = '/offline.html';
-const PRECACHE = [...new Set([...BUILD.shell, OFFLINE, '/js/offline.js'])];
+// The shell includes the offline page's own stylesheet and script.
+const PRECACHE = [...new Set([...BUILD.shell, OFFLINE])];
 // A navigation that hangs this long counts as unreachable.
 const NAV_TIMEOUT_MS = 10000;
 const MEDIA_DESTINATIONS = new Set(['audio', 'video', 'track']);

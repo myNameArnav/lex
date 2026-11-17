@@ -4,7 +4,7 @@
 // input and accidental presses; Ctrl/⌘ shortcuts and the player keys stay.
 
 import { h, modal } from './ui.js';
-import { isPlayerOpen, pauseForOverlay } from './player.js';
+import { isPlayerOpen, pauseForOverlay } from './player-loader.js';
 import { prefs } from './prefs.js';
 
 export const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';

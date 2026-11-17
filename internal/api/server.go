@@ -59,6 +59,7 @@ type Server struct {
 	ListenAddr string // -addr, used to suggest LAN webhook URLs
 
 	static    map[string]*asset
+	buildID   string // content hash of the UI files; assets are also served under /b/<buildID>/
 	loginMu   sync.Mutex
 	loginFail map[string]*failWindow
 	thumbSem  chan struct{}
@@ -493,8 +494,59 @@ func (s *Server) loadStatic() error {
 	if err != nil {
 		return err
 	}
+	s.buildID = s.computeBuildID()
 	s.preloadModules()
+	s.versionPages()
 	return s.stampServiceWorker()
+}
+
+// Long-lived caching (#66). Every file is also served under
+// /b/<build id>/<path>, where the build id is a hash of all the UI files, as
+// immutable: the browser keeps it for a year without asking again. The HTML
+// pages load the stylesheet and modules from there, and the modules import
+// each other (and the wasm bundles) by relative paths, so the whole graph
+// stays under the same prefix. A new build gets a new prefix; only the
+// pages and sw.js are revalidated on each load.
+const buildPrefix = "/b/"
+
+// computeBuildID hashes every UI file (and nothing else), so an unchanged UI
+// keeps its id across restarts and server-only releases.
+func (s *Server) computeBuildID() string {
+	paths := make([]string, 0, len(s.static))
+	for p := range s.static {
+		paths = append(paths, p)
+	}
+	slices.Sort(paths)
+	h := sha1.New()
+	for _, p := range paths {
+		io.WriteString(h, p+"\x00"+s.static[p].etag+"\x00")
+	}
+	return hex.EncodeToString(h.Sum(nil)[:6])
+}
+
+// versioned is p under this build's prefix.
+func (s *Server) versioned(p string) string { return buildPrefix + s.buildID + p }
+
+// isVersionedAsset reports whether p is loaded from the build prefix: the
+// stylesheet and scripts. Icons, the manifest and the pages keep fixed URLs.
+func isVersionedAsset(p string) bool {
+	return strings.HasPrefix(p, "/js/") || strings.HasPrefix(p, "/css/") || strings.HasPrefix(p, "/vendor/")
+}
+
+// versionPages points the HTML pages' stylesheet, script and modulepreload
+// URLs at the build prefix.
+func (s *Server) versionPages() {
+	for _, page := range []string{"/index.html", "/offline.html"} {
+		a := s.static[page]
+		if a == nil {
+			continue
+		}
+		body := a.body
+		for _, dir := range []string{"/js/", "/css/", "/vendor/"} {
+			body = bytes.ReplaceAll(body, []byte(`="`+dir), []byte(`="`+s.versioned(dir)))
+		}
+		s.static[page] = newAsset(page[1:], body)
+	}
 }
 
 var (
@@ -585,9 +637,10 @@ func (s *Server) shellPaths() []string {
 	for p := range s.static {
 		switch {
 		case p == "/index.html", p == "/sw.js", strings.HasPrefix(p, "/vendor/"):
-		case strings.HasPrefix(p, "/js/") && path.Ext(p) == ".js",
-			strings.HasPrefix(p, "/css/"), strings.HasPrefix(p, "/icons/"),
-			p == "/favicon.svg", p == "/manifest.json", p == "/offline.html":
+		case strings.HasPrefix(p, "/js/") && path.Ext(p) == ".js", strings.HasPrefix(p, "/css/"):
+			// What the pages load: from the build prefix.
+			shell = append(shell, s.versioned(p))
+		case strings.HasPrefix(p, "/icons/"), p == "/favicon.svg", p == "/manifest.json", p == "/offline.html":
 			shell = append(shell, p)
 		}
 	}
@@ -610,7 +663,7 @@ func (s *Server) stampServiceWorker() error {
 	h := sha1.New()
 	io.WriteString(h, s.Version)
 	for _, p := range shell {
-		a := s.static[p]
+		a := s.static[strings.TrimPrefix(p, buildPrefix+s.buildID)]
 		if p == "/" {
 			a = s.static["/index.html"]
 		}
@@ -635,6 +688,20 @@ func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := r.URL.Path
+	// /b/<build id>/<path>: this build's files are immutable. A page from an
+	// older build may still ask for its own id; it gets today's file, but
+	// without the long cache, so the stale combination doesn't stick.
+	immutable := false
+	if rest, found := strings.CutPrefix(p, buildPrefix); found {
+		id, file, _ := strings.Cut(rest, "/")
+		file = "/" + file
+		if !isVersionedAsset(file) {
+			http.NotFound(w, r)
+			return
+		}
+		immutable = id == s.buildID
+		p = file
+	}
 	a, ok := s.static[p]
 	if !ok && path.Ext(p) != "" {
 		// A missing file (e.g. iOS probing /apple-touch-icon.png) is a 404,
@@ -653,7 +720,11 @@ func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Set("Content-Type", a.ctype)
 	h.Set("ETag", a.etag)
-	h.Set("Cache-Control", "no-cache")
+	if immutable {
+		h.Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		h.Set("Cache-Control", "no-cache")
+	}
 	h.Add("Vary", "Accept-Encoding")
 	if r.Header.Get("If-None-Match") == a.etag {
 		w.WriteHeader(http.StatusNotModified)

@@ -1,6 +1,6 @@
 import { h, $, clear, icons, RAIL_LETTERS, letterOffsets, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrate, toast, modal, spinner, lazyImg, popupMenu, closePopupMenu, streamLabel, langName, channelName, confirmDialog, run, fmtEpisode, datedEpisode, fmtAirDate, fmtClock, motionOK, emptyState } from './ui.js';
 import { api, img, castImg } from './api.js';
-import { openPlayer, isPlayerOpen, closePlayer } from './player.js';
+import { openPlayer, isPlayerOpen, closePlayer, warmPlayer } from './player-loader.js';
 import { installShortcuts, showShortcuts, MOD } from './shortcuts.js';
 import { seasonMenuItems, seasonConfirm } from './season.js';
 import { compatRequest, TIERS, causeLabel, verdictCauses } from './caps.js';
@@ -173,6 +173,9 @@ async function startApp() {
   route();
   // The first view has made its request by now; later ones fetch afresh.
   early.clear();
+  // Then fetch the player in the background, after what's on screen.
+  const warm = () => warmPlayer().catch(() => {});
+  if ('requestIdleCallback' in window) requestIdleCallback(warm, { timeout: 3000 }); else setTimeout(warm, 1000);
 }
 
 export async function loadLibraries() {

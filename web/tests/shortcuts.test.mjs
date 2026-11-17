@@ -21,7 +21,7 @@ async function fixture({ shortcuts = true, playerOpen = false, playing = false, 
       h,
       modal: (opts) => { const m = { opts, close: () => opts.onClose?.() }; calls.modals.push(m); return m; },
     },
-    './player.js': {
+    './player-loader.js': {
       isPlayerOpen: () => playerOpen,
       pauseForOverlay: () => { if (!playing) return () => {}; calls.paused++; return () => { calls.resumed++; }; },
     },
