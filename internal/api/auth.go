@@ -49,6 +49,9 @@ func (s *Server) caps(u *store.User) map[string]any {
 		"cacheEnabled":       u.IsAdmin && c.CacheEnabled,
 		"liveTv":             c.LiveTV,
 		"maxTranscodeHeight": c.MaxTranscodeHeight,
+		// The player suggests a lower quality only when the server can
+		// make one.
+		"transcode": c.EnableTranscode,
 	}
 }
 
