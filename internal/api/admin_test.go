@@ -298,3 +298,56 @@ func TestClientRemuxSettingRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// The dashboard's drill-downs list unmatched titles (with the folder they
+// were parsed from) and unreadable files (with the probe error), admins only.
+func TestUnmatchedAndUnreadableLists(t *testing.T) {
+	s, h := securityServer(t)
+	admin, _ := s.St.CreateInitialAdmin("admin", "test-password-123")
+	user, _ := s.St.CreateUser("bob", "test-password-123", false)
+	for _, q := range []string{
+		`INSERT INTO libraries(id,name,kind,paths,created_at) VALUES(1,'Movies','movies','[]',0)`,
+		`INSERT INTO items(id,library_id,kind,title,sort_title,path,meta_status,added_at,updated_at) VALUES(1,1,'movie','Dune','dune','/m/Dune (2021)',1,0,0)`,
+		`INSERT INTO items(id,library_id,kind,title,sort_title,path,meta_status,added_at,updated_at) VALUES(2,1,'movie','Blde Runer','blde runer','/m/Blde Runer (1982)',2,0,0)`,
+		`INSERT INTO items(id,library_id,kind,title,sort_title,path,meta_status,added_at,updated_at) VALUES(3,1,'movie','Home Video','home video','/m/Home Video',3,0,0)`,
+		`INSERT INTO items(id,library_id,kind,title,sort_title,path,meta_status,added_at,updated_at) VALUES(4,1,'movie','Pending','pending','/m/Pending',0,0,0)`,
+		`INSERT INTO files(id,item_id,library_id,path,size,mtime,added_at) VALUES(1,1,1,'/m/Dune (2021)/dune.mkv',1,1,0)`,
+		`INSERT INTO files(id,item_id,library_id,path,size,mtime,added_at,probe_error,probed_at,probe_attempts) VALUES(2,2,1,'/m/Blde Runer (1982)/br.mkv',5,1,0,'Invalid data found when processing input',100,3)`,
+	} {
+		if _, err := s.St.DB().Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tok, _ := s.St.CreateToken(admin.ID, "Test", "127.0.0.1")
+	userTok, _ := s.St.CreateToken(user.ID, "Test", "127.0.0.1")
+
+	w := adminRequest(t, h, tok, "GET", "/api/admin/stats/library/unmatched", "")
+	var un []store.UnmatchedTitle
+	if err := json.Unmarshal(w.Body.Bytes(), &un); err != nil || w.Code != 200 {
+		t.Fatalf("unmatched: %d %s", w.Code, w.Body)
+	}
+	if len(un) != 2 || un[0].ItemID != 2 || un[0].Path != "Blde Runer (1982)" || un[0].Library != "Movies" || un[1].ItemID != 3 {
+		t.Fatalf("unmatched = %+v, want items 2 and 3 with their folder names", un)
+	}
+
+	w = adminRequest(t, h, tok, "GET", "/api/admin/stats/library/unreadable", "")
+	var bad []store.UnreadableFile
+	if err := json.Unmarshal(w.Body.Bytes(), &bad); err != nil || w.Code != 200 {
+		t.Fatalf("unreadable: %d %s", w.Code, w.Body)
+	}
+	if len(bad) != 1 || bad[0].FileID != 2 || bad[0].ItemID != 2 || bad[0].Attempts != 3 || !strings.Contains(bad[0].Error, "Invalid data") {
+		t.Fatalf("unreadable = %+v", bad)
+	}
+
+	for _, p := range []string{"/api/admin/stats/library/unmatched", "/api/admin/stats/library/unreadable"} {
+		if w := adminRequest(t, h, userTok, "GET", p, ""); w.Code != 403 {
+			t.Fatalf("%s as user: %d", p, w.Code)
+		}
+	}
+	if w := adminRequest(t, h, userTok, "POST", "/api/admin/files/2/probe", ""); w.Code != 403 {
+		t.Fatalf("probe as user: %d", w.Code)
+	}
+	if w := adminRequest(t, h, tok, "POST", "/api/admin/files/99/probe", ""); w.Code != 404 {
+		t.Fatalf("probe missing file: %d %s", w.Code, w.Body)
+	}
+}
