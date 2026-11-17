@@ -108,10 +108,8 @@ func (s *Store) LibraryStats() (*LibraryStats, error) {
 	}
 	// Any audio track counts (a file with English AAC and a DTS track is in
 	// both), so these add up to more than the number of files.
-	if st.AudioCodecs, err = s.buckets(`SELECT c, COUNT(*), SUM(size) FROM (
-		SELECT DISTINCT f.id, f.size, COALESCE(NULLIF(json_extract(t.value,'$.codec'),''),'unknown') c
-		FROM files f, json_each(f.info,'$.streams') t WHERE json_valid(f.info) AND json_extract(t.value,'$.type')='audio')
-		GROUP BY c ORDER BY 2 DESC`); err != nil {
+	if st.AudioCodecs, err = s.buckets(`SELECT a.codec, COUNT(*), SUM(f.size) FROM file_audio a JOIN files f ON f.id=a.file_id
+		GROUP BY a.codec ORDER BY 2 DESC`); err != nil {
 		return nil, err
 	}
 	if st.Containers, err = s.extBuckets(); err != nil {
@@ -131,8 +129,7 @@ func (s *Store) LibraryStats() (*LibraryStats, error) {
 
 // videoOf is a file's video codec with the bit depth of its first video
 // stream, e.g. "hevc 10-bit", or just the codec when the depth is unknown.
-const videoOf = `(CASE f.vcodec WHEN '' THEN 'unknown' ELSE f.vcodec || COALESCE((SELECT ' ' || json_extract(t.value,'$.bitDepth') || '-bit'
-	FROM json_each(CASE WHEN json_valid(f.info) THEN f.info END,'$.streams') t WHERE json_extract(t.value,'$.type')='video' ORDER BY t.key LIMIT 1), '') END)`
+const videoOf = `(CASE f.vcodec WHEN '' THEN 'unknown' ELSE f.vcodec || CASE WHEN f.vdepth > 0 THEN ' ' || f.vdepth || '-bit' ELSE '' END END)`
 
 const resolutionOf = `CASE WHEN f.width>=3200 OR f.height>=2000 THEN '4K' WHEN f.width>=1800 OR f.height>=1000 THEN '1080p' WHEN f.width>=1200 OR f.height>=700 THEN '720p' WHEN f.width>0 THEN 'SD' ELSE 'unknown' END`
 
@@ -152,7 +149,7 @@ type LibraryTitle struct {
 var libraryDims = map[string]string{
 	"library":    `(SELECT name FROM libraries WHERE id=f.library_id) = ?`,
 	"video":      videoOf + ` = ?`,
-	"audio":      `EXISTS (SELECT 1 FROM json_each(f.info,'$.streams') t WHERE json_valid(f.info) AND json_extract(t.value,'$.type')='audio' AND COALESCE(NULLIF(json_extract(t.value,'$.codec'),''),'unknown') = ?)`,
+	"audio":      `f.id IN (SELECT file_id FROM file_audio WHERE codec = ?)`,
 	"hdr":        `(CASE f.hdr WHEN '' THEN 'SDR' ELSE f.hdr END) = ?`,
 	"resolution": resolutionOf + ` = ?`,
 	"container":  `lower(f.path) LIKE '%.' || ? ESCAPE '\'`,
