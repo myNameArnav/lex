@@ -176,7 +176,7 @@ func (h *HLS) Playlist(f *store.File, p Params, q url.Values) string {
 }
 
 func jobKey(p Params) string {
-	return fmt.Sprintf("%s|%d|%v|%v|%d|%d|%d|%d|%d|%v", p.SessionID, p.FileID, p.VideoCopy, p.AudioCopy, p.Audio, p.Burn, p.Bitrate, p.Height, p.Channels, p.SW)
+	return fmt.Sprintf("%s|%d|%v|%v|%d|%d|%d|%d|%d|%v|%v", p.SessionID, p.FileID, p.VideoCopy, p.AudioCopy, p.Audio, p.Burn, p.Bitrate, p.Height, p.Channels, p.SW, p.Voice)
 }
 
 var validSID = regexp.MustCompile(`^[A-Za-z0-9-]{1,128}$`)
