@@ -193,3 +193,65 @@ func TestEmbeddedServiceWorker(t *testing.T) {
 		}
 	}
 }
+
+func TestIndexPreloadsTheModuleGraph(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	s := &Server{St: st, Log: logx.New(10, false), Web: fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte(`<head><script type="module" src="/js/app.js"></script></head>`)},
+		"js/app.js": &fstest.MapFile{Data: []byte("import { a,\n  b } from './ui.js';\nimport './side.js';\nexport { c } from \"./ui.js\";\n" +
+			"const lazy = () => import('./admin.js');\n// import x from './comment.js'\nimport gone from './missing.js';\n")},
+		"js/ui.js":              &fstest.MapFile{Data: []byte("import { state } from './app.js';\nimport codecs from '../vendor/codecs.js';\nimport abs from '/js/abs.js';\n")},
+		"js/side.js":            &fstest.MapFile{Data: []byte("export {};")},
+		"js/abs.js":             &fstest.MapFile{Data: []byte("export {};")},
+		"js/admin.js":           &fstest.MapFile{Data: []byte("import './only-admin.js';")},
+		"js/only-admin.js":      &fstest.MapFile{Data: []byte("export {};")},
+		"js/comment.js":         &fstest.MapFile{Data: []byte("export {};")},
+		"vendor/codecs.js":      &fstest.MapFile{Data: []byte("export default {};")},
+		"vendor/unrelated.wasm": &fstest.MapFile{Data: []byte("wasm")},
+	}}
+	h, err := s.Handler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "http://lex.test/", nil))
+	// Every module app.js reaches through static imports, once each, before
+	// the script; nothing that is only imported on demand.
+	want := `<head><link rel="modulepreload" href="/js/ui.js">` + "\n" +
+		`<link rel="modulepreload" href="/js/side.js">` + "\n" +
+		`<link rel="modulepreload" href="/vendor/codecs.js">` + "\n" +
+		`<link rel="modulepreload" href="/js/abs.js">` + "\n" +
+		`<script type="module" src="/js/app.js"></script></head>`
+	if got := w.Body.String(); got != want {
+		t.Errorf("index.html:\n got %s\nwant %s", got, want)
+	}
+}
+
+// The real UI: the player and its helpers are several import levels below
+// app.js, and each level left out of the preload list is a round trip.
+func TestEmbeddedIndexPreloadsThePlayer(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	s := &Server{St: st, Log: logx.New(10, false), Web: web.FS()}
+	if _, err := s.Handler(); err != nil {
+		t.Fatal(err)
+	}
+	index := string(s.static["/index.html"].body)
+	for _, m := range []string{"/js/ui.js", "/js/player.js", "/js/mse.js", "/js/mp4.js"} {
+		if !strings.Contains(index, `<link rel="modulepreload" href="`+m+`">`) {
+			t.Errorf("index.html doesn't preload %s", m)
+		}
+	}
+	for _, m := range []string{"/js/app.js", "/js/admin.js", "/js/remux-worker.js"} {
+		if strings.Contains(index, `href="`+m+`"`) {
+			t.Errorf("index.html preloads %s, which the page doesn't import statically", m)
+		}
+	}
+}

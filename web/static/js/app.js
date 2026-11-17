@@ -45,18 +45,48 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => {}); }, { once: true });
 }
 
+// What boot needs comes in one round trip instead of one after another: the
+// requests don't depend on each other, and on a remote link each costs as
+// much as the server takes to answer all of them. `early` holds the ones a
+// later step picks up (takeEarly) until the first view has asked for its own.
+const early = new Map();
+function fetchEarly(path) {
+  const p = api(path);
+  p.catch(() => {}); // whoever takes it handles the error
+  early.set(path, p);
+}
+function takeEarly(path) {
+  const p = early.get(path);
+  early.delete(path);
+  return p || api(path);
+}
+// earlyViewPath is the request the view at the current hash starts with.
+function earlyViewPath() {
+  const { parts } = parseHash();
+  if (!parts.length) return '/api/home';
+  if (parts[0] === 'item' && /^\d+$/.test(parts[1] || '')) return `/api/items/${+parts[1]}`;
+  return null;
+}
+
 async function boot() {
   try {
-    const info = await api('/api/public/info');
+    const infoReq = api('/api/public/info');
+    const meReq = api('/api/me');
+    meReq.catch(() => {});
+    fetchEarly('/api/libraries');
+    const viewPath = earlyViewPath();
+    if (viewPath) fetchEarly(viewPath);
+    const info = await infoReq;
     state.serverName = info.serverName;
     state.version = info.version;
     document.title = info.serverName;
-    if (info.setupRequired) return renderAuth(true);
-    const me = await api('/api/me');
+    if (info.setupRequired) { early.clear(); return renderAuth(true); }
+    const me = await meReq;
     state.me = me.user;
     state.caps = me.caps || {};
     await startApp();
   } catch (e) {
+    early.clear();
     if (e.status === 401) return renderAuth(false);
     const down = e.status === 0 || e.status >= 502;
     clear(app).appendChild(h('main', { id: 'main' }, emptyState({
@@ -141,10 +171,12 @@ async function startApp() {
   };
   settled = false;
   route();
+  // The first view has made its request by now; later ones fetch afresh.
+  early.clear();
 }
 
 export async function loadLibraries() {
-  try { state.libraries = await api('/api/libraries'); } catch { state.libraries = []; }
+  try { state.libraries = await takeEarly('/api/libraries'); } catch { state.libraries = []; }
   renderNav();
 }
 
@@ -691,7 +723,7 @@ function refreshLater(ctx, ms, onRefresh) {
 }
 
 async function homeView(ctx) {
-  const data = await api('/api/home');
+  const data = await takeEarly('/api/home');
   const wrap = h('div', { style: { paddingTop: '26px', paddingBottom: '40px' } }, h('h1', { class: 'sr-only' }, 'Home'));
   const admin = state.me.isAdmin;
   if (!data.libraries?.length) {
@@ -900,7 +932,7 @@ async function libraryView(ctx, id) {
 
 // ---------- item detail ----------
 async function itemView(ctx, id) {
-  const d = await api(`/api/items/${id}`);
+  const d = await takeEarly(`/api/items/${id}`);
   const it = d.item;
   if (it.kind === 'season') {
     location.replace(`#/item/${it.showId}?season=${it.id}`);
