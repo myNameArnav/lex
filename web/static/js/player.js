@@ -7,6 +7,7 @@ import { state } from './app.js';
 import { detectCaps } from './caps.js';
 import { prefs, QUALITIES, qualityOptions } from './prefs.js';
 import { MseEngine, clock } from './mse.js';
+import { bufferingCause } from './buffering.js';
 import { AudioFX, audioFxSupported, fxLabel } from './audio-fx.js';
 import { PgsRenderer } from './pgs.js';
 
@@ -709,10 +710,23 @@ class Player {
     // Spinning for a long time: put what the player sees in the server log.
     if (waited >= 20000 && !this.waitLogged) {
       this.waitLogged = true;
-      this.logEvent('waiting', `${(waited / 1000).toFixed(0)}s at ${clock(this.video.currentTime)}, ${this.bufferSummary()}`);
+      const cause = this.bufferCause();
+      this.logEvent('waiting', `${(waited / 1000).toFixed(0)}s at ${clock(this.video.currentTime)}, ${this.bufferSummary()}${cause ? ` — ${cause.text}` : ''}`);
     }
     if (this.engine?.retries > 0 && waited >= 1000) this.setStatus('Connection lost — reconnecting…');
-    else if (waited >= 8000 && !this.statusEl.textContent) this.setStatus('Still buffering…');
+    else if (waited >= 3000 && (!this.statusEl.textContent || this.statusEl.dataset.cause)) {
+      // Say why, once there's a likely cause; otherwise just that it's slow.
+      const cause = this.started ? this.bufferCause() : null;
+      if (cause) {
+        this.setStatus(`${cause.text} ${cause.hint}`.trim());
+        this.statusEl.dataset.cause = '1';
+        // Stalling again for the same reason: say it where it outlasts the spinner.
+        if (this.stalls.count >= 2 && !this.causeToasted) {
+          this.causeToasted = true;
+          toast(`Buffering: ${cause.text} ${cause.hint}`.trim(), '', { key: 'buffer-cause' });
+        }
+      } else if (waited >= 8000) this.setStatus('Still buffering…');
+    }
     // The MSE engine retries its own stream.
     if (waited >= 1000 && !this.engine && this.plan && performance.now() - (this.lastProbe || 0) > 5000) this.probeServer();
   }
@@ -731,7 +745,24 @@ class Player {
     return `buffer [${r.join(' ') || 'empty'}], readyState ${this.video.readyState}, network ${this.video.networkState}`;
   }
 
-  setStatus(text) { if (this.statusEl && this.statusEl.textContent !== text) this.statusEl.textContent = text; }
+  setStatus(text) {
+    if (!this.statusEl) return;
+    delete this.statusEl.dataset.cause;
+    if (this.statusEl.textContent !== text) this.statusEl.textContent = text;
+  }
+
+  // The likely reason playback is buffering (buffering.js), or null.
+  bufferCause() {
+    if (!this.plan) return null;
+    const es = this.engine ? this.engine.stats() : null;
+    // How fast data arrives: the stream download, else the browser
+    // remuxer's file reads, else what the server measures sending.
+    const bandwidth = es?.bandwidth || (es?.fileRate ? es.fileRate * 8 : 0) || this.serverRate * 8;
+    return bufferingCause({
+      needKbps: this.plan.bitrate, bandwidth, remote: !!this.plan.remote, job: this.lastJob, rate: this.video.playbackRate || 1,
+      canTranscode: state.caps?.transcode !== false, isAdmin: !!state.me?.isAdmin, method: this.plan.method,
+    });
+  }
 
   // An admin stopped this session from the dashboard: stay stopped (no
   // replan, retry or fallback) and say why. Playing the title again starts
@@ -1648,6 +1679,8 @@ class Player {
     }
     if (es?.fileBytes != null) r('File read', fmtBytes(es.fileBytes), `range requests${es.fileRate ? ` at ${fmtBitrate(es.fileRate * 8)}` : ''} · remuxer memory ${fmtBytes(es.remuxHeap)}`);
     r('Server rate', fmtBitrate(this.serverRate * 8));
+    const cause = cs.bufferEvents || cs.buffering ? this.bufferCause() : null;
+    if (cause) r('Likely cause', cause.kind === 'network' ? 'data arrives too slowly' : 'server converts too slowly', cause.hint, 'warn', `${cause.text} ${cause.hint}`.trim());
     r('Stalls', String(cs.bufferEvents), `${cs.bufferSeconds.toFixed(1)}s total${cs.buffering ? ' · buffering now' : ''}`, cs.buffering ? 'bad' : cs.bufferEvents ? 'warn' : '');
     r('Read from', this.cached ? 'SSD cache' : 'library disk');
     r('Source bitrate', fmtBitrate(info.bitrate || 0));
@@ -2133,6 +2166,7 @@ class Player {
     this.noClientRemux = false;
     this.noPgs = false;
     this.stalls = { count: 0, secs: 0, since: 0 };
+    this.causeToasted = false;
     this.teardown();
   }
 

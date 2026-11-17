@@ -69,6 +69,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
       }, img() {},
     },
     './caps.js': { detectCaps: () => ({ mse: true }) },
+    './buffering.js': { bufferingCause: () => null },
     './audio-fx.js': { AudioFX: class {}, audioFxSupported: () => false, fxLabel: () => '' },
     './pgs.js': { PgsRenderer: class { setTrack() {} setOffset() {} destroy() {} } },
     './app.js': { state: { me: { id: 1, isAdmin: false }, caps: {} } },

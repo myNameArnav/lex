@@ -39,6 +39,9 @@ func TestMeReportsCaps(t *testing.T) {
 	want := func(t *testing.T, got map[string]any, subs, cache, live bool) {
 		t.Helper()
 		// The quality menu labels resolutions from the server's transcode cap.
+		if v, ok := got["transcode"].(bool); !ok || v != s.St.Config().EnableTranscode {
+			t.Errorf("transcode = %v, want %v", got["transcode"], s.St.Config().EnableTranscode)
+		}
 		if v, ok := got["maxTranscodeHeight"].(float64); !ok || int(v) != s.St.Config().MaxTranscodeHeight || v <= 0 {
 			t.Errorf("maxTranscodeHeight = %v, want %d", got["maxTranscodeHeight"], s.St.Config().MaxTranscodeHeight)
 		}

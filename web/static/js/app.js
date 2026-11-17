@@ -5,7 +5,7 @@ import { installShortcuts, showShortcuts, MOD } from './shortcuts.js';
 import { seasonMenuItems, seasonConfirm } from './season.js';
 import { compatRequest, TIERS, causeLabel, verdictCauses } from './caps.js';
 
-// caps: { subtitleSearch, cacheEnabled, liveTv, maxTranscodeHeight } from the server (see /api/me).
+// caps: { subtitleSearch, cacheEnabled, liveTv, maxTranscodeHeight, transcode } from the server (see /api/me).
 export const state = { me: null, caps: {}, serverName: 'Lex', libraries: [], version: '' };
 const app = document.getElementById('app');
 let mainEl = null, navEl = null, searchInput = null;
