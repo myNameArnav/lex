@@ -63,6 +63,8 @@ type Server struct {
 	loginFail map[string]*failWindow
 	thumbSem  chan struct{}
 	resizeSem chan struct{}
+	backupMu  sync.Mutex // one backup at a time; guards backupErr
+	backupErr string     // why the last scheduled backup failed ("" if it didn't)
 }
 
 type asset struct {
@@ -186,6 +188,10 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("DELETE /api/admin/history", a(s.clearHistory))
 	mux.Handle("GET /api/admin/logs", a(s.logs))
 	mux.Handle("POST /api/admin/cache/clear", a(s.clearCache))
+	mux.Handle("GET /api/admin/backups", a(s.listBackups))
+	mux.Handle("POST /api/admin/backups", a(s.createBackup))
+	mux.Handle("GET /api/admin/backups/{name}", a(s.downloadBackup))
+	mux.Handle("DELETE /api/admin/backups/{name}", a(s.deleteBackup))
 	mux.Handle("GET /api/admin/cache", a(s.cacheStatus))
 	mux.Handle("POST /api/admin/cache/items/{id}", a(s.cacheItem))
 	mux.Handle("DELETE /api/admin/cache/items/{id}", a(s.uncacheItem))

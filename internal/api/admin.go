@@ -31,6 +31,10 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad config: "+err.Error())
 		return
 	}
+	if msg := checkBackupDir(c.BackupDir, old.BackupDir); msg != "" {
+		writeErr(w, 400, msg)
+		return
+	}
 	c, err := s.St.SaveConfig(c)
 	if err != nil {
 		writeErr(w, 500, err.Error())

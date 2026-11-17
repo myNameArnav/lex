@@ -47,6 +47,7 @@ func main() {
 	debugLog := flag.Bool("debug", os.Getenv("LEX_DEBUG") == "1", "verbose logging")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	healthcheck := flag.Bool("healthcheck", false, "check that the server on -addr answers, then exit (for container health checks)")
+	restore := flag.String("restore", "", "replace the database in -data with this backup file, then exit (stop Lex first)")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("lex", version)
@@ -54,6 +55,9 @@ func main() {
 	}
 	if *healthcheck {
 		os.Exit(health(*addr))
+	}
+	if *restore != "" {
+		os.Exit(restoreBackup(*addr, *dataDir, *restore))
 	}
 
 	// Keep the heap small on low-memory boards unless the user overrides it.
@@ -226,6 +230,22 @@ func main() {
 		}
 	}()
 
+	// The daily database backup: checked shortly after startup and then
+	// hourly, and made when the newest one is about a day old.
+	go func() {
+		t := time.NewTimer(2 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				srv.BackupIfDue()
+				t.Reset(time.Hour)
+			}
+		}
+	}()
+
 	// Playback history older than the retention setting goes once at
 	// startup and then hourly (history_started keeps the delete cheap).
 	go func() {
@@ -272,11 +292,40 @@ func main() {
 	httpSrv.Shutdown(shutCtx)
 }
 
+// restoreBackup implements -restore. Lex must be stopped: replacing the
+// database under a running server would lose its writes or corrupt it.
+func restoreBackup(addr, dataDir, src string) int {
+	if probe(addr) == nil {
+		fmt.Fprintf(os.Stderr, "lex is running on %s; stop it before restoring\n", addr)
+		return 1
+	}
+	abs, _ := filepath.Abs(dataDir)
+	prev, err := store.Restore(abs, src)
+	if prev != "" {
+		fmt.Printf("backed up the current database to %s\n", prev)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "restore: %v\n", err)
+		return 1
+	}
+	fmt.Printf("restored %s into %s; start Lex to use it\n", src, filepath.Join(abs, "lex.db"))
+	return 0
+}
+
 // health probes the local server; the exit code is the health status.
 func health(addr string) int {
+	if err := probe(addr); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
+}
+
+// probe checks that a Lex server answers on addr.
+func probe(addr string) error {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
-		return 1
+		return err
 	}
 	if host == "" || host == "0.0.0.0" || host == "::" {
 		host = "127.0.0.1"
@@ -284,12 +333,11 @@ func health(addr string) int {
 	c := http.Client{Timeout: 5 * time.Second}
 	resp, err := c.Get("http://" + net.JoinHostPort(host, port) + "/api/public/info")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
+		return err
 	}
 	resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return 1
+		return fmt.Errorf("status %d", resp.StatusCode)
 	}
-	return 0
+	return nil
 }

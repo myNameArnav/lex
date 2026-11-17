@@ -73,7 +73,7 @@ export async function settingsView(ctx, section) {
       actions: [h('a', { class: 'btn', href: '#/settings/preferences' }, 'Playback settings')] }));
   } else content.appendChild(await ({
     preferences: prefsSection, account: accountSection, server: serverSection, transcoding: transcodingSection,
-    metadata: metadataSection, cache: cacheSection, libraries: librariesSection, users: usersSection, devices: devicesSection, logs: logsSection, about: aboutSection,
+    metadata: metadataSection, cache: cacheSection, backups: backupsSection, libraries: librariesSection, users: usersSection, devices: devicesSection, logs: logsSection, about: aboutSection,
   })[section](ctx));
   // A search result on another page: show it once the route has put this
   // page up (and focused its heading).
@@ -330,7 +330,7 @@ function accountSection() {
 // field) sends it, Save stays disabled until something differs from the
 // saved config, and leaving the page with unsaved edits asks first.
 // check(draft) may return [message, control] to stop a save with an inline error.
-async function configForm(build, { check } = {}) {
+async function configForm(build, { check, onSaved } = {}) {
   let cfg = await api('/api/admin/config');
   const info = await api('/api/admin/info');
   const draft = { ...cfg };
@@ -404,6 +404,7 @@ async function configForm(build, { check } = {}) {
     }, () => (reset.length ? null : 'Settings saved'), { busyLabel: 'Saving…' });
     if (!ok) return;
     mark();
+    onSaved?.(cfg);
     if (reset.length) toast(`Saved, but some values were out of range and were reset: ${reset.join(', ')}`, 'error');
   };
   // novalidate: Save checks the number fields itself (see invalid()).
@@ -1199,6 +1200,52 @@ async function cacheSection(ctx) {
   const banner = staleBanner(page);
   every(ctx, 2000, render, banner.hooks());
   return h('div', null, banner.el, page);
+}
+
+// ---------- backups ----------
+
+const BACKUP_REASON = { daily: 'Daily', manual: 'Manual', 'pre-migration': 'Before upgrade', 'pre-restore': 'Before restore' };
+
+async function backupsSection() {
+  const listBox = h('div', { class: 'form-section' });
+  let nextKey = null;
+  const render = async () => {
+    const r = await api('/api/admin/backups');
+    const now = h('button', { class: 'btn sm', type: 'button', dataset: { focusKey: 'backup-now' }, onclick: async (e) => {
+      if (await run(e.currentTarget, () => api('/api/admin/backups', { method: 'POST' }), 'Database backed up', { busyLabel: 'Backing up…' })) refresh();
+    } }, 'Back up now');
+    const remove = async (e, b) => {
+      if (!(await confirmDialog(`Delete the backup from ${fmtDate(b.created)}?`, 'Delete', true, 'Delete backup?'))) return;
+      const i = r.backups.indexOf(b), next = r.backups[i + 1] || r.backups[i - 1];
+      nextKey = next ? `backup-del-${next.name}` : 'backup-now';
+      if (await run(e.currentTarget, () => api(`/api/admin/backups/${encodeURIComponent(b.name)}`, { method: 'DELETE' }), 'Backup deleted')) refresh();
+    };
+    keepFocus(listBox, () => clear(listBox).append(
+      h('div', { class: 'row' }, h('h2', { class: 'grow' }, 'Saved backups'), now),
+      h('p', { class: 'help', style: { margin: 0 } }, 'In ', h('span', { class: 'mono' }, r.dir), '. To restore one, stop Lex and run ', h('code', { class: 'mono' }, 'lex -restore <file>'), ' with the same data folder (the current database is backed up first), or copy the file over lex.db in the data folder, delete lex.db-wal and lex.db-shm, and start Lex.'),
+      r.lastError ? h('p', { class: 'bad', role: 'alert', style: { margin: 0 } }, `The last daily backup failed: ${r.lastError}`) : null,
+      r.backups.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'tbl stack' },
+        h('tr', null, h('th', null, 'Made'), h('th', null, 'Kind'), h('th', null, 'Size'), actionsTh()),
+        r.backups.map((b) => h('tr', null,
+          h('td', null, h('b', null, fmtDate(b.created)), h('div', { class: 'dim small' }, timeAgo(b.created))),
+          h('td', { 'data-label': 'Kind' }, BACKUP_REASON[b.reason] || b.reason),
+          h('td', { 'data-label': 'Size', class: 'nowrap' }, fmtBytes(b.size)),
+          h('td', null, h('div', { class: 'row wrap tbl-actions' },
+            h('a', { class: 'btn sm', href: `/api/admin/backups/${encodeURIComponent(b.name)}`, download: b.name, 'aria-label': `Download the backup from ${fmtDate(b.created)}` }, 'Download'),
+            h('button', { class: 'btn sm danger', type: 'button', dataset: { focusKey: `backup-del-${b.name}` }, 'aria-label': `Delete the backup from ${fmtDate(b.created)}`, onclick: (e) => remove(e, b) }, 'Delete')))))))
+        : h('p', { class: 'muted', style: { margin: 0 } }, 'No backups yet.')), nextKey);
+    nextKey = null;
+  };
+  const refresh = () => render().catch((e) => toast(e?.message || String(e), 'error'));
+  const form = await configForm(({ num, text, tg }) => [
+    h('div', { class: 'form-section' }, h('h2', null, 'Database backups'),
+      h('p', { class: 'help', style: { margin: 0 } }, 'Copies of the database: users, watch history, matches, collections and settings. Lex also backs it up before every upgrade that changes it. Artwork, subtitles and previews aren’t included; they are rebuilt on demand.'),
+      tg('backupDaily', 'Back up daily'),
+      field('Backup folder', text('backupDir', { placeholder: 'default: <data folder>/backups', autocapitalize: 'off', spellcheck: 'false' }), 'An existing folder, ideally on another disk than the data folder. A "lex-backups" folder is created inside it.'),
+      field('Backups to keep', num('backupKeep', { min: 1, max: 100 }), 'Of each kind (daily, manual, before upgrade, before restore); older ones are deleted.')),
+  ], { onSaved: refresh });
+  await render();
+  return h('div', { class: 'form' }, form, listBox);
 }
 
 // ---------- tasks & logs ----------
