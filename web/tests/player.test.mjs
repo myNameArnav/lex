@@ -69,6 +69,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
       }, img() {},
     },
     './caps.js': { detectCaps: () => ({ mse: true }) },
+    './audio-fx.js': { AudioFX: class {}, audioFxSupported: () => false, fxLabel: () => '' },
     './app.js': { state: { me: { id: 1, isAdmin: false }, caps: {} } },
     './prefs.js': { prefs: { get: k => k in prefValues ? prefValues[k] : k === 'heartbeat' ? 10 : 0, set: (k, v) => { prefValues[k] = v; } }, QUALITIES: [], qualityOptions: () => [] },
     './mse.js': { clock: t => String(Math.floor(t)), MseEngine: class {
@@ -110,6 +111,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
   const player = Object.assign(Object.create(module.namespace.Player.prototype), {
     video, plan: { method, hls, url: '/direct', sessionId: 'session', audio: 1 },
     item: { id: 1 }, file: { id: 2 }, trick: { fileId: 2 },
+    fx: { routed: false, active: false, state: {}, set() {}, close() {} },
     mode: 'auto', quality: 0, audio: 1, subtitle: -1, sessionId: 'session',
     closed: false, started: false, fallbacks: 0, bufHist: [], stalls: { count: 0, secs: 0, since: 0 },
     root: Object.assign(new EventTarget(), { remove() {}, querySelectorAll: () => [], classList: classes() }),

@@ -7,6 +7,7 @@ import { state } from './app.js';
 import { detectCaps } from './caps.js';
 import { prefs, QUALITIES, qualityOptions } from './prefs.js';
 import { MseEngine, clock } from './mse.js';
+import { AudioFX, audioFxSupported, fxLabel } from './audio-fx.js';
 
 let current = null;
 
@@ -191,6 +192,7 @@ class Player {
     // name: an icon name, or the icon's markup.
     const b = (name, title, on, cls = '') => h('button', { class: `pbtn ${cls}`, title, 'aria-label': title, html: icons[name] || name, onclick: (e) => { e.stopPropagation(); on(e); } });
     this.video = h('video', { playsinline: true, preload: 'auto' });
+    this.fx = new AudioFX(this.video);
     // Firefox (no PiP API, so no Lex PiP button) draws its own hover PiP toggle
     // on the right edge, under the right-anchored menus, and it swallows their
     // clicks. It only takes effect if set before the first hover.
@@ -272,7 +274,7 @@ class Player {
 
     // Media keys, the lock screen or PiP can still call play() after an
     // admin Stop: the stop sticks.
-    v.addEventListener('play', () => { if (this.stopped) { v.pause(); return; } this.removeEndCard(); this.watchDirectStartup(); this.playBtn.innerHTML = icons.pause; this.labelButton(this.playBtn, 'Pause (k)'); this.poke(); this.beat(); });
+    v.addEventListener('play', () => { if (this.stopped) { v.pause(); return; } this.applyFx(); this.removeEndCard(); this.watchDirectStartup(); this.playBtn.innerHTML = icons.pause; this.labelButton(this.playBtn, 'Pause (k)'); this.poke(); this.beat(); });
     v.addEventListener('pause', () => { if (v.paused) this.startupWatch = null; this.playBtn.innerHTML = icons.play; this.labelButton(this.playBtn, 'Play (k)'); this.showUI(true); this.beat(); });
     v.addEventListener('waiting', () => {
       this.showSpinner(true);
@@ -509,7 +511,7 @@ class Player {
     }
     const req = {
       itemId: this.item.id, fileId: this.file.id, audio: this.audio, subtitle: this.subtitle,
-      mode, forceHls: forceHls && this.mode === 'hls', maxBitrate: this.quality, audioLang: prefs.get('audioLang'), swEncode: !!this.swEncode,
+      mode, forceHls: forceHls && this.mode === 'hls', maxBitrate: this.quality, audioLang: prefs.get('audioLang'), swEncode: !!this.swEncode, voiceBoost: !!prefs.get('voiceBoost'),
       caps, sessionId: this.sessionId, start, live: !!this.live,
     };
     // Retrying the same session's plan through a server restart is safe.
@@ -1140,6 +1142,26 @@ class Player {
     if (this.subTrack) this.subTrack.mode = on ? 'showing' : 'hidden';
   }
 
+  // Night mode and voice boost (audio-fx.js). Native HLS (Safari, AirPlay)
+  // isn't routed through Web Audio: AirPlay wouldn't carry the effects.
+  fxAvailable() { return audioFxSupported() && !this.plan?.hls; }
+
+  applyFx() {
+    if (!this.fxAvailable() && !this.fx.routed) return;
+    try {
+      this.fx.set({ night: prefs.get('nightMode'), voice: prefs.get('voiceBoost') });
+    } catch (e) {
+      console.warn('audio effects', e);
+    }
+  }
+
+  // Voice boost changes what the server sends when it downmixes surround
+  // audio to stereo itself.
+  voiceNeedsReplan() {
+    const a = (this.file?.info?.streams || []).find((s) => s.index === this.plan?.audio);
+    return !!this.plan && !this.plan.audioCopy && (a?.channels || 0) > 2;
+  }
+
   async chooseAudio(idx) {
     this.audio = idx;
     const a = (this.file.info?.streams || []).find((s) => s.index === idx);
@@ -1594,6 +1616,7 @@ class Player {
     sec('Audio');
     if (as) r('Source', `${as.codec.toUpperCase()} ${channelName(as.channels)}`, [as.sampleRate ? as.sampleRate / 1000 + 'kHz' : '', langName(as.language)].filter(Boolean).join(' · '));
     r('Output', copied(p.audioOut) || 'none');
+    if (this.fx.active) r('Effects', fxLabel(this.fx.state), 'in the browser');
 
     if (j) {
       sec('Server (ffmpeg)');
@@ -1793,6 +1816,10 @@ class Player {
       const curLabel = cur && (cur.language ? langName(cur.language) : streamLabel(cur).split(' · ')[0]) + (cur.forced ? ' (Forced)' : '') + (cur.hearingImpaired ? ' (SDH)' : '');
       m.append(row('Subtitles', cur ? curLabel : 'Off', 'subs'));
       if (auds.length) m.append(row('Audio', streamLabel(auds.find((a) => a.index === this.audio) || auds[0]).split(' · ').slice(0, 2).join(' · '), 'audio'));
+      if (auds.length && this.fxAvailable()) {
+        m.append(sw('Night mode', !!prefs.get('nightMode'), (v) => { prefs.set('nightMode', v); this.applyFx(); }, 'Quiet parts louder, loud parts quieter'));
+        m.append(sw('Boost voices', !!prefs.get('voiceBoost'), (v) => { prefs.set('voiceBoost', v); this.applyFx(); if (this.voiceNeedsReplan()) this.replan(); }, 'Clearer dialogue'));
+      }
       if (cur && cur.textSub) {
         const off = this.subOffset || 0;
         const fmt = `${off > 0 ? '+' : ''}${off.toFixed(1)}s`;
@@ -2188,6 +2215,7 @@ class Player {
     for (const d of this.root.querySelectorAll('dialog[open]')) d.close();
     this.teardown();
     this.destroyASS();
+    this.fx.close();
     this.root.remove();
     releaseToasts(this.root);
     if (this.background?.isConnected) this.background.inert = this.backgroundWasInert;

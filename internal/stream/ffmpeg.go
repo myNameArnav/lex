@@ -323,6 +323,9 @@ func buildArgs(cfg store.Config, ff FFInfo, f *store.File, p Params) ([]string, 
 			if ch <= 0 {
 				ch = 2
 			}
+			if f := VoiceDownmix(audio); p.Voice && ch == 2 && f != "" {
+				args = append(args, "-af", f)
+			}
 			args = append(args, "-c:a", "aac", "-ac", strconv.Itoa(ch), "-b:a", fmt.Sprintf("%dk", AudioBitrate(cfg, ch)))
 			if audio.SampleRate > 48000 {
 				args = append(args, "-ar", "48000")

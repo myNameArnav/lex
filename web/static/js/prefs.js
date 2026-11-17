@@ -22,6 +22,8 @@ export const DEFAULTS = {
   statsCompact: false, // stats panel collapsed to its summary and graph
   volume: 1,
   muted: false,
+  nightMode: false,    // compress loud and quiet parts (audio-fx.js)
+  voiceBoost: false,   // lift dialogue
   skipBack: 10,
   skipFwd: 30,
   heartbeat: 10,

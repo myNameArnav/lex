@@ -30,14 +30,17 @@ type Caps struct {
 }
 
 type PlanRequest struct {
-	FileID     int64   `json:"fileId"`
-	Audio      int     `json:"audio"`      // stream index, -1 = auto
-	Subtitle   int     `json:"subtitle"`   // stream index, -1 = none
-	Mode       string  `json:"mode"`       // auto | direct | remux | transcode
-	MaxBitrate int     `json:"maxBitrate"` // kbps, 0 = original
-	AudioLang  string  `json:"audioLang"`
-	SWEncode   bool    `json:"swEncode"` // force the software encoder (fallback)
-	ForceHLS   bool    `json:"forceHls"` // HLS instead of MSE (AirPlay, testing)
+	FileID     int64  `json:"fileId"`
+	Audio      int    `json:"audio"`      // stream index, -1 = auto
+	Subtitle   int    `json:"subtitle"`   // stream index, -1 = none
+	Mode       string `json:"mode"`       // auto | direct | remux | transcode
+	MaxBitrate int    `json:"maxBitrate"` // kbps, 0 = original
+	AudioLang  string `json:"audioLang"`
+	SWEncode   bool   `json:"swEncode"` // force the software encoder (fallback)
+	ForceHLS   bool   `json:"forceHls"` // HLS instead of MSE (AirPlay, testing)
+	// VoiceBoost: when the server downmixes surround audio to stereo, lift
+	// the centre (dialogue) channel (see VoiceDownmix).
+	VoiceBoost bool    `json:"voiceBoost"`
 	Caps       Caps    `json:"caps"`
 	SessionID  string  `json:"sessionId"`
 	Start      float64 `json:"start"`
@@ -102,6 +105,7 @@ type Params struct {
 	Channels  int
 	Start     float64
 	SW        bool   // force software encoding (client fallback)
+	Voice     bool   // centre-weighted stereo downmix (VoiceDownmix)
 	HW        bool   // use hardware decoding (set by the server, not the URL)
 	Input     string // path to read (SSD cache copy or original)
 }
@@ -118,6 +122,9 @@ func (p Params) Query() url.Values {
 	q.Set("ch", strconv.Itoa(p.Channels))
 	if p.SW {
 		q.Set("sw", "1")
+	}
+	if p.Voice {
+		q.Set("vb", "1")
 	}
 	return q
 }
@@ -143,7 +150,7 @@ func ParseParams(fileID int64, q url.Values) Params {
 	return Params{
 		FileID: fileID, SessionID: q.Get("sid"), VideoCopy: q.Get("vc") == "1", AudioCopy: q.Get("ac") == "1",
 		Audio: atoi("a", -1), Burn: atoi("burn", -1), Bitrate: atoi("br", 4000), Height: atoi("h", 720), Channels: atoi("ch", 2), Start: start,
-		SW: q.Get("sw") == "1",
+		SW: q.Get("sw") == "1", Voice: q.Get("vb") == "1",
 	}
 }
 
@@ -485,6 +492,10 @@ func Decide(cfg store.Config, f *store.File, req PlanRequest, remote bool) (*Pla
 		default:
 			acodec = "mp4a.40.2"
 			plan.AudioOut = fmt.Sprintf("AAC %s %d kbps", chStr(channels), AudioBitrate(cfg, channels))
+			if req.VoiceBoost && channels == 2 && VoiceDownmix(a) != "" {
+				p.Voice = true
+				plan.AudioOut += ", voices boosted"
+			}
 		}
 	}
 	plan.VideoCopy, plan.AudioCopy = videoCopy, audioCopy
