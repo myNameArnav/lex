@@ -29,6 +29,7 @@ export const DEFAULTS = {
   skipFwd: 30,
   heartbeat: 10,
   shortcuts: true,     // single-key app shortcuts (p, /, ?, g then a key)
+  theme: 'system',     // system | dark | light (theme.js)
 };
 
 let cache = null;

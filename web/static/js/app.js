@@ -1,3 +1,4 @@
+import './theme.js'; // first: sets the theme before anything renders
 import { h, $, clear, icons, RAIL_LETTERS, letterOffsets, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrate, toast, modal, spinner, lazyImg, popupMenu, closePopupMenu, streamLabel, langName, channelName, confirmDialog, run, fmtEpisode, datedEpisode, fmtAirDate, fmtClock, motionOK, emptyState } from './ui.js';
 import { api, img, castImg } from './api.js';
 import { openPlayer, isPlayerOpen, closePlayer, warmPlayer } from './player-loader.js';

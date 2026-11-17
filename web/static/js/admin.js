@@ -4,6 +4,7 @@ import { state, loadLibraries, refreshSoft, setLeaveGuard, focusAfterRoute, rend
 import { prefs, DEFAULTS, QUALITIES, qualityOptions } from './prefs.js';
 import { capsSummary, compatRequest, TIERS, TIER_ORDER, causeLabel } from './caps.js';
 import { PAGES, searchBox, reveal } from './settings-search.js';
+import { applyTheme } from './theme.js';
 import { lineChart, columnChart, barList, axisHours, axisBitrate } from './charts.js';
 
 // Pollers owned by the current admin view. Each stops at its next tick once
@@ -162,6 +163,9 @@ function prefsSection() {
         field('Subtitle position', select(p.subPos, [['low', 'Low'], ['normal', 'Normal'], ['high', 'High']], set('subPos')))),
       toggleRow('Subtitle background box', null, p.subBg, set('subBg')),
       toggleRow('Burn in image subtitles', 'Blu-ray (PGS) subtitles are drawn over the video in the browser. Turn this on to have the server burn them into the picture instead, which means transcoding.', p.burnImageSubs, set('burnImageSubs'))),
+    h('div', { class: 'form-section' }, h('h2', null, 'Appearance'),
+      h('div', { class: 'form-grid' },
+        field('Theme', select(p.theme, [['system', 'Same as the system'], ['dark', 'Dark'], ['light', 'Light']], (v) => { set('theme')(v); applyTheme(v); }), 'For this device. The player is always dark.'))),
     h('div', { class: 'form-section' }, h('h2', null, 'Player'),
       toggleRow('Autoplay next episode', 'Shows an "Up next" card near the end with a countdown.', p.autoplayNext, set('autoplayNext')),
       toggleRow('Skip intros automatically', 'Otherwise a "Skip Intro" button appears while an intro plays.', p.autoSkipIntro, set('autoSkipIntro')),
