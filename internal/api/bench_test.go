@@ -205,7 +205,10 @@ func BenchmarkLibraryEndpoints(b *testing.B) {
 // BenchmarkCompat times the library-wide compatibility summary over the
 // benchmark library's ~5,000 files, each probed as a typical MKV (one video
 // stream, three audio tracks, eight subtitles).
-func BenchmarkCompat(b *testing.B) {
+// probedBench is the benchmark library with every file probed as a typical
+// MKV (one video stream, three audio tracks, eight subtitles), and an
+// admin's token.
+func probedBench(b *testing.B) (*Server, http.Handler, string) {
 	s, h := cacheServer(b)
 	benchLibrary(b, s)
 	admin, err := s.St.CreateUser("benchadmin", "test-password-123", true)
@@ -226,6 +229,11 @@ func BenchmarkCompat(b *testing.B) {
 	if _, err := s.St.DB().Exec(`UPDATE files SET info=?, path=replace(path,'.mp4','.mkv')`, string(j)); err != nil {
 		b.Fatal(err)
 	}
+	return s, h, token
+}
+
+func BenchmarkCompat(b *testing.B) {
+	_, h, token := probedBench(b)
 	body := `{"caps":{"mse":true,"direct":{"mp4":true},"video":{"h264":true,"hevc":true},"nativeVideo":{"h264":true},"audio":{"aac":true},"nativeAudio":{"aac":true}},"mode":"auto"}`
 	for b.Loop() {
 		r := httptest.NewRequest("POST", "http://lex.test/api/admin/compat", strings.NewReader(body))
@@ -235,5 +243,32 @@ func BenchmarkCompat(b *testing.B) {
 		if w.Code != 200 {
 			b.Fatalf("%d %s", w.Code, w.Body)
 		}
+	}
+}
+
+// BenchmarkLibraryStats times the Library stats page and a category's
+// titles over the probed benchmark library (#110).
+func BenchmarkLibraryStats(b *testing.B) {
+	s, h, token := probedBench(b)
+	// The columns a probe sets alongside info.
+	if _, err := s.St.DB().Exec(`UPDATE files SET vcodec='hevc', acodec='eac3', width=3840, height=2160, hdr='HDR10'`); err != nil {
+		b.Fatal(err)
+	}
+	for _, tc := range []struct{ name, path string }{
+		{"stats", "/api/admin/stats/library"},
+		{"titles-audio", "/api/admin/stats/library/titles?dim=audio&key=ac3"},
+		{"titles-video", "/api/admin/stats/library/titles?dim=video&key=hevc+10-bit"},
+	} {
+		b.Run(tc.name, func(b *testing.B) {
+			for b.Loop() {
+				r := httptest.NewRequest("GET", "http://lex.test"+tc.path, nil)
+				r.AddCookie(&http.Cookie{Name: "lex_token", Value: token})
+				w := httptest.NewRecorder()
+				h.ServeHTTP(w, r)
+				if w.Code != 200 || w.Body.Len() < 50 {
+					b.Fatalf("%s: %d %s", tc.path, w.Code, w.Body)
+				}
+			}
+		})
 	}
 }

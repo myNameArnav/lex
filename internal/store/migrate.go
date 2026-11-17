@@ -44,6 +44,9 @@ var migrations = []func(*sql.Tx) error{
 		_, err := tx.Exec(`DROP INDEX IF EXISTS items_show`)
 		return err
 	},
+	// 3: fill in files.vdepth and file_audio (fileFactsSchema) for files
+	// probed before they existed.
+	backfillFileFacts,
 }
 
 // ErrSchemaTooNew means the database was migrated by a newer Lex than this
@@ -69,7 +72,12 @@ func ensureBaseSchema(tx *sql.Tx) error {
 	if err := migrateDownloadedSubs(tx); err != nil {
 		return err
 	}
-	return addLateColumns(tx)
+	if err := addLateColumns(tx); err != nil {
+		return err
+	}
+	// After the columns: its triggers write files.vdepth.
+	_, err := tx.Exec(fileFactsSchema)
+	return err
 }
 
 // migrate brings db to the newest schema this binary knows.
