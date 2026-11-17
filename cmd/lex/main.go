@@ -176,6 +176,18 @@ func main() {
 		c.RadarrDetectDone = true
 		st.SaveConfig(c)
 	}
+	// A local Sonarr only prefills Settings → Server for the one-click
+	// rescan webhook; nothing talks to it until the admin connects.
+	if c := st.Config(); c.SonarrURL == "" && !c.SonarrDetectDone {
+		dctx, dcancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if u, k := meta.DetectSonarr(dctx); u != "" {
+			c.SonarrURL, c.SonarrKey = u, k
+			log.Infof("found local Sonarr at %s", u)
+		}
+		dcancel()
+		c.SonarrDetectDone = true
+		st.SaveConfig(c)
+	}
 	if st.Config().ScanOnStartup {
 		scanner.Trigger(0)
 	} else {

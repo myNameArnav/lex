@@ -93,3 +93,20 @@ func TestLANWebhookBases(t *testing.T) {
 		t.Fatalf("bound listener: got %v", got)
 	}
 }
+
+func TestLexBasesOrder(t *testing.T) {
+	addrs := []string{"127.0.0.1/8", "192.168.0.49/24", "100.64.0.5/10", "10.89.0.1/24"}
+	got := lexBases("https://lex.example.org", ":8420", addrs)
+	want := []string{"https://lex.example.org", "http://host.containers.internal:8420", "http://host.docker.internal:8420", "http://192.168.0.49:8420", "http://10.89.0.1:8420", "http://127.0.0.1:8420"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("lexBases = %v, want %v", got, want)
+	}
+	// The browser already on a LAN address isn't offered twice; junk origins are ignored.
+	got = lexBases("http://192.168.0.49:8420", "192.168.0.49:8420", addrs)
+	if strings.Join(got, " ") != "http://192.168.0.49:8420" {
+		t.Fatalf("lexBases = %v", got)
+	}
+	if got = lexBases("javascript:alert(1)", "127.0.0.1:8420", nil); strings.Join(got, " ") != "http://127.0.0.1:8420" {
+		t.Fatalf("lexBases = %v", got)
+	}
+}

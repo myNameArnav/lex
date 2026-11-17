@@ -70,10 +70,14 @@ const INDEX = {
       ['Enable Live TV', 'channels tv broadcast'],
       ['Automatic channels', 'genre channels hide'],
     ]],
-    ['Library scanning', 'webhook sonarr radarr import rescan', [
+    ['Library scanning', 'rescan', [
       ['Rescan every (minutes)', 'scan interval periodic schedule'],
       ['Probe workers', 'ffprobe parallel threads'],
       ['Scan on startup', 'boot start'],
+    ]],
+    ['Sonarr & Radarr', 'webhook import rescan connect arr', [
+      ['Sonarr URL', 'sonarr tv shows webhook'],
+      ['Sonarr API key', 'sonarr api key'],
     ]],
     ['Playback history', '', [['Keep history for (days)', 'retention delete history stats']]],
     ['Network & remote access', 'remote internet lan proxy https', [

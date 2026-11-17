@@ -135,6 +135,15 @@ select { padding-right: 28px; appearance: none; background-image: url("data:imag
 .field > span { color: var(--text2); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 .help { color: var(--text3); font-size: 12px; }
 .help .webhook-url { margin: 4px 0 8px; }
+.arr-rows { border: 1px solid var(--line); border-radius: 10px; }
+.arr-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; min-height: 48px; }
+.arr-row + .arr-row { border-top: 1px solid var(--line); }
+.arr-row > b { width: 64px; flex: none; }
+.arr-row .arr-status { flex: 1; min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+.arr-row .btn { flex: none; }
+.arr-manual summary { cursor: pointer; color: var(--text2); font-size: 12.5px; width: max-content; padding: 4px 0; }
+.arr-manual summary:hover { color: var(--text); }
+.arr-manual .help { margin-top: 6px; }
 
 .switch { position: relative; display: inline-block; width: 40px; height: 22px; flex: none; }
 .switch input { opacity: 0; width: 0; height: 0; }

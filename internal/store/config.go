@@ -71,6 +71,11 @@ type Config struct {
 	StreamBufferKB   int    `json:"streamBufferKb"`
 
 	WebhookToken string `json:"webhookToken"`
+	// Sonarr is only used to set up the rescan webhook (Radarr's address
+	// above serves both that and metadata).
+	SonarrURL        string `json:"sonarrUrl"`
+	SonarrKey        string `json:"sonarrKey"`
+	SonarrDetectDone bool   `json:"sonarrDetectDone"`
 
 	// LiveTV turns on the Live TV channels (off by default); TVChannels are
 	// the admin's own, aired before the automatic ones, and TVHidden the

@@ -150,6 +150,8 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("GET /api/admin/config", a(s.getConfig))
 	mux.Handle("PUT /api/admin/config", a(s.putConfig))
 	mux.Handle("GET /api/admin/info", a(s.adminInfo))
+	mux.Handle("POST /api/admin/arr/{app}/status", a(s.arrStatus))
+	mux.Handle("POST /api/admin/arr/{app}/connect", a(s.arrConnect))
 	mux.Handle("GET /api/admin/tv/automatic", a(s.tvAutomatic))
 	mux.Handle("GET /api/admin/libraries", a(s.adminLibraries))
 	mux.Handle("POST /api/admin/libraries", a(s.createLibrary))
