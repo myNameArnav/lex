@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import { subtitleChoice } from '../static/js/track-memory.js';
 
 // Run the actual Player methods with a native video whose play() stays
 // pending and never emits an error, as in the Firefox MKV startup hang.
@@ -9,7 +10,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
   let now = 0;
   let timerID = 0;
   const timers = new Map();
-  const requests = [], errors = [], spinners = [], subtitleCalls = [], toasts = [], events = [];
+  const requests = [], errors = [], spinners = [], subtitleCalls = [], toasts = [], events = [], remembered = [];
   class Video extends EventTarget {
     paused = true;
     currentTime = 0;
@@ -72,6 +73,8 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
     './buffering.js': { bufferingCause: () => null },
     './audio-fx.js': { AudioFX: class {}, audioFxSupported: () => false, fxLabel: () => '' },
     './pgs.js': { PgsRenderer: class { setTrack() {} setOffset() {} destroy() {} } },
+    './track-memory.js': { trackKey: () => 'show', trackPrefs: (key, get) => ({ audioLang: get('audioLang'), subLang: get('subLang'), subMode: get('subMode'), subOffset: 0 }),
+      rememberTracks: (key, patch) => remembered.push([key, patch]), subtitleChoice },
     './app.js': { state: { me: { id: 1, isAdmin: false }, caps: {} } },
     './prefs.js': { prefs: { get: k => k in prefValues ? prefValues[k] : k === 'heartbeat' ? 10 : 0, set: (k, v) => { prefValues[k] = v; } }, QUALITIES: [], qualityOptions: () => [] },
     './mse.js': { clock: t => String(Math.floor(t)), MseEngine: class {
@@ -135,7 +138,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
       player.tickUI(); await flush();
     } while (now < until);
   };
-  return { player, video, requests, errors, spinners, subtitleCalls, toasts, advance, flush, history, prefValues, events };
+  return { player, video, requests, errors, spinners, subtitleCalls, toasts, advance, flush, history, prefValues, events, remembered };
 }
 
 function classes() {
@@ -484,22 +487,24 @@ test('cancelling Up next lets the episode end without playing the next one', asy
   assert.equal(ends, 1);
 });
 
-test('turning subtitles off in the player never turns off forced subtitles globally', async () => {
+test('subtitle choices in the player are remembered for the title, not as the global preference', async () => {
   const subs = [{ index: 3, language: 'eng', textSub: true }, { index: 5, language: 'eng', forced: true, textSub: true }, { index: 4, language: 'spa', textSub: true }];
-  for (const [mode, want] of [['auto', 'auto'], ['always', 'auto'], ['off', 'off']]) {
+  for (const mode of ['auto', 'always', 'off']) {
     const f = await fixture({ prefValues: { subMode: mode, subLang: 'eng' } });
-    Object.assign(f.player, { file: { id: 2, subtitles: subs }, subtitle: 3 });
+    Object.assign(f.player, { file: { id: 2, subtitles: subs }, subtitle: 3, trackKey: 'show', tracks: { subMode: mode, subLang: 'eng' } });
     await f.player.chooseSubtitle(-1);
-    assert.equal(f.prefValues.subMode, want, `from ${mode}`);
-    assert.equal(f.prefValues.subLang, 'eng');
+    assert.equal(f.prefValues.subMode, mode, `global mode unchanged from ${mode}`);
+    assert.deepEqual(f.remembered.at(-1), ['show', { subMode: 'off' }]);
   }
-  // A forced track doesn't become the preferred language; a full one does.
+  // A forced track doesn't become the title's language; a full one does.
   const f = await fixture({ prefValues: { subMode: 'auto', subLang: 'spa' } });
-  Object.assign(f.player, { file: { id: 2, subtitles: subs }, subtitle: -1 });
+  Object.assign(f.player, { file: { id: 2, subtitles: subs }, subtitle: -1, trackKey: 'show', tracks: { subMode: 'auto', subLang: 'spa' } });
   await f.player.chooseSubtitle(5);
-  assert.equal(f.prefValues.subLang, 'spa');
+  assert.equal(f.remembered.length, 0);
   await f.player.chooseSubtitle(3);
-  assert.equal(f.prefValues.subLang, 'eng');
+  assert.deepEqual(f.remembered.at(-1), ['show', { subLang: 'eng', subMode: 'always' }]);
+  assert.equal(f.player.tracks.subLang, 'eng');
+  assert.equal(f.prefValues.subLang, 'spa', 'the global preference is left alone');
 });
 
 test('a subtitle that fails to load is not left selected or remembered', async () => {

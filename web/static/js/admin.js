@@ -4,6 +4,7 @@ import { state, loadLibraries, refreshSoft, setLeaveGuard, focusAfterRoute, rend
 import { prefs, DEFAULTS, QUALITIES, qualityOptions } from './prefs.js';
 import { capsSummary, compatRequest, TIERS, TIER_ORDER, causeLabel } from './caps.js';
 import { PAGES, searchBox, reveal } from './settings-search.js';
+import { rememberedCount, forgetTracks } from './track-memory.js';
 import { lineChart, columnChart, barList, axisHours, axisBitrate } from './charts.js';
 
 // Pollers owned by the current admin view. Each stops at its next tick once
@@ -135,6 +136,22 @@ function select(value, options, onchange) {
   return h('select', { onchange: (e) => onchange(e.target.value) }, options.map(([v, l]) => h('option', { value: String(v), selected: String(v) === String(value) }, l)));
 }
 
+// Choices made in the player (audio, subtitles, timing) are kept per show or
+// movie (track-memory.js); the languages above are the defaults for the rest.
+function rememberedTracksRow() {
+  const n = rememberedCount();
+  const help = h('span', { class: 'help', style: { flex: '1 1 260px' } }, n
+    ? `Audio and subtitle choices made in the player are remembered for ${n} show${n === 1 ? '' : 's'} or movie${n === 1 ? '' : 's'} on this device, and used instead of the languages above for those titles.`
+    : 'Audio and subtitle choices made in the player are remembered per show or movie on this device, and used instead of the languages above for that title.');
+  const btn = n ? h('button', { class: 'btn sm', type: 'button', onclick: async (e) => {
+    if (!(await confirmDialog(`Forget the audio and subtitle choices for ${n} title${n === 1 ? '' : 's'}? They’ll use the languages above again.`, 'Forget', false, 'Forget per-title choices?'))) return;
+    forgetTracks();
+    toast('Per-title choices forgotten', 'ok');
+    e.target.closest('.remembered-tracks')?.replaceWith(rememberedTracksRow());
+  } }, 'Forget per-title choices') : null;
+  return h('div', { class: 'row wrap remembered-tracks', style: { gap: '10px', alignItems: 'center' } }, help, btn);
+}
+
 // ---------- per-device playback prefs ----------
 let capsOpen = false; // stays open across re-renders
 function prefsSection() {
@@ -161,6 +178,7 @@ function prefsSection() {
         field('Subtitle size', select(p.subSize, [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']], set('subSize'))),
         field('Subtitle position', select(p.subPos, [['low', 'Low'], ['normal', 'Normal'], ['high', 'High']], set('subPos')))),
       toggleRow('Subtitle background box', null, p.subBg, set('subBg')),
+      rememberedTracksRow(),
       toggleRow('Burn in image subtitles', 'Blu-ray (PGS) subtitles are drawn over the video in the browser. Turn this on to have the server burn them into the picture instead, which means transcoding.', p.burnImageSubs, set('burnImageSubs'))),
     h('div', { class: 'form-section' }, h('h2', null, 'Player'),
       toggleRow('Autoplay next episode', 'Shows an "Up next" card near the end with a countdown.', p.autoplayNext, set('autoplayNext')),

@@ -10,6 +10,7 @@ import { MseEngine, clock } from './mse.js';
 import { bufferingCause } from './buffering.js';
 import { AudioFX, audioFxSupported, fxLabel } from './audio-fx.js';
 import { PgsRenderer } from './pgs.js';
+import { trackKey, trackPrefs, rememberTracks, subtitleChoice } from './track-memory.js';
 
 let current = null;
 
@@ -73,9 +74,11 @@ function pickAudio(file, lang) {
   return (lang && auds.find((a) => a.language === lang)) || auds.find((a) => a.default) || auds[0];
 }
 
-function pickSubtitle(file, audio) {
-  const mode = prefs.get('subMode');
-  const want = prefs.get('subLang');
+// tp: the subtitle mode and language in effect for this title (see
+// track-memory.js).
+function pickSubtitle(file, audio, tp) {
+  const mode = tp.subMode;
+  const want = tp.subLang;
   const subs = file.subtitles || [];
   if (mode === 'off' || !subs.length) return -1;
   const byLang = (l) => subs.filter((s) => s.language === l || (!s.language && l === want));
@@ -459,10 +462,13 @@ class Player {
       this.files = d.files || [];
       this.file = this.files[0];
       if (!this.file) throw new Error('No playable file for this item');
-      const aud = pickAudio(this.file, prefs.get('audioLang'));
+      // Tracks chosen earlier for this show (or movie), else the preferences.
+      this.trackKey = trackKey(this.item, !!this.live);
+      const tp = this.tracks = trackPrefs(this.trackKey, (k) => prefs.get(k));
+      const aud = pickAudio(this.file, tp.audioLang);
       this.audio = aud === -1 ? -1 : aud.index;
-      this.subtitle = pickSubtitle(this.file, aud);
-      this.subOffset = 0;
+      this.subtitle = pickSubtitle(this.file, aud, tp);
+      this.subOffset = tp.subOffset || 0;
       this.renderTitle();
       this.nextBtn.classList.toggle('hidden', !d.next && !(this.live?.channels.length > 1));
       if (start == null) {
@@ -524,7 +530,7 @@ class Player {
     }
     const req = {
       itemId: this.item.id, fileId: this.file.id, audio: this.audio, subtitle: this.subtitle,
-      mode, forceHls: forceHls && this.mode === 'hls', maxBitrate: this.quality, audioLang: prefs.get('audioLang'), swEncode: !!this.swEncode, voiceBoost: !!prefs.get('voiceBoost'),
+      mode, forceHls: forceHls && this.mode === 'hls', maxBitrate: this.quality, audioLang: this.tracks?.audioLang ?? prefs.get('audioLang'), swEncode: !!this.swEncode, voiceBoost: !!prefs.get('voiceBoost'),
       caps, sessionId: this.sessionId, start, live: !!this.live,
     };
     // Retrying the same session's plan through a server restart is safe.
@@ -1063,6 +1069,7 @@ class Player {
   // Positive offset = subtitles appear later.
   setSubOffset(v) {
     this.subOffset = Math.max(-600, Math.min(600, Math.round(v * 10) / 10));
+    rememberTracks(this.trackKey, { subOffset: this.subOffset });
     if (this.jassub) {
       this.jassub.timeOffset = -this.subOffset;
       if (this.jassub._lastDemandTime) this.jassub.manualRender(this.jassub._lastDemandTime, true).catch(() => {});
@@ -1082,7 +1089,7 @@ class Player {
   // Find subtitles on OpenSubtitles.com and add them to this file.
   searchSubtitles() {
     const wasPlaying = !this.video.paused;
-    const langSel = h('select', { class: 'input' }, LANG_CHOICES.map(([k, l]) => h('option', { value: k, selected: k === (prefs.get('subLang') || 'eng') }, l)));
+    const langSel = h('select', { class: 'input' }, LANG_CHOICES.map(([k, l]) => h('option', { value: k, selected: k === (this.tracks?.subLang || prefs.get('subLang') || 'eng') }, l)));
     const list = h('div', { class: 'sub-results' });
     const status = h('div', { class: 'muted small', role: 'status' });
     const downloaded = h('div', { class: 'sub-results' });
@@ -1199,8 +1206,11 @@ class Player {
     const draw = next && !next.textSub && this.canDrawPGS(next);
     const needBurn = next && !next.textSub && !draw;
     const hadBurn = !!this.plan?.burnSubs;
-    const mode = prefs.get('subMode');
-    if (!next && mode === 'always') prefs.set('subMode', 'auto');
+    // The choice is remembered for this show or movie, not as the global
+    // preference (Settings → Playback keeps that).
+    const mode = this.tracks?.subMode ?? prefs.get('subMode');
+    const remember = (patch) => { if (!Object.keys(patch).length) return; this.tracks = { ...this.tracks, ...patch }; rememberTracks(this.trackKey, patch); };
+    if (!next) remember(subtitleChoice(null, mode));
     let ok = true;
     if (needBurn || hadBurn) {
       if (needBurn) toast('Image-based subtitles need to be burned in: transcoding');
@@ -1210,9 +1220,7 @@ class Player {
       ok = await this.setSubtitleTrack(idx);
     }
     if (!next || !ok || this.subtitle !== idx) return;
-    if (next.forced) { if (mode === 'off') prefs.set('subMode', 'auto'); return; }
-    if (next.language) prefs.set('subLang', next.language);
-    if (mode === 'off') prefs.set('subMode', 'always');
+    remember(subtitleChoice(next, mode));
   }
 
   canDrawPGS(s) {
@@ -1251,7 +1259,10 @@ class Player {
   async chooseAudio(idx) {
     this.audio = idx;
     const a = (this.file.info?.streams || []).find((s) => s.index === idx);
-    if (a?.language) prefs.set('audioLang', a.language);
+    if (a?.language) {
+      this.tracks = { ...this.tracks, audioLang: a.language };
+      rememberTracks(this.trackKey, { audioLang: a.language });
+    }
     await this.replan();
   }
 
