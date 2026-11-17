@@ -363,8 +363,20 @@ type TokenInfo struct {
 	Current  bool   `json:"current"` // the requesting session (set by the API)
 }
 
-func (s *Store) Tokens() ([]TokenInfo, error) {
-	rows, err := s.db.Query(`SELECT substr(t.token,1,?),t.user_id,u.name,t.created_at,t.last_seen,t.client,t.ip FROM tokens t JOIN users u ON u.id=t.user_id ORDER BY t.last_seen DESC`, DeviceIDLen)
+// Tokens lists every signed-in device, most recently used first.
+func (s *Store) Tokens() ([]TokenInfo, error) { return s.tokens(0) }
+
+// UserTokens lists one user's signed-in devices.
+func (s *Store) UserTokens(userID int64) ([]TokenInfo, error) { return s.tokens(userID) }
+
+func (s *Store) tokens(userID int64) ([]TokenInfo, error) {
+	q := `SELECT substr(t.token,1,?),t.user_id,u.name,t.created_at,t.last_seen,t.client,t.ip FROM tokens t JOIN users u ON u.id=t.user_id`
+	args := []any{DeviceIDLen}
+	if userID != 0 {
+		q += ` WHERE t.user_id=?`
+		args = append(args, userID)
+	}
+	rows, err := s.db.Query(q+` ORDER BY t.last_seen DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -380,13 +392,45 @@ func (s *Store) Tokens() ([]TokenInfo, error) {
 	return out, rows.Err()
 }
 
+var errBadDeviceID = errors.New("bad device id")
+
+func validDeviceID(id string) bool {
+	return len(id) == DeviceIDLen && strings.Trim(id, "0123456789abcdef") == ""
+}
+
 // DeleteTokenPrefix signs out the device with the given id (see DeviceID).
 func (s *Store) DeleteTokenPrefix(prefix string) error {
-	if len(prefix) != DeviceIDLen || strings.Trim(prefix, "0123456789abcdef") != "" {
-		return errors.New("bad device id")
+	if !validDeviceID(prefix) {
+		return errBadDeviceID
 	}
 	_, err := s.db.Exec(`DELETE FROM tokens WHERE substr(token,1,?)=?`, DeviceIDLen, prefix)
 	return err
+}
+
+// DeleteUserToken signs out one of userID's own devices. It returns
+// ErrNotFound when no device with that id belongs to the user, so one user
+// can't sign out another (or learn whether an id exists).
+func (s *Store) DeleteUserToken(userID int64, prefix string) error {
+	if !validDeviceID(prefix) {
+		return errBadDeviceID
+	}
+	res, err := s.db.Exec(`DELETE FROM tokens WHERE user_id=? AND substr(token,1,?)=?`, userID, DeviceIDLen, prefix)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteOtherTokens signs userID out everywhere except the session keep.
+func (s *Store) DeleteOtherTokens(userID int64, keep string) (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM tokens WHERE user_id=? AND token<>?`, userID, hashToken(keep))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // migrateTokens replaces plaintext tokens left by older versions with their

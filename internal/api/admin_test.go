@@ -298,3 +298,70 @@ func TestClientRemuxSettingRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// A regular user sees and signs out only their own devices.
+func TestMyDevices(t *testing.T) {
+	s, h := securityServer(t)
+	admin, err := s.St.CreateInitialAdmin("admin", "test-password-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := s.St.CreateUser("bob", "test-password-123", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminTok, _ := s.St.CreateToken(admin.ID, "Firefox on macOS", "127.0.0.1")
+	mine, _ := s.St.CreateToken(bob.ID, "Chrome on Android", "127.0.0.2")
+	tv, _ := s.St.CreateToken(bob.ID, "Lex on TV", "127.0.0.3")
+	laptop, _ := s.St.CreateToken(bob.ID, "Safari on macOS", "127.0.0.4")
+
+	w := adminRequest(t, h, mine, "GET", "/api/me/devices", "")
+	if w.Code != 200 {
+		t.Fatalf("list: %d %s", w.Code, w.Body.String())
+	}
+	var devs []store.TokenInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &devs); err != nil {
+		t.Fatal(err)
+	}
+	if len(devs) != 3 {
+		t.Fatalf("got %d devices, want bob's 3", len(devs))
+	}
+	for _, d := range devs {
+		if d.UserID != bob.ID {
+			t.Fatalf("listed another user's device: %+v", d)
+		}
+		if want := d.Prefix == store.DeviceID(mine); d.Current != want {
+			t.Fatalf("%s: current=%v, want %v", d.Client, d.Current, want)
+		}
+	}
+	// The admin route stays admin-only.
+	if w := adminRequest(t, h, mine, "GET", "/api/admin/devices", ""); w.Code != 403 {
+		t.Fatalf("admin devices as user: %d", w.Code)
+	}
+	// Someone else's device is "not found", and stays signed in.
+	if w := adminRequest(t, h, mine, "DELETE", "/api/me/devices/"+store.DeviceID(adminTok), ""); w.Code != 404 {
+		t.Fatalf("delete other user's device: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := s.St.TokenUser(adminTok); err != nil {
+		t.Fatal("admin was signed out by another user")
+	}
+	if w := adminRequest(t, h, mine, "DELETE", "/api/me/devices/"+store.DeviceID(tv), ""); w.Code != 200 {
+		t.Fatalf("delete own device: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := s.St.TokenUser(tv); err == nil {
+		t.Fatal("TV still signed in")
+	}
+	// Sign out everywhere else keeps this session and the admin's.
+	if w := adminRequest(t, h, mine, "DELETE", "/api/me/devices", ""); w.Code != 200 {
+		t.Fatalf("sign out others: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := s.St.TokenUser(laptop); err == nil {
+		t.Fatal("laptop still signed in")
+	}
+	if _, err := s.St.TokenUser(mine); err != nil {
+		t.Fatal("this session was signed out")
+	}
+	if _, err := s.St.TokenUser(adminTok); err != nil {
+		t.Fatal("another user's session was signed out")
+	}
+}

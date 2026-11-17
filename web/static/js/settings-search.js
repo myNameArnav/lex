@@ -65,6 +65,7 @@ const INDEX = {
       ['New password', 'change password reset'],
       ['Confirm new password', 'change password'],
     ]],
+    ['Your devices', 'sessions sign out logout devices lost phone tv everywhere', []],
   ],
   server: [
     ['General', '', [['Server name', 'title name branding']]],
