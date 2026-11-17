@@ -81,6 +81,10 @@ type Cache struct {
 	// recheck asks the worker to reconcile before its next job.
 	recheck bool
 	disk    func(dir string) (free, total int64, ok bool) // diskSpace; tests fake it
+
+	// OnCached, if set, is called (from the copy worker) once a file's
+	// copy is complete.
+	OnCached func(fileID int64)
 }
 
 // copyInfo is a complete cached copy and the source it was made from: it
@@ -225,6 +229,21 @@ func (c *Cache) Peek(f *store.File) string {
 		return f.Path
 	}
 	return ci.path
+}
+
+// Pending reports whether a file is being copied or waits in the queue.
+func (c *Cache) Pending(fileID int64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.current != nil && c.current.FileID == fileID {
+		return true
+	}
+	for _, j := range c.queue {
+		if j.FileID == fileID {
+			return true
+		}
+	}
+	return false
 }
 
 // IsCached reports whether a complete copy exists.
@@ -517,6 +536,9 @@ func (c *Cache) copy(ctx context.Context, job *Job) error {
 	c.mu.Unlock()
 	secs := time.Since(start).Seconds()
 	c.log.Infof("cache: cached %s in %.0fs (%.1f MB/s)", job.Name, secs, float64(f.Size)/1e6/max(secs, 0.001))
+	if c.OnCached != nil {
+		c.OnCached(f.ID)
+	}
 	return nil
 }
 

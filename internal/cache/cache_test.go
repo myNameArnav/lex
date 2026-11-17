@@ -124,3 +124,33 @@ func TestMakeRoomDoesNotEmptyCacheInVain(t *testing.T) {
 		t.Fatal("entry evicted although that couldn't make room")
 	}
 }
+
+func TestPendingAndOnCached(t *testing.T) {
+	c, st, item := testCache(t, 0)
+	cfg := st.Config()
+	cfg.CacheSpeedMBs = 1 // ~2 s for the file below, so it's seen in flight
+	st.SaveConfig(cfg)
+	src := filepath.Join(t.TempDir(), "Heat.mkv")
+	os.WriteFile(src, make([]byte, 2<<20), 0o644)
+	f := addFile(t, st, item, src, 2<<20)
+	done := make(chan int64, 1)
+	c.OnCached = func(id int64) { done <- id }
+	if c.Pending(f.ID) {
+		t.Fatal("pending before it was requested")
+	}
+	c.Request(f, "playing")
+	if !c.Pending(f.ID) {
+		t.Fatal("not pending right after the request")
+	}
+	select {
+	case id := <-done:
+		if id != f.ID {
+			t.Fatalf("OnCached(%d), want %d", id, f.ID)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("OnCached not called: %s", c.Status().LastError)
+	}
+	if c.Pending(f.ID) || !c.IsCached(f.ID) {
+		t.Fatalf("after copy: pending=%v cached=%v", c.Pending(f.ID), c.IsCached(f.ID))
+	}
+}

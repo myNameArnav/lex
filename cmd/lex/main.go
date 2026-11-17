@@ -145,6 +145,7 @@ func main() {
 	// media go right away, and a sweep after each scan (and daily) catches
 	// whatever that missed.
 	scanner.OnFileChanged = srv.FileChanged
+	mediaCache.OnCached = srv.FileCached
 	scanner.OnDone = func() {
 		srv.SweepDerived()
 		agent.Trigger()
