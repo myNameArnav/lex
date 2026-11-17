@@ -86,7 +86,7 @@ func (s *Subs) GetFile(ctx context.Context, f *store.File, idx int, src string) 
 func (s *Subs) Forget(fileID int64, idx int) {
 	ents, _ := os.ReadDir(s.dir)
 	for _, e := range ents {
-		for _, ext := range []string{"vtt", "ass"} {
+		for _, ext := range []string{"vtt", "ass", "sup"} {
 			if ok, _ := filepath.Match(fmt.Sprintf("%d-*-%d.%s", fileID, idx, ext), e.Name()); ok {
 				os.Remove(filepath.Join(s.dir, e.Name()))
 			}
@@ -628,7 +628,7 @@ func (s *Subs) Clear() error {
 // isCacheName reports whether name is a subtitle conversion or extraction
 // (finished or in progress) in the top-level cache folder.
 func isCacheName(name string) bool {
-	for _, ext := range []string{".vtt", ".ass", ".tmp"} {
+	for _, ext := range []string{".vtt", ".ass", ".sup", ".tmp"} {
 		if strings.HasSuffix(name, ext) {
 			return true
 		}

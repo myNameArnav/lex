@@ -27,6 +27,9 @@ type Caps struct {
 	// ClientRemux lists the containers the player can remux to fragmented
 	// MP4 itself (WebAssembly), reading the file with range requests.
 	ClientRemux []string `json:"clientRemux"`
+	// PGS: the player can draw PGS subtitles over the video itself (from
+	// the track copied out as .sup), so they needn't be burned in.
+	PGS bool `json:"pgs"`
 }
 
 type PlanRequest struct {
@@ -64,12 +67,14 @@ type Plan struct {
 	Audio     int      `json:"audio"`
 	Subtitle  int      `json:"subtitle"`
 	BurnSubs  bool     `json:"burnSubs"`
-	Duration  float64  `json:"duration"`
-	StartTime float64  `json:"startTime"`
-	SessionID string   `json:"sessionId"`
-	Remote    bool     `json:"remote"`
-	LimitKbps int      `json:"limitKbps"`
-	HLS       bool     `json:"hls"`
+	// DrawSubs is "pgs" when the player draws the image subtitles itself.
+	DrawSubs  string  `json:"drawSubs,omitempty"`
+	Duration  float64 `json:"duration"`
+	StartTime float64 `json:"startTime"`
+	SessionID string  `json:"sessionId"`
+	Remote    bool    `json:"remote"`
+	LimitKbps int     `json:"limitKbps"`
+	HLS       bool    `json:"hls"`
 	// ClientAudio is set when the stream carries audio the player must
 	// convert to AAC itself; it describes the AAC it should produce.
 	ClientAudio *ClientAudio `json:"clientAudio,omitempty"`
@@ -322,12 +327,20 @@ func Decide(cfg store.Config, f *store.File, req PlanRequest, remote bool) (*Pla
 			burn = s
 		}
 	}
+	var reasons []string
+	// The player draws PGS over the video when it can. Native HLS players
+	// (Safari's, AirPlay) show the video where no overlay can follow, so
+	// they still get them burned in.
+	if burn != nil && IsPGS(burn.Codec) && !burn.External && req.Caps.PGS && req.Caps.MSE && !req.ForceHLS {
+		burn = nil
+		plan.DrawSubs = "pgs"
+		reasons = append(reasons, "image subtitles drawn in the browser")
+	}
 
 	mode := req.Mode
 	if mode == "" {
 		mode = "auto"
 	}
-	var reasons []string
 	vkey := VideoKey(v)
 	ckey := ContainerKey(f.Path)
 

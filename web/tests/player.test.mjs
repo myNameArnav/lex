@@ -70,6 +70,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
     },
     './caps.js': { detectCaps: () => ({ mse: true }) },
     './audio-fx.js': { AudioFX: class {}, audioFxSupported: () => false, fxLabel: () => '' },
+    './pgs.js': { PgsRenderer: class { setTrack() {} setOffset() {} destroy() {} } },
     './app.js': { state: { me: { id: 1, isAdmin: false }, caps: {} } },
     './prefs.js': { prefs: { get: k => k in prefValues ? prefValues[k] : k === 'heartbeat' ? 10 : 0, set: (k, v) => { prefValues[k] = v; } }, QUALITIES: [], qualityOptions: () => [] },
     './mse.js': { clock: t => String(Math.floor(t)), MseEngine: class {

@@ -45,6 +45,7 @@ const INDEX = {
       ['Subtitle size', 'captions font text large small'],
       ['Subtitle position', 'captions height raise lower'],
       ['Subtitle background box', 'captions contrast shadow'],
+      ['Burn in image subtitles', 'pgs blu-ray bitmap burn transcode'],
     ]],
     ['Player', '', [
       ['Autoplay next episode', 'up next binge continue'],

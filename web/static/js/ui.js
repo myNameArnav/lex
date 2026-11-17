@@ -128,7 +128,8 @@ export function streamLabel(s) {
     if (s.forced) parts.push('Forced');
     parts.push(codec);
     if (s.external) parts.push('External');
-    if (!s.textSub) parts.push('burn-in');
+    // PGS is drawn by the player (pgs.js); other image subtitles are burned in.
+    if (!s.textSub && s.codec !== 'hdmv_pgs_subtitle') parts.push('burn-in');
     return parts.filter(Boolean).join(' · ');
   }
   return s.codec;
