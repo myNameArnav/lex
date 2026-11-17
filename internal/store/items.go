@@ -753,8 +753,10 @@ func (s *Store) RecentlyAdded(uid int64, libID int64, kind string, limit int) ([
 }
 
 // ContinueWatching returns items with a resume position, most recent first.
+// A watched title with one is being rewatched: marking a title watched or
+// unwatched, or finishing it, resets its position.
 func (s *Store) ContinueWatching(uid int64, limit int) ([]*Item, error) {
-	return s.queryItemsUD(udSelectCols(cardCols, fmt.Sprintf(`WHERE ud.position>0 AND ud.played=0 AND i.kind IN ('movie','episode') ORDER BY ud.last_played DESC LIMIT %d`, limit)), sql.Named("uid", uid))
+	return s.queryItemsUD(udSelectCols(cardCols, fmt.Sprintf(`WHERE ud.position>0 AND i.kind IN ('movie','episode') ORDER BY ud.last_played DESC LIMIT %d`, limit)), sql.Named("uid", uid))
 }
 
 // NextUp returns, for each recently watched show, the first unwatched
@@ -824,6 +826,13 @@ func (s *Store) GetUserData(uid, itemID int64) (UserData, error) {
 func (s *Store) SaveProgress(uid, itemID int64, position float64) error {
 	_, err := s.db.Exec(`INSERT INTO user_data(user_id,item_id,position,last_played) VALUES(?,?,?,?)
 		ON CONFLICT(user_id,item_id) DO UPDATE SET position=excluded.position,last_played=excluded.last_played`, uid, itemID, position, now())
+	return err
+}
+
+// ClearProgress drops a title's resume point (Remove from Continue
+// Watching), leaving whether it was watched alone.
+func (s *Store) ClearProgress(uid, itemID int64) error {
+	_, err := s.db.Exec(`UPDATE user_data SET position=0 WHERE user_id=? AND item_id=?`, uid, itemID)
 	return err
 }
 

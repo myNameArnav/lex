@@ -320,6 +320,20 @@ func (s *Server) setPlayed(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+// clearProgress removes the item from Continue Watching by dropping its
+// resume point; a watched title stays watched.
+func (s *Server) clearProgress(w http.ResponseWriter, r *http.Request) {
+	it, ok := s.pathItem(w, r)
+	if !ok {
+		return
+	}
+	if err := s.St.ClearProgress(userOf(r).ID, it.ID); err != nil {
+		writeErr(w, 500, "could not clear progress")
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
 func (s *Server) setFavorite(w http.ResponseWriter, r *http.Request) {
 	it, ok := s.pathItem(w, r)
 	if !ok {
