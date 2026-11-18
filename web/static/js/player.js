@@ -669,15 +669,18 @@ class Player {
     if (this.statusEl.textContent !== text) this.statusEl.textContent = text;
   }
 
+  // How fast data arrives, in bits/s: the stream download, else the
+  // browser remuxer's file reads, else what the server measures sending.
+  arrivalRate() {
+    const es = this.engine ? this.engine.stats() : null;
+    return es?.bandwidth || (es?.fileRate ? es.fileRate * 8 : 0) || this.serverRate * 8;
+  }
+
   // The likely reason playback is buffering (buffering.js), or null.
   bufferCause() {
     if (!this.plan) return null;
-    const es = this.engine ? this.engine.stats() : null;
-    // How fast data arrives: the stream download, else the browser
-    // remuxer's file reads, else what the server measures sending.
-    const bandwidth = es?.bandwidth || (es?.fileRate ? es.fileRate * 8 : 0) || this.serverRate * 8;
     return bufferingCause({
-      needKbps: this.plan.bitrate, bandwidth, remote: !!this.plan.remote, job: this.lastJob, rate: this.video.playbackRate || 1,
+      needKbps: this.plan.bitrate, bandwidth: this.arrivalRate(), remote: !!this.plan.remote, job: this.lastJob, rate: this.video.playbackRate || 1,
       canTranscode: state.caps?.transcode !== false, isAdmin: !!state.me?.isAdmin, method: this.plan.method, diskWait: this.diskWait, host: this.host,
     });
   }

@@ -9,6 +9,7 @@ import { fxLabel } from '../audio-fx.js';
 import { prefs } from '../prefs.js';
 import { h, icons, METHOD_LABEL, fmtTime, reasonLabel, fmtBitrate, fmtBytes, channelName, langName, clear, toast } from '../ui.js';
 import { secs, plural, copied } from './format.js';
+import { diskLevel } from '../buffering.js';
 
 export const stats = {
   toggleStats() {
@@ -73,9 +74,11 @@ export const stats = {
     // client's full buffer blocks it; what the browser holds was produced too.
     const done = j ? Math.max(j.outTime || 0, es ? es.ranges.reduce((m, [s, e]) => (s <= t + 1 ? Math.max(m, e) : m), 0) : 0) : 0;
     const jobLvl = !j ? '' : j.error ? 'bad' : !j.exited && !j.throttled && j.speed && j.speed < v.playbackRate && done - t < 30 ? 'warn' : '';
-    // The file route measures how much of its time goes to disk reads.
+    // The file route measures how much of its time goes to disk reads. That
+    // share is only a problem while playback runs short and reads lag.
     const fileRoute = p.method === 'direct' || es?.fileBytes != null;
-    const diskLvl = fileRoute && this.diskWait >= 0.6 ? 'bad' : fileRoute && this.diskWait >= 0.3 ? 'warn' : '';
+    const diskLvl = fileRoute ? diskLevel({ diskWait: this.diskWait, needKbps: p.bitrate, bandwidth: this.arrivalRate(),
+      rate: v.playbackRate || 1, struggling: cs.buffering || !!bufLvl }) : '';
     const hostLvl = this.host.length ? 'warn' : '';
     const lvls = [bufLvl, dropLvl, jobLvl, diskLvl, hostLvl];
     const lvl = lvls.includes('bad') ? 'bad' : lvls.includes('warn') ? 'warn' : '';
@@ -115,7 +118,7 @@ export const stats = {
     if (cause) r('Likely cause', ({ network: 'data arrives too slowly', disk: 'server disk too slow', cpu: 'server CPU maxed out', memory: 'server short of memory', throttled: 'server throttled' })[cause.kind] || 'server converts too slowly', cause.hint, 'warn', `${cause.text} ${cause.hint}`.trim());
     r('Stalls', String(cs.bufferEvents), `${cs.bufferSeconds.toFixed(1)}s total${cs.buffering ? ' · buffering now' : ''}`, cs.buffering ? 'bad' : cs.bufferEvents ? 'warn' : '');
     r('Read from', this.cached ? 'SSD cache' : 'library disk');
-    if (fileRoute) r('Disk wait', `${Math.round(this.diskWait * 100)}%`, 'of serving time spent reading the file', diskLvl);
+    if (fileRoute) r('Disk wait', `${Math.round(this.diskWait * 100)}%`, `of serving time spent reading the file${!diskLvl && this.diskWait >= 0.3 ? ' · reads keep up' : ''}`, diskLvl);
     const ld = this.load;
     const loadTxt = ld ? `CPU ${Math.round(ld.cpu)}% · I/O wait ${Math.round(ld.iowait)}% · ${fmtBytes(ld.memAvail)} free${ld.swapIO >= 1e5 ? ` · swapping ${fmtBytes(ld.swapIO)}/s` : ''}` : '';
     if (this.host.length || ld) r('Server', this.host.length ? this.host.map((x) => x.text).join(' ') : 'OK', loadTxt, hostLvl, this.host.map((x) => x.text).join(' '));

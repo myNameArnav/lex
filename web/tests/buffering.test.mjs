@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { bufferingCause } from '../static/js/buffering.js';
+import { bufferingCause, diskLevel } from '../static/js/buffering.js';
 
 test('a connection slower than the video is named, with both rates', () => {
   // The case that prompted it: an 8.2 Mbps film at 5.3 Mbps from outside home.
@@ -70,4 +70,18 @@ test('an overloaded server is named instead of the connection', () => {
   assert.equal(bufferingCause({ needKbps: 8000, bandwidth: 40e6, host: cpu }), null);
   // The disk strain's own words are used for a stream waiting on disk.
   assert.match(bufferingCause({ needKbps: 15000, bandwidth: 14e6, diskWait: 0.9, host: [{ kind: 'disk', text: 'Server disk overloaded (65% I/O wait).' }] }).text, /^Server disk overloaded \(65% I\/O wait\); 90% of the stream's time goes to reading the file, not your connection\.$/);
+});
+
+test('disk wait is only a problem while playback runs short and reads lag', () => {
+  // The false alarm: 66% disk wait, but reads at 81 Mbps for an 8.2 Mbps
+  // film and a full buffer. A fast connection inflates the share.
+  assert.equal(diskLevel({ diskWait: 0.66, needKbps: 8227, bandwidth: 81e6 }), '');
+  assert.equal(diskLevel({ diskWait: 0.66, needKbps: 8227, bandwidth: 81e6, struggling: true }), '');
+  assert.equal(diskLevel({ diskWait: 0.66, needKbps: 8227, bandwidth: 0 }), '');
+  // Short of data and reads don't keep up: the disk is the suspect.
+  assert.equal(diskLevel({ diskWait: 0.66, needKbps: 8227, bandwidth: 7e6, struggling: true }), 'bad');
+  assert.equal(diskLevel({ diskWait: 0.4, needKbps: 8227, bandwidth: 0, struggling: true }), 'warn');
+  assert.equal(diskLevel({ diskWait: 0.1, needKbps: 8227, bandwidth: 7e6, struggling: true }), '');
+  // Faster playback needs more.
+  assert.equal(diskLevel({ diskWait: 0.7, needKbps: 8000, bandwidth: 12e6, rate: 2, struggling: true }), 'bad');
 });
