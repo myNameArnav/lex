@@ -38,7 +38,7 @@ const INDEX = {
       ['Keep behind playhead', 'back buffer rewind memory'],
       ['Progress update interval', 'resume position heartbeat save'],
     ]],
-    ['Audio & subtitles', 'language captions', [
+    ['Audio & subtitles', 'language captions per show remembered choices forget', [
       ['Preferred audio language', 'dub dubbed audio track language'],
       ['Subtitles', 'captions cc forced foreign'],
       ['Subtitle language', 'captions cc'],
