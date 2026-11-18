@@ -47,6 +47,9 @@ const INDEX = {
       ['Subtitle background box', 'captions contrast shadow'],
       ['Burn in image subtitles', 'pgs blu-ray bitmap burn transcode'],
     ]],
+    ['Appearance', 'look colours colors', [
+      ['Theme', 'dark light mode system appearance night day colour color scheme'],
+    ]],
     ['Player', '', [
       ['Autoplay next episode', 'up next binge continue'],
       ['Skip intros automatically', 'intro opening skip intro'],
