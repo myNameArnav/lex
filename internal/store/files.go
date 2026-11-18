@@ -102,15 +102,21 @@ type File struct {
 	ProbedAt   int64      `json:"probedAt"`
 	ProbeError string     `json:"probeError,omitempty"`
 	AddedAt    int64      `json:"addedAt"`
+	// Extra is a local extra's type (trailer, featurette, ...; see
+	// library.ExtraTypes), "" for the title's own video. Extras belong to
+	// the movie or show they came with but aren't one of its versions:
+	// ItemFiles, stats and seek previews leave them out, and playing one
+	// saves no progress or history.
+	Extra string `json:"extra,omitempty"`
 }
 
-const fileCols = `id,item_id,library_id,path,size,mtime,container,duration,bitrate,width,height,vcodec,acodec,hdr,info,probed_at,probe_error,added_at`
+const fileCols = `id,item_id,library_id,path,size,mtime,container,duration,bitrate,width,height,vcodec,acodec,hdr,info,probed_at,probe_error,added_at,extra`
 
 func scanFile(r scanner) (*File, error) {
 	f := &File{}
 	var info string
 	if err := r.Scan(&f.ID, &f.ItemID, &f.LibraryID, &f.Path, &f.Size, &f.Mtime, &f.Container, &f.Duration, &f.Bitrate, &f.Width, &f.Height,
-		&f.VCodec, &f.ACodec, &f.HDR, &info, &f.ProbedAt, &f.ProbeError, &f.AddedAt); err != nil {
+		&f.VCodec, &f.ACodec, &f.HDR, &info, &f.ProbedAt, &f.ProbeError, &f.AddedAt, &f.Extra); err != nil {
 		return nil, err
 	}
 	if info != "" {
@@ -145,8 +151,22 @@ func (s *Store) File(id int64) (*File, error) {
 	return f, err
 }
 
+// ItemFiles returns an item's versions, best first (not its extras).
 func (s *Store) ItemFiles(itemID int64) ([]*File, error) {
-	return s.queryFiles(`SELECT `+fileCols+` FROM files WHERE item_id=? ORDER BY height DESC, size DESC`, itemID)
+	return s.queryFiles(`SELECT `+fileCols+` FROM files WHERE item_id=? AND extra='' ORDER BY height DESC, size DESC`, itemID)
+}
+
+// ItemExtras returns the local extras (trailers, featurettes, ...) of a
+// movie or show, by type and then name.
+func (s *Store) ItemExtras(itemID int64) ([]*File, error) {
+	return s.queryFiles(`SELECT `+fileCols+` FROM files WHERE item_id=? AND extra<>'' ORDER BY extra, path`, itemID)
+}
+
+// SetExtra attaches an existing extra file to a (possibly different) owner
+// item and type.
+func (s *Store) SetExtra(fileID, itemID int64, kind string) error {
+	_, err := s.db.Exec(`UPDATE files SET item_id=?, extra=? WHERE id=?`, itemID, kind, fileID)
+	return err
 }
 
 func (s *Store) LibraryFiles(libID int64) ([]*File, error) {
@@ -184,8 +204,9 @@ func (s *Store) OtherLibraryFiles(libID int64, roots []string) (map[string]strin
 	return out, nil
 }
 
+// AllFiles returns every title's files (not extras).
 func (s *Store) AllFiles() ([]*File, error) {
-	return s.queryFiles(`SELECT ` + fileCols + ` FROM files`)
+	return s.queryFiles(`SELECT ` + fileCols + ` FROM files WHERE extra=''`)
 }
 
 // Failed probes are retried with a growing delay (1h, 2h, 4h, ... up to a
@@ -208,8 +229,8 @@ func (s *Store) InsertFile(f *File) (int64, error) {
 	if f.AddedAt == 0 {
 		f.AddedAt = now()
 	}
-	res, err := s.db.Exec(`INSERT INTO files(item_id,library_id,path,size,mtime,added_at) VALUES(?,?,?,?,?,?)`,
-		f.ItemID, f.LibraryID, f.Path, f.Size, f.Mtime, f.AddedAt)
+	res, err := s.db.Exec(`INSERT INTO files(item_id,library_id,path,size,mtime,added_at,extra) VALUES(?,?,?,?,?,?,?)`,
+		f.ItemID, f.LibraryID, f.Path, f.Size, f.Mtime, f.AddedAt, f.Extra)
 	if err != nil {
 		return 0, err
 	}
@@ -441,5 +462,5 @@ func (s *Store) ClearHistory() error {
 
 // FilesForUser returns the files in the libraries user uid may see.
 func (s *Store) FilesForUser(uid int64) ([]*File, error) {
-	return s.queryFiles(`SELECT `+fileCols+` FROM files WHERE item_id IN (SELECT i.id FROM items i WHERE `+libAccess+`)`, sql.Named("uid", uid))
+	return s.queryFiles(`SELECT `+fileCols+` FROM files WHERE extra='' AND item_id IN (SELECT i.id FROM items i WHERE `+libAccess+`)`, sql.Named("uid", uid))
 }

@@ -133,6 +133,13 @@ type entry struct {
 	root  string
 	size  int64
 	mtime int64
+	// extra is a local extra's type ("" for a title's own video), and
+	// owner the folder of the title it belongs to.
+	extra string
+	owner string
+	// stem is a suffix-named extra's name before the suffix, which says
+	// which movie it is for when a folder has several.
+	stem string
 }
 
 // target is the item a file should belong to.
@@ -161,7 +168,7 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 	for _, f := range existing {
 		byPath[f.Path] = f
 	}
-	var entries []entry
+	var entries, extras []entry
 	okRoots := map[string]bool{}
 	// Directories and files that couldn't be read this time (permissions, a
 	// flaky network share): their existing records are kept, not treated as
@@ -200,10 +207,23 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 				if p != root && (SkipDir(name) || strings.EqualFold(name, "bdmv") || strings.EqualFold(name, "video_ts")) {
 					return fs.SkipDir
 				}
+				// An extras folder in the library root belongs to no title.
+				if filepath.Dir(p) == root && ExtraDir(name) != "" {
+					return fs.SkipDir
+				}
 				return nil
 			}
-			if strings.HasPrefix(name, ".") || !IsVideo(name) || ExtraSuffix(name) {
+			if strings.HasPrefix(name, ".") || !IsVideo(name) {
 				return nil
+			}
+			e := entry{path: p, root: root}
+			if kind, owner := extraFolder(root, p); kind != "" {
+				e.extra, e.owner = kind, owner
+			} else if kind, stem, ok := ExtraSuffix(name); ok {
+				if kind == "" { // a sample
+					return nil
+				}
+				e.extra, e.owner, e.stem = kind, filepath.Dir(p), stem
 			}
 			info, err := d.Info()
 			if err != nil {
@@ -213,7 +233,12 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 			if IsSample(name, info.Size()) {
 				return nil
 			}
-			entries = append(entries, entry{path: p, root: root, size: info.Size(), mtime: info.ModTime().Unix()})
+			e.size, e.mtime = info.Size(), info.ModTime().Unix()
+			if e.extra != "" {
+				extras = append(extras, e)
+				return nil
+			}
+			entries = append(entries, e)
 			n++
 			return nil
 		})
@@ -260,11 +285,13 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 	type fkey struct{ size, mtime int64 }
 	vanished := map[fkey][]*store.File{}
 	for p, f := range byPath {
-		if !seen[p] && !unreadable[p] && !underAny(p, unreadableDirs) {
+		// Extras aren't followed when moved: they hold no watch state.
+		if f.Extra == "" && !seen[p] && !unreadable[p] && !underAny(p, unreadableDirs) {
 			k := fkey{f.Size, f.Mtime}
 			vanished[k] = append(vanished[k], f)
 		}
 	}
+	owners := &extraOwners{dirs: map[string][]int64{}, keys: map[string]int64{}}
 	for _, e := range entries {
 		if _, ok := others[e.path]; ok && byPath[e.path] == nil {
 			elsewhere++
@@ -276,6 +303,7 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 			s.log.Errorf("scan: %s: %v", e.path, err)
 			continue
 		}
+		owners.add(e, t, itemID, cache)
 		if f := byPath[e.path]; f != nil {
 			if f.Size != e.size || f.Mtime != e.mtime {
 				s.st.MarkFileChanged(f.ID, e.size, e.mtime)
@@ -305,6 +333,31 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 			continue
 		}
 		s.update(func(st *Status) { st.Added++ })
+	}
+	for _, e := range extras {
+		if _, ok := others[e.path]; ok && byPath[e.path] == nil {
+			continue
+		}
+		itemID := owners.of(e)
+		if itemID == 0 {
+			continue // no title to attach it to: removed below if indexed
+		}
+		seen[e.path] = true
+		if f := byPath[e.path]; f != nil {
+			if f.Size != e.size || f.Mtime != e.mtime {
+				s.st.MarkFileChanged(f.ID, e.size, e.mtime)
+				s.fileChanged(f)
+			}
+			if f.ItemID != itemID || f.Extra != e.extra {
+				if err := s.st.SetExtra(f.ID, itemID, e.extra); err != nil {
+					s.log.Errorf("scan: extra %s: %v", e.path, err)
+				}
+			}
+			continue
+		}
+		if _, err := s.st.InsertFile(&store.File{ItemID: itemID, LibraryID: lib.ID, Path: e.path, Size: e.size, Mtime: e.mtime, Extra: e.extra}); err != nil {
+			s.log.Warnf("scan: add extra %s: %v", e.path, err)
+		}
 	}
 	if elsewhere > 0 {
 		s.log.Infof("library %q: %d file(s) skipped: already in another library", lib.Name, elsewhere)
@@ -342,6 +395,80 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib store.Library) error {
 	}
 	s.update(func(st *Status) { st.Removed += removed })
 	return s.st.SetLibraryScanned(lib.ID)
+}
+
+// extraFolder returns the extra type and owner folder of a video inside an
+// extras folder ("Movie (2020)/Featurettes/Making of.mkv" is a featurette of
+// the title in "Movie (2020)"); "" when p isn't in one (or only in one in
+// the library root, which the scan skips).
+func extraFolder(root, p string) (kind, owner string) {
+	rel, err := filepath.Rel(root, filepath.Dir(p))
+	if err != nil || rel == "." {
+		return "", ""
+	}
+	parts := strings.Split(rel, string(filepath.Separator))
+	for i, d := range parts {
+		if k := ExtraDir(d); k != "" {
+			if i == 0 {
+				return "", ""
+			}
+			return k, filepath.Join(append([]string{root}, parts[:i]...)...)
+		}
+	}
+	return "", ""
+}
+
+// extraOwners finds the title an extra belongs to: the show whose episodes
+// are in (or under) its folder, else the one movie in it. A folder with
+// several movies only gets suffix-named extras ("Movie (2020)-trailer.mkv"),
+// matched to their movie by name.
+type extraOwners struct {
+	dirs  map[string][]int64 // folder -> movies in it, or its show
+	shows map[string]int64
+	keys  map[string]int64 // movie key -> id
+}
+
+func (o *extraOwners) add(e entry, t target, itemID int64, cache map[string]int64) {
+	dir := filepath.Dir(e.path)
+	if t.kind == "movie" {
+		o.keys[t.key] = itemID
+		for _, id := range o.dirs[dir] {
+			if id == itemID {
+				return
+			}
+		}
+		o.dirs[dir] = append(o.dirs[dir], itemID)
+		return
+	}
+	showID := cache["show\x00"+t.showKey]
+	if showID == 0 {
+		return
+	}
+	if o.shows == nil {
+		o.shows = map[string]int64{}
+	}
+	// The episode's folder and every folder up to the show's.
+	for d := dir; ; d = filepath.Dir(d) {
+		o.shows[d] = showID
+		if d == t.showKey || d == e.root || len(d) <= len(e.root) {
+			break
+		}
+	}
+}
+
+func (o *extraOwners) of(e entry) int64 {
+	if id := o.shows[e.owner]; id > 0 {
+		return id
+	}
+	movies := o.dirs[e.owner]
+	if len(movies) == 1 {
+		return movies[0]
+	}
+	if e.stem != "" && len(movies) > 1 {
+		title, year := CleanTitle(e.stem)
+		return o.keys[e.owner+"#"+Normalize(title)+strconv.Itoa(year)]
+	}
+	return 0
 }
 
 func (s *Scanner) fileChanged(f *store.File) {

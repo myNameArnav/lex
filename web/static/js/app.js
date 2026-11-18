@@ -1,8 +1,10 @@
+import './theme.js'; // first: sets the theme before anything renders
 import { h, $, clear, icons, RAIL_LETTERS, letterOffsets, resLabel, fmtTime, fmtDuration, fmtBytes, fmtBitrate, toast, modal, spinner, lazyImg, popupMenu, closePopupMenu, streamLabel, langName, channelName, confirmDialog, run, fmtEpisode, datedEpisode, fmtAirDate, fmtClock, motionOK, emptyState } from './ui.js';
 import { api, img, castImg } from './api.js';
 import { openPlayer, isPlayerOpen, closePlayer, warmPlayer } from './player-loader.js';
 import { installShortcuts, showShortcuts, MOD } from './shortcuts.js';
 import { seasonMenuItems, seasonConfirm } from './season.js';
+import { versionLabel, orderFiles, chosenFile, rememberFile } from './versions.js';
 import { compatRequest, TIERS, causeLabel, verdictCauses } from './caps.js';
 
 // caps: { subtitleSearch, cacheEnabled, liveTv, maxTranscodeHeight, transcode } from the server (see /api/me).
@@ -546,6 +548,36 @@ document.addEventListener('click', () => { if (scrollTimer) saveScroll(); }, tru
 
 export function play(itemId, start = null) {
   openPlayer({ itemId, start, onClose: () => { if (!isPlayerOpen()) refreshSoft(); } });
+}
+
+// playExtra plays one of a title's local extras (a trailer, a featurette…)
+// from the top. Watching one leaves the title's progress alone.
+function playExtra(it, x) {
+  openPlayer({ itemId: it.id, extra: x.id, start: 0, onClose: () => { if (!isPlayerOpen()) refreshSoft(); } });
+}
+
+const EXTRA_KINDS = { trailer: 'Trailer', featurette: 'Featurette', behindthescenes: 'Behind the scenes', deleted: 'Deleted scene', interview: 'Interview', scene: 'Scene', short: 'Short', other: 'Extra' };
+
+// trailerButton plays the title's first local trailer, if it has one.
+function trailerButton(it, extras) {
+  const t = extras?.find((x) => x.type === 'trailer');
+  return t ? h('button', { class: 'btn lg', dataset: { focusKey: `trailer-${it.id}` }, onclick: () => playExtra(it, t) }, h('span', { html: icons.play }), 'Trailer') : null;
+}
+
+// extrasRow lists a title's local extras, each with a frame from it.
+function extrasRow(it, extras) {
+  if (!extras?.length) return null;
+  return h('section', { class: 'shelf' },
+    h('div', { class: 'shelf-head' }, h('h2', { class: 'section-title' }, 'Extras')),
+    scroller(h('div', { class: 'shelf-track', tabindex: '-1', role: 'region', 'aria-label': 'Extras' }, extras.map((x) => {
+      const kind = EXTRA_KINDS[x.type] || 'Extra';
+      const sub = [x.title !== kind ? kind : '', x.duration ? fmtTime(x.duration) : ''].filter(Boolean).join(' · ');
+      return h('div', { class: 'card land', title: x.title },
+        h('button', { type: 'button', class: 'art', 'aria-label': `Play ${x.title}${sub ? `, ${sub}` : ''}`, dataset: { focusKey: `extra-${x.id}` }, onclick: () => playExtra(it, x) },
+          h('div', { class: 'ph' }, kind), lazyImg(`/api/files/${x.id}/thumb?w=480`, ''),
+          h('div', { class: 'play-hover', 'aria-hidden': 'true' }, h('span', { html: icons.play }))),
+        h('div', { class: 'meta' }, h('div', null, h('div', { class: 't' }, x.title), sub ? h('div', { class: 's' }, sub) : null)));
+    }))));
 }
 
 // playShuffle plays a show's (or a season's) episodes in random order.
@@ -1146,7 +1178,9 @@ function mediaView(ctx, d) {
   const it = d.item;
   const isEp = it.kind === 'episode';
   const poster = heroPoster(it, isEp ? 'thumb' : 'poster', isEp);
-  const file = d.files?.[0];
+  // Play plays the version last chosen on this device (see versions.js).
+  const files = orderFiles(d.files || []);
+  const file = files.length ? chosenFile(it.id, files) : null;
   const compat = file ? compatBadge(it, file) : null;
   const info = [];
   if (isEp && d.show) {
@@ -1166,10 +1200,12 @@ function mediaView(ctx, d) {
   if (!file) info.push(h('p', { class: 'bad' }, 'No media file found for this item.'));
   info.push(h('div', { class: 'actions' },
     file ? playButtons(it) : null,
+    trailerButton(it, d.extras),
     watchedButton(it),
     it.kind === 'movie' ? favButton(it) : null,
     it.kind === 'movie' ? watchlistButton(it) : null,
     moreButton(it, d)));
+  if (files.length > 1) info.push(versionPicker(it, files, file));
   if (it.tagline) info.push(h('div', { class: 'tagline' }, it.tagline));
   info.push(h('p', { class: 'overview' }, it.overview || (it.metaStatus === 0 ? 'Fetching details…' : 'No description available.')));
   retryWhileFetching(ctx, it);
@@ -1187,10 +1223,21 @@ function mediaView(ctx, d) {
   const director = (it.cast || []).filter((p) => p.role === 'Director');
   if (director.length) info.push(h('p', { class: 'muted small' }, 'Directed by ', director.map((p, i) => [i ? ', ' : '', h('a', { class: 'plain-link', href: personHref(p.name) }, p.name)])));
   if (it.studios?.length) info.push(h('p', { class: 'muted small', style: { marginTop: '4px' } }, it.studios.slice(0, 4).join(' · ')));
-  return h('div', null, hero(it, poster, info, isEp && d.show ? d.show : it), castRow(it, true));
+  return h('div', null, hero(it, poster, info, isEp && d.show ? d.show : it), extrasRow(it, d.extras), castRow(it, true));
 }
 
-// compatBadge says how the file the Play button plays (the first) plays in
+// versionPicker chooses which of a title's files Play plays: its versions
+// (cuts, resolutions) or the parts of a split film. The choice is kept on
+// this device, and the page redraws for the chosen file.
+function versionPicker(it, files, file) {
+  const parts = files.every((f) => f.part > 0);
+  const sel = h('select', { 'aria-label': parts ? 'Part' : 'Version', dataset: { focusKey: `version-${it.id}` },
+    onchange: (e) => { rememberFile(it.id, Number(e.target.value), files); refreshSoft(); } },
+  files.map((f) => h('option', { value: String(f.id), selected: f.id === file.id }, versionLabel(f, files))));
+  return h('label', { class: 'row version-pick' }, h('span', { class: 'muted small' }, parts ? `${files.length} parts` : `${files.length} versions`), sel);
+}
+
+// compatBadge says how the file the Play button plays (the chosen one) plays in
 // this browser: a chip next to the resolution, and the reasons below the
 // file summary when the server has to do the work. Both stay empty until the
 // server answers, and on error.
@@ -1270,7 +1317,10 @@ function mediaInfoModal(files) {
   modal({ title: 'Media info', body, wide: true });
 }
 
-async function fixMatch(it) {
+// fixMatch searches the metadata providers for it (a movie or show) and
+// applies the chosen match. onDone runs after a match is applied; by default
+// the page redraws.
+export async function fixMatch(it, { onDone = refreshSoft } = {}) {
   const q = h('input', { type: 'text', value: it.title, 'aria-label': 'Title to search', style: { flex: '1 1 120px' } });
   const y = h('input', { type: 'number', value: it.year || '', placeholder: 'Year', 'aria-label': 'Year', style: { width: '84px' } });
   const list = h('div', { class: 'match-list' });
@@ -1286,7 +1336,7 @@ async function fixMatch(it) {
     }
     m.close();
     toast('Match updated', 'ok');
-    refreshSoft();
+    onDone();
   };
   const search = async () => {
     clear(list).appendChild(spinner());
@@ -1322,7 +1372,7 @@ function heroActions(d) {
     btns.push(h('button', { class: 'btn primary lg', dataset: { focusKey: `show-play-${it.id}` }, onclick: () => play(next.id, done ? 0 : null) }, h('span', { html: icons.play }), lbl));
     if (it.childCount > 1) btns.push(h('button', { class: 'btn lg', title: 'Play episodes in random order', dataset: { focusKey: `show-shuffle-${it.id}` }, onclick: (e) => playShuffle(it, e.currentTarget) }, h('span', { html: icons.shuffle }), 'Shuffle'));
   }
-  btns.push(watchedButton(it), favButton(it), watchlistButton(it), moreButton(it, d));
+  btns.push(trailerButton(it, d.extras), watchedButton(it), favButton(it), watchlistButton(it), moreButton(it, d));
   // A placeholder title ("Episode 1") would only repeat the button.
   const upNext = !done && next?.title && !/^Episode \d+$/.test(next.title);
   return h('div', { class: 'hero-cta' }, h('div', { class: 'actions' }, btns), upNext ? h('p', { class: 'muted small' }, `Up next: ${next.title}`) : null);
@@ -1436,7 +1486,7 @@ async function showView(ctx, d) {
   }
   const page = h('div', null, hero(it, poster, info),
     h('div', { class: 'page', style: { paddingTop: 0 } }, h('h2', { class: 'sr-only' }, 'Episodes'), h('div', { class: 'season-bar' }, tabs, more), list),
-    castRow(it));
+    extrasRow(it, d.extras), castRow(it));
   if (active) await showSeason(active);
   // Many seasons: bring the selected tab into view once the page is laid out.
   requestAnimationFrame(() => {

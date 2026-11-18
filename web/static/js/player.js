@@ -11,6 +11,8 @@ import { bufferingCause } from './buffering.js';
 import { AudioFX, audioFxSupported, fxLabel } from './audio-fx.js';
 import { PgsRenderer } from './pgs.js';
 import { SUB_SIZES, SUB_POSITIONS, SUB_FONTS, SUB_COLORS, SUB_OPACITIES, SUB_BG_OPACITIES, SUB_EDGES, SUB_STYLE_DEFAULTS, subLabel, subStyleVars, assStyleOverrides } from './substyle.js';
+import { trackKey, trackPrefs, rememberTracks, subtitleChoice } from './track-memory.js';
+import { versionLabel, orderFiles, chosenFile, rememberFile } from './versions.js';
 
 let current = null;
 
@@ -74,9 +76,11 @@ function pickAudio(file, lang) {
   return (lang && auds.find((a) => a.language === lang)) || auds.find((a) => a.default) || auds[0];
 }
 
-function pickSubtitle(file, audio) {
-  const mode = prefs.get('subMode');
-  const want = prefs.get('subLang');
+// tp: the subtitle mode and language in effect for this title (see
+// track-memory.js).
+function pickSubtitle(file, audio, tp) {
+  const mode = tp.subMode;
+  const want = tp.subLang;
   const subs = file.subtitles || [];
   if (mode === 'off' || !subs.length) return -1;
   const byLang = (l) => subs.filter((s) => s.language === l || (!s.language && l === want));
@@ -160,8 +164,11 @@ async function retryApi(path, opts, { cancelled = () => false, retries = 6, onRe
 class Player {
   // shuffle: episodes to play in this order, from the first. channel: a Live
   // TV channel id to tune into, and channels the list to switch through.
-  constructor({ itemId, start = null, onClose, reuseHistory = false, shuffle = null, channel = null, channels = [] }) {
+  // extra: the file id of one of the item's local extras (a trailer...) to
+  // play instead of the item; it starts from the top and saves no progress.
+  constructor({ itemId, start = null, onClose, reuseHistory = false, shuffle = null, channel = null, channels = [], extra = null }) {
     this.onClose = onClose;
+    this.extra = extra;
     this.shuffle = shuffle?.length ? { items: shuffle, pos: 0 } : null;
     this.live = channel ? { channelId: channel, channels } : null;
     this.sessionId = null;
@@ -434,7 +441,7 @@ class Player {
     const gen = this.startGen = (this.startGen || 0) + 1;
     const stale = () => this.closed || gen !== this.startGen;
     try {
-      const d = await retryApi(`/api/items/${itemId}`, undefined, {
+      const d = await retryApi(`/api/items/${itemId}${this.extra ? `?extra=${this.extra}` : ''}`, undefined, {
         cancelled: stale,
         onRetry: (n) => this.setStatus(`Reconnecting to the server… (attempt ${n + 1})`),
       });
@@ -446,15 +453,19 @@ class Player {
       this.detail = d;
       this.item = d.item;
       this.segments = d.segments || [];
-      this.files = d.files || [];
-      this.file = this.files[0];
+      this.files = orderFiles(d.files || []);
+      this.file = chosenFile(this.item.id, this.files);
       if (!this.file) throw new Error('No playable file for this item');
-      const aud = pickAudio(this.file, prefs.get('audioLang'));
+      // Tracks chosen earlier for this show (or movie), else the preferences.
+      this.trackKey = trackKey(this.item, !!this.live);
+      const tp = this.tracks = trackPrefs(this.trackKey, (k) => prefs.get(k));
+      const aud = pickAudio(this.file, tp.audioLang);
       this.audio = aud === -1 ? -1 : aud.index;
-      this.subtitle = pickSubtitle(this.file, aud);
-      this.subOffset = 0;
+      this.subtitle = pickSubtitle(this.file, aud, tp);
+      this.subOffset = tp.subOffset || 0;
       this.renderTitle();
       this.nextBtn.classList.toggle('hidden', !d.next && !(this.live?.channels.length > 1));
+      if (start == null && this.extra) start = 0;
       if (start == null) {
         const ud = this.item.userData;
         start = ud?.position > 0 ? ud.position : 0;
@@ -477,6 +488,8 @@ class Player {
       const { channel, next } = this.live;
       this.titleEl.append(h('b', null, fmtProgram(it)),
         h('span', null, [`${channel.number} · ${channel.name}`, next ? `Next at ${fmtClock(next.start)}: ${fmtProgram(next.item)}` : ''].filter(Boolean).join(' · ')));
+    } else if (this.detail.extra) {
+      this.titleEl.append(h('b', null, it.title), h('span', null, this.detail.extra.title));
     } else if (it.kind === 'episode') {
       this.titleEl.append(h('b', null, this.detail.show?.title || it.showTitle || ''), h('span', null, `${fmtEpisode(it)} — ${it.title}${this.shuffle ? ' · Shuffle' : ''}`));
     } else {
@@ -514,7 +527,7 @@ class Player {
     }
     const req = {
       itemId: this.item.id, fileId: this.file.id, audio: this.audio, subtitle: this.subtitle,
-      mode, forceHls: forceHls && this.mode === 'hls', maxBitrate: this.quality, audioLang: prefs.get('audioLang'), swEncode: !!this.swEncode, voiceBoost: !!prefs.get('voiceBoost'),
+      mode, forceHls: forceHls && this.mode === 'hls', maxBitrate: this.quality, audioLang: this.tracks?.audioLang ?? prefs.get('audioLang'), swEncode: !!this.swEncode, voiceBoost: !!prefs.get('voiceBoost'),
       caps, sessionId: this.sessionId, start, live: !!this.live,
     };
     // Retrying the same session's plan through a server restart is safe.
@@ -1053,6 +1066,7 @@ class Player {
   // Positive offset = subtitles appear later.
   setSubOffset(v) {
     this.subOffset = Math.max(-600, Math.min(600, Math.round(v * 10) / 10));
+    rememberTracks(this.trackKey, { subOffset: this.subOffset });
     if (this.jassub) {
       this.jassub.timeOffset = -this.subOffset;
       if (this.jassub._lastDemandTime) this.jassub.manualRender(this.jassub._lastDemandTime, true).catch(() => {});
@@ -1072,7 +1086,7 @@ class Player {
   // Find subtitles on OpenSubtitles.com and add them to this file.
   searchSubtitles() {
     const wasPlaying = !this.video.paused;
-    const langSel = h('select', { class: 'input' }, LANG_CHOICES.map(([k, l]) => h('option', { value: k, selected: k === (prefs.get('subLang') || 'eng') }, l)));
+    const langSel = h('select', { class: 'input' }, LANG_CHOICES.map(([k, l]) => h('option', { value: k, selected: k === (this.tracks?.subLang || prefs.get('subLang') || 'eng') }, l)));
     const list = h('div', { class: 'sub-results' });
     const status = h('div', { class: 'muted small', role: 'status' });
     const downloaded = h('div', { class: 'sub-results' });
@@ -1099,6 +1113,10 @@ class Player {
     };
     const failed = (e) => {
       status.textContent = '';
+      if (e.code === 'not_allowed') {
+        list.append(h('div', { class: 'sub-err', role: 'alert' }, 'Only admins can download subtitles on this server.'));
+        return;
+      }
       if (e.code === 'no_key') {
         list.append(h('div', { class: 'sub-err', role: 'alert' }, state.me?.isAdmin
           ? ['Subtitle search isn’t set up yet. Add an OpenSubtitles API key in ', h('a', { href: '#/settings/metadata', onclick: (ev) => { ev.preventDefault(); this.goTo('#/settings/metadata'); } }, 'Settings › Metadata'), '.']
@@ -1125,12 +1143,21 @@ class Player {
             btn.disabled = true; btn.textContent = 'Downloading…';
             try {
               const st = await api(`/api/files/${this.file.id}/subsearch`, { method: 'POST', body: { fileId: r.fileId, language: r.language, release: r.release || r.fileName, hearingImpaired: r.hearingImpaired } });
-              this.file.subtitles = [...(this.file.subtitles || []), st];
+              const { remaining, ...track } = st;
+              if (remaining != null) state.subsRemaining = remaining;
+              this.file.subtitles = [...(this.file.subtitles || []), track];
               this.syncFileSubs();
               m.close();
-              await this.chooseSubtitle(st.index);
-              toast('Subtitles added');
+              await this.chooseSubtitle(track.index);
+              toast(remaining != null ? `Subtitles added · ${remaining} download${remaining === 1 ? '' : 's'} left today` : 'Subtitles added');
             } catch (e) {
+              if (e.code === 'quota') {
+                state.subsRemaining = 0;
+                allowance.textContent = allowanceText();
+                list.prepend(h('div', { class: 'sub-err', role: 'alert' }, 'Today’s OpenSubtitles download allowance has run out. It renews within 24 hours; subtitles already downloaded still work.'));
+                btn.textContent = 'Use';
+                return;
+              }
               toast(e.message, 'error');
               btn.disabled = false; btn.textContent = 'Use';
             }
@@ -1145,13 +1172,18 @@ class Player {
         failed(e);
       }
     };
+    // The allowance is shared by the server, known only from the last
+    // download (this session): shown so nobody spends the last few blindly.
+    const allowanceText = () => (state.subsRemaining == null ? '' : state.subsRemaining > 0
+      ? `${state.subsRemaining} download${state.subsRemaining === 1 ? '' : 's'} left today on this server` : 'No downloads left today on this server');
+    const allowance = h('div', { class: 'small muted' }, allowanceText());
     // A filter for this search, not the preferred subtitle language.
     langSel.onchange = search;
     if (wasPlaying) this.video.pause();
     const m = modal({
       title: 'Search subtitles', wide: true, parent: this.root,
       body: [h('div', { class: 'row wrap', style: { gap: '10px', alignItems: 'center' } },
-        h('label', { class: 'row', style: { gap: '10px' } }, h('span', { class: 'muted' }, 'Language'), langSel), h('div', { class: 'spacer' }), status), downloaded, list],
+        h('label', { class: 'row', style: { gap: '10px' } }, h('span', { class: 'muted' }, 'Language'), langSel), h('div', { class: 'spacer' }), status), allowance, downloaded, list],
       onClose: () => {
         if (this.closed) return;
         // The menu item that opened this is gone: back to the CC button.
@@ -1189,8 +1221,11 @@ class Player {
     const draw = next && !next.textSub && this.canDrawPGS(next);
     const needBurn = next && !next.textSub && !draw;
     const hadBurn = !!this.plan?.burnSubs;
-    const mode = prefs.get('subMode');
-    if (!next && mode === 'always') prefs.set('subMode', 'auto');
+    // The choice is remembered for this show or movie, not as the global
+    // preference (Settings → Playback keeps that).
+    const mode = this.tracks?.subMode ?? prefs.get('subMode');
+    const remember = (patch) => { if (!Object.keys(patch).length) return; this.tracks = { ...this.tracks, ...patch }; rememberTracks(this.trackKey, patch); };
+    if (!next) remember(subtitleChoice(null, mode));
     let ok = true;
     if (needBurn || hadBurn) {
       if (needBurn) toast('Image-based subtitles need to be burned in: transcoding');
@@ -1200,9 +1235,7 @@ class Player {
       ok = await this.setSubtitleTrack(idx);
     }
     if (!next || !ok || this.subtitle !== idx) return;
-    if (next.forced) { if (mode === 'off') prefs.set('subMode', 'auto'); return; }
-    if (next.language) prefs.set('subLang', next.language);
-    if (mode === 'off') prefs.set('subMode', 'always');
+    remember(subtitleChoice(next, mode));
   }
 
   canDrawPGS(s) {
@@ -1241,7 +1274,10 @@ class Player {
   async chooseAudio(idx) {
     this.audio = idx;
     const a = (this.file.info?.streams || []).find((s) => s.index === idx);
-    if (a?.language) prefs.set('audioLang', a.language);
+    if (a?.language) {
+      this.tracks = { ...this.tracks, audioLang: a.language };
+      rememberTracks(this.trackKey, { audioLang: a.language });
+    }
     await this.replan();
   }
 
@@ -1988,7 +2024,7 @@ class Player {
         return page('Chapters', list.map((c, i) => ({ label: c.label, right: fmtTime(c.start), active: i === cur, on: () => { this.seekTo(c.start); this.closeMenu(); } })));
       }
       case 'version':
-        return page('Version', this.files.map((f) => ({ label: `${resLabel(f.width, f.height)} ${(f.vcodec || '').toUpperCase()}`, right: fmtBytes(f.size), active: this.file.id === f.id, on: () => { this.file = { ...f, subtitles: f.subtitles }; this.chaptersDrawn = false; this.closeMenu(); this.replan(); } })));
+        return page('Version', this.files.map((f) => ({ label: versionLabel(f, this.files, { size: false }), right: fmtBytes(f.size), active: this.file.id === f.id, on: () => { this.file = { ...f, subtitles: f.subtitles }; rememberFile(this.item.id, f.id, this.files); this.chaptersDrawn = false; this.closeMenu(); this.replan(); } })));
     }
     m.append(h('div', { class: 'pm-title' }, 'Settings'));
     m.append(row('Quality', this.qualityLabel(this.quality), 'quality'));
@@ -1996,7 +2032,7 @@ class Player {
     m.append(row('Speed', this.video.playbackRate === 1 ? 'Normal' : `${this.video.playbackRate}x`, 'speed'));
     const chaps = this.chapters();
     if (chaps.length > 1) m.append(row('Chapters', chaps[this.chapterAt(this.video.currentTime, chaps)]?.label || chaps[0].label, 'chapters'));
-    if (this.files.length > 1) m.append(row('Version', `${resLabel(this.file.width, this.file.height)} ${(this.file.vcodec || '').toUpperCase()}`, 'version'));
+    if (this.files.length > 1) m.append(row('Version', versionLabel(this.files.find((f) => f.id === this.file.id) || this.file, this.files, { size: false }), 'version'));
     m.append(h('div', { class: 'pm-sep' }));
     m.append(sw('Stats for nerds', !!this.statsEl, () => this.toggleStats(), 'Shortcut: I'));
     m.append(sw('Autoplay next episode', prefs.get('autoplayNext'), (v) => { prefs.set('autoplayNext', v); if (!v) this.cancelUpNext(false); }));
@@ -2295,7 +2331,7 @@ class Player {
     const it = this.item;
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
-        title: it.kind === 'episode' ? it.title : it.title,
+        title: this.detail.extra ? `${it.title}: ${this.detail.extra.title}` : it.title,
         artist: it.kind === 'episode' ? `${this.detail.show?.title || ''} · ${fmtEpisode(it)}` : String(it.year || ''),
         artwork: [{ src: img(it, it.kind === 'episode' ? 'thumb' : 'poster', 480), sizes: '480x480', type: 'image/jpeg' }],
       });

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"math/rand/v2"
 	"net/http"
 	"path/filepath"
@@ -212,15 +213,22 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 type fileView struct {
 	*store.File
 	Name      string         `json:"name"`
+	Edition   string         `json:"edition,omitempty"` // from the file name: tells versions apart
+	Part      int            `json:"part,omitempty"`    // cd1/part 2…: one part of a split film
 	Subtitles []store.Stream `json:"subtitles"`
 	Cached    bool           `json:"cached"`
 }
 
 func (s *Server) fileViews(itemID int64, admin bool) []fileView {
 	files, _ := s.St.ItemFiles(itemID)
+	return s.viewsOf(files, admin)
+}
+
+func (s *Server) viewsOf(files []*store.File, admin bool) []fileView {
 	out := []fileView{}
 	for _, f := range files {
-		fv := fileView{File: f, Name: filepath.Base(f.Path), Subtitles: []store.Stream{}, Cached: s.Cache.IsCached(f.ID)}
+		fv := fileView{File: f, Name: filepath.Base(f.Path), Edition: library.Edition(f.Path), Part: library.Part(f.Path),
+			Subtitles: []store.Stream{}, Cached: s.Cache.IsCached(f.ID)}
 		if f.Info != nil {
 			for _, st := range f.Info.Streams {
 				if st.Type == "subtitle" {
@@ -233,6 +241,49 @@ func (s *Server) fileViews(itemID int64, admin bool) []fileView {
 		fv.File = fileForUser(f, admin)
 		out = append(out, fv)
 	}
+	return out
+}
+
+// extraView is a local extra on a title's page.
+type extraView struct {
+	ID       int64   `json:"id"` // the file id, played with the title's id
+	Type     string  `json:"type"`
+	Title    string  `json:"title"`
+	Duration float64 `json:"duration"`
+}
+
+// extraLabels name the extra types where a file name gives no title.
+var extraLabels = map[string]string{
+	library.ExtraTrailer: "Trailer", library.ExtraFeaturette: "Featurette", library.ExtraBehindTheScenes: "Behind the scenes",
+	library.ExtraDeleted: "Deleted scene", library.ExtraInterview: "Interview", library.ExtraScene: "Scene",
+	library.ExtraShort: "Short", library.ExtraOther: "Extra",
+}
+
+// extraName is what an extra is called: its cleaned file name, or its type.
+func extraName(f *store.File) string {
+	if t := library.ExtraTitle(filepath.Base(f.Path)); t != "" {
+		return t
+	}
+	if l := extraLabels[f.Extra]; l != "" {
+		return l
+	}
+	return "Extra"
+}
+
+// extraViews lists a movie's or show's local extras, trailers first.
+func (s *Server) extraViews(itemID int64) []extraView {
+	files, _ := s.St.ItemExtras(itemID)
+	out := []extraView{}
+	for _, f := range files {
+		out = append(out, extraView{ID: f.ID, Type: f.Extra, Title: extraName(f), Duration: f.Duration})
+	}
+	rank := func(e extraView) int {
+		if e.Type == library.ExtraTrailer {
+			return 0
+		}
+		return 1
+	}
+	slices.SortStableFunc(out, func(a, b extraView) int { return cmp.Compare(rank(a), rank(b)) })
 	return out
 }
 
@@ -249,6 +300,20 @@ func (s *Server) itemDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.withWatchlist(u.ID, it)
+	// ?extra=<file id>: what the player needs to play one of the title's
+	// local extras, in place of its own files and episodes.
+	if x := qInt(r, "extra", 0); x > 0 {
+		extras, _ := s.St.ItemExtras(it.ID)
+		for _, f := range extras {
+			if int(f.ID) == x {
+				writeJSON(w, map[string]any{"item": it, "segments": []any{}, "files": s.viewsOf([]*store.File{f}, u.IsAdmin),
+					"extra": extraView{ID: f.ID, Type: f.Extra, Title: extraName(f), Duration: f.Duration}})
+				return
+			}
+		}
+		writeErr(w, 404, "no such extra")
+		return
+	}
 	out := map[string]any{"item": it, "segments": s.segments(it.ID)}
 	if it.Kind == "movie" {
 		if c, err := s.St.ItemCollection(it.ID); err == nil {
@@ -278,6 +343,11 @@ func (s *Server) itemDetail(w http.ResponseWriter, r *http.Request) {
 			if next != nil {
 				out["next"] = next
 			}
+		}
+	}
+	if it.Kind == "movie" || it.Kind == "show" {
+		if ex := s.extraViews(it.ID); len(ex) > 0 {
+			out["extras"] = ex
 		}
 	}
 	if it.Kind == "show" {

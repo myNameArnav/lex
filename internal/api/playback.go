@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"lex/internal/intro"
 	"lex/internal/library"
 	"lex/internal/store"
 	"lex/internal/stream"
@@ -47,6 +48,12 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	files, err := s.St.ItemFiles(it.ID)
+	// A movie's or show's local extras (trailers, featurettes, ...) play
+	// through the same plan, picked by their file id.
+	if req.FileID > 0 {
+		extras, _ := s.St.ItemExtras(it.ID)
+		files = append(files, extras...)
+	}
 	if err != nil || len(files) == 0 {
 		writeErr(w, 404, "no media file for this item")
 		return
@@ -56,6 +63,11 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 		if x.ID == req.FileID {
 			f = x
 		}
+	}
+	// An extra only plays when asked for (a show has no files of its own).
+	if f.Extra != "" && f.ID != req.FileID {
+		writeErr(w, 404, "no media file for this item")
+		return
 	}
 	// A file added moments ago might not be probed yet: probe it now.
 	if f.Info == nil {
@@ -83,6 +95,10 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	ip := s.clientIP(r)
+	creditsAt := 0.0
+	if f.Extra == "" {
+		creditsAt = intro.CreditsStart(s.St.DB(), f.ItemID, f)
+	}
 	remote := s.isRemote(ip)
 	cfg := s.St.Config()
 	req.HLSCopy = s.HLS.CanCopy(f)
@@ -96,6 +112,9 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 		show, _ = s.St.Item(it.ShowID)
 	}
 	title, sub := displayTitle(it, show)
+	if f.Extra != "" {
+		sub = extraName(f)
+	}
 	v := f.Info.Video()
 	vin, ain := "", ""
 	if v != nil {
@@ -117,15 +136,20 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 		Method: plan.Method, Reasons: plan.Reasons, VideoIn: vin, AudioIn: ain, VideoOut: plan.VideoOut, AudioOut: plan.AudioOut,
 		Container: stream.ContainerKey(f.Path), SrcBitrate: int(f.Info.Bitrate / 1000), OutBitrate: plan.Bitrate,
 		Client: clientName(r.UserAgent()), IP: ip, Remote: remote, Duration: f.Info.Duration, Position: req.Start,
-		AuthToken: s.token(r),
+		CreditsAt: creditsAt,
+		AuthToken: s.token(r), Extra: f.Extra != "",
 	})
 	if err != nil {
 		writeSessionErr(w, err)
 		return
 	}
-	s.cacheAround(it, f, u.ID)
+	segments := []intro.Segment{}
+	if f.Extra == "" {
+		s.cacheAround(it, f, u.ID)
+		s.Trick.Prioritize(f.ID)
+		segments = s.segments(it.ID)
+	}
 	s.prefetchSubs(f)
-	s.Trick.Prioritize(f.ID)
 	if plan.HLS {
 		plan.URL += "&k=" + s.Sess.StreamKey(plan.SessionID)
 	}
@@ -137,7 +161,7 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 		"title":    title,
 		"subtitle": sub,
 		"cached":   cached,
-		"segments": s.segments(it.ID),
+		"segments": segments,
 	})
 }
 
@@ -286,8 +310,13 @@ func (s *Server) sessionFor(r *http.Request, f *store.File, sid, method string) 
 		title, _ = displayTitle(it, show)
 	}
 	ip := s.clientIP(r)
+	creditsAt := 0.0
+	if f.Extra == "" {
+		creditsAt = intro.CreditsStart(s.St.DB(), f.ItemID, f)
+	}
 	return s.Sess.Open(&stream.Session{ID: sid, UserID: u.ID, UserName: u.Name, ItemID: f.ItemID, FileID: f.ID, Title: title,
-		Method: method, Client: clientName(r.UserAgent()), IP: ip, Remote: s.isRemote(ip), Duration: f.Duration})
+		Method: method, Client: clientName(r.UserAgent()), IP: ip, Remote: s.isRemote(ip), Duration: f.Duration,
+		CreditsAt: creditsAt, Extra: f.Extra != ""})
 }
 
 type countingWriter struct {

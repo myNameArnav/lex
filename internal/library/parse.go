@@ -24,13 +24,39 @@ func IsSubtitle(name string) bool { return subExts[strings.ToLower(filepath.Ext(
 
 // Folders whose contents are bonus material, not library items.
 var skipDirs = map[string]bool{
-	"extras": true, "featurettes": true, "behind the scenes": true, "deleted scenes": true, "interviews": true,
-	"scenes": true, "shorts": true, "trailers": true, "other": true, "sample": true, "samples": true,
+	"sample": true, "samples": true,
 	"@eadir": true, "#recycle": true, "$recycle.bin": true, "lost+found": true, "subs": false,
 }
 
+// SkipDir reports whether a folder holds nothing to index. Extras folders
+// aren't skipped: their videos are indexed as extras (ExtraDir).
 func SkipDir(name string) bool {
 	return strings.HasPrefix(name, ".") || skipDirs[strings.ToLower(name)]
+}
+
+// The types of local extras, as stored in files.extra.
+const (
+	ExtraTrailer         = "trailer"
+	ExtraFeaturette      = "featurette"
+	ExtraBehindTheScenes = "behindthescenes"
+	ExtraDeleted         = "deleted"
+	ExtraInterview       = "interview"
+	ExtraScene           = "scene"
+	ExtraShort           = "short"
+	ExtraOther           = "other"
+)
+
+// extraDirs maps the Plex/Jellyfin extras folder names to their type.
+var extraDirs = map[string]string{
+	"trailers": ExtraTrailer, "featurettes": ExtraFeaturette, "behind the scenes": ExtraBehindTheScenes,
+	"deleted scenes": ExtraDeleted, "interviews": ExtraInterview, "scenes": ExtraScene, "shorts": ExtraShort,
+	"extras": ExtraOther, "other": ExtraOther,
+}
+
+// ExtraDir returns the extra type of the videos in a folder with this name,
+// or "" when it isn't an extras folder.
+func ExtraDir(name string) string {
+	return extraDirs[strings.ToLower(name)]
 }
 
 var (
@@ -313,16 +339,42 @@ func IsSample(base string, size int64) bool {
 	return reSample.MatchString(stem) && size < 400<<20
 }
 
+// extraSuffixes are the Plex-style name suffixes of local extras
+// ("Movie (2020)-trailer.mkv"); "-sample" marks a sample, which isn't one.
+var extraSuffixes = []struct{ suffix, kind string }{
+	{"-trailer", ExtraTrailer}, {"-featurette", ExtraFeaturette}, {"-behindthescenes", ExtraBehindTheScenes},
+	{"-deleted", ExtraDeleted}, {"-interview", ExtraInterview}, {"-scene", ExtraScene}, {"-short", ExtraShort},
+	{"-other", ExtraOther}, {"-sample", ""},
+}
+
 // ExtraSuffix reports whether a filename marks a Plex-style local extra
-// (e.g. "Movie-trailer.mkv").
-func ExtraSuffix(base string) bool {
-	n := strings.ToLower(strings.TrimSuffix(base, filepath.Ext(base)))
-	for _, s := range []string{"-trailer", "-featurette", "-behindthescenes", "-deleted", "-interview", "-scene", "-short", "-other", "-sample"} {
-		if strings.HasSuffix(n, s) {
-			return true
+// (e.g. "Movie-trailer.mkv") or sample, returning the extra's type ("" for
+// a sample) and the name before the suffix.
+func ExtraSuffix(base string) (kind, stem string, ok bool) {
+	full := strings.TrimSuffix(base, filepath.Ext(base))
+	n := strings.ToLower(full)
+	for _, s := range extraSuffixes {
+		if strings.HasSuffix(n, s.suffix) {
+			return s.kind, full[:len(full)-len(s.suffix)], true
 		}
 	}
-	return false
+	return "", "", false
+}
+
+// ExtraTitle is the name an extra is listed under: its file name without
+// the extension, separators or release junk ("" for a suffix-named extra
+// such as "Movie-trailer.mkv", which is listed by its type).
+func ExtraTitle(base string) string {
+	if _, _, ok := ExtraSuffix(base); ok {
+		return ""
+	}
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	t := normalizeSeparators(stem)
+	if l := reJunk.FindStringIndex(t); l != nil && l[0] > 0 {
+		t = t[:l[0]]
+	}
+	t = reBrackets.ReplaceAllString(t, " ")
+	return strings.Trim(reSpaces.ReplaceAllString(t, " "), " -_.")
 }
 
 // Normalize lowercases and strips punctuation for fuzzy comparisons.
@@ -334,4 +386,70 @@ func Normalize(s string) string {
 		}
 	}
 	return b.String()
+}
+
+var (
+	// Plex's {edition-Director's Cut} tag names the edition outright.
+	reEditionTag = regexp.MustCompile(`(?i)\{edition-([^}]+)\}`)
+	reEditions   = []struct {
+		re   *regexp.Regexp
+		name string
+	}{
+		{regexp.MustCompile(`(?i)\bdirector'?s[ ._-]?cut\b`), "Director's Cut"},
+		{regexp.MustCompile(`(?i)\bfinal[ ._-]?cut\b`), "Final Cut"},
+		{regexp.MustCompile(`(?i)\bultimate[ ._-]?(?:cut|edition)\b`), "Ultimate Cut"},
+		{regexp.MustCompile(`(?i)\btheatrical(?:[ ._-]?(?:cut|edition|version))?\b`), "Theatrical"},
+		{regexp.MustCompile(`(?i)\bextended(?:[ ._-]?(?:cut|edition|version))?\b`), "Extended"},
+		{regexp.MustCompile(`(?i)\bspecial[ ._-]?edition\b`), "Special Edition"},
+		{regexp.MustCompile(`(?i)\bcriterion\b`), "Criterion"},
+		{regexp.MustCompile(`(?i)\bunrated\b`), "Unrated"},
+		{regexp.MustCompile(`(?i)\buncut\b`), "Uncut"},
+		{regexp.MustCompile(`(?i)\bimax\b`), "IMAX"},
+		{regexp.MustCompile(`(?i)\bremastered\b`), "Remastered"},
+	}
+	// cd1, disc 2, part.3, pt2: one part of a film split across files.
+	rePart = regexp.MustCompile(`(?i)(?:^|[ ._\-\[(])(?:cd|dvd|disc|disk|part|pt)[ ._-]?(\d{1,2})(?:$|[ ._\-\])])`)
+	reYear = regexp.MustCompile(`(?:^|[ ._\-(\[])(?:19|20)\d{2}(?:$|[ ._\-)\]])`)
+)
+
+// afterYear is the part of a file name after its release year (the whole
+// name when there's none): edition and part words before the year belong to
+// the title ("Uncut Gems (2019)", "Kill Bill Part 2 (2004)").
+func afterYear(path string) string {
+	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if locs := reYear.FindAllStringIndex(name, -1); len(locs) > 0 {
+		return name[locs[len(locs)-1][1]:]
+	}
+	return name
+}
+
+// Edition names the cut a video file holds ("Director's Cut", "Extended",
+// …) from its file name, or "" when the name gives none. It tells versions
+// of one title apart.
+func Edition(path string) string {
+	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if m := reEditionTag.FindStringSubmatch(name); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	rest := afterYear(path)
+	for _, e := range reEditions {
+		if e.re.MatchString(rest) {
+			return e.name
+		}
+	}
+	return ""
+}
+
+// Part is the part number of a film split across files (Movie cd1.mkv,
+// Movie part 2.mkv), or 0.
+func Part(path string) int {
+	m := rePart.FindStringSubmatch(afterYear(path))
+	if m == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[1])
+	if n < 1 {
+		return 0
+	}
+	return n
 }

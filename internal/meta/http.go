@@ -306,11 +306,31 @@ func (c *ImageCache) ForgetThumb(itemID int64) {
 	fsx.Remove(c.Dir, filepath.Base(c.ThumbPath(itemID)))
 }
 
+// ExtraThumbPath is where the generated thumbnail of a local extra (a file,
+// not an item) goes.
+func (c *ImageCache) ExtraThumbPath(fileID int64) string {
+	return filepath.Join(c.Dir, fmt.Sprintf("extra-%d.jpg", fileID))
+}
+
+// ForgetExtraThumb removes a local extra's generated thumbnail.
+func (c *ImageCache) ForgetExtraThumb(fileID int64) {
+	fsx.Remove(c.Dir, filepath.Base(c.ExtraThumbPath(fileID)))
+}
+
 // SweepThumbs removes generated thumbnails (and leftover temporary files)
 // of items that no longer exist. Files modified after cutoff are kept.
 func (c *ImageCache) SweepThumbs(items map[int64]bool, cutoff time.Time) (removed int) {
+	return c.sweep("thumb-", func(id int64) bool { return items[id] }, cutoff)
+}
+
+// SweepExtraThumbs removes the thumbnails of extras that no longer exist.
+func (c *ImageCache) SweepExtraThumbs(files map[int64]int64, cutoff time.Time) (removed int) {
+	return c.sweep("extra-", func(id int64) bool { _, ok := files[id]; return ok }, cutoff)
+}
+
+func (c *ImageCache) sweep(prefix string, keep func(int64) bool, cutoff time.Time) (removed int) {
 	for _, e := range fsx.List(c.Dir) {
-		rest, ok := strings.CutPrefix(e.Name, "thumb-")
+		rest, ok := strings.CutPrefix(e.Name, prefix)
 		if !ok || e.Dir || e.ModTime.After(cutoff) {
 			continue
 		}
@@ -319,7 +339,7 @@ func (c *ImageCache) SweepThumbs(items map[int64]bool, cutoff time.Time) (remove
 			rest, ok = strings.CutSuffix(rest, ".jpg")
 		}
 		id, err := strconv.ParseInt(rest, 10, 64)
-		if !ok || err != nil || id <= 0 || items[id] {
+		if !ok || err != nil || id <= 0 || keep(id) {
 			continue
 		}
 		if fsx.Remove(c.Dir, e.Name) == nil {
