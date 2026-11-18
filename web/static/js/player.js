@@ -1,7 +1,7 @@
 // Full-screen player: picks a playback plan from the server, plays it via
 // direct <video src> or the MSE engine, and renders controls + stats.
 
-import { h, icons, resLabel, fmtTime, fmtBitrate, fmtBytes, streamLabel, toast, releaseToasts, clear, langName, channelName, modal, containTab, confirmDialog, run, METHOD_LABEL, reasonLabel, fmtEpisode, fmtProgram, fmtClock } from './ui.js';
+import { h, icons, resLabel, fmtTime, fmtLeft, fmtBitrate, fmtBytes, streamLabel, toast, releaseToasts, clear, langName, channelName, modal, containTab, confirmDialog, run, METHOD_LABEL, reasonLabel, fmtEpisode, fmtProgram, fmtClock } from './ui.js';
 import { api, img } from './api.js';
 import { state } from './app.js';
 import { detectCaps } from './caps.js';
@@ -209,14 +209,20 @@ class Player {
     this.center = h('div', { class: 'p-center' });
     this.statusEl = h('div', { class: 'p-status', role: 'status' });
     // Subtitles are drawn by us (not ::cue) so we control position and size.
-    this.subsEl = h('div', { class: 'p-subs', 'aria-live': 'polite' });
+    // Not a live region: a screen reader would read every line over the dialogue.
+    this.subsEl = h('div', { class: 'p-subs', 'aria-live': 'off' });
     this.pgsCanvas = h('canvas', { class: 'p-pgs', 'aria-hidden': 'true' });
     this.seek = h('div', { class: 'seek', role: 'slider', tabindex: '0', 'aria-label': 'Playback position', 'aria-valuemin': '0', 'aria-valuemax': '0', 'aria-valuenow': '0', 'aria-valuetext': '0:00 of 0:00', 'aria-disabled': 'true' }, h('div', { class: 'rail' }), h('div', { class: 'knob' }));
     this.rail = this.seek.firstChild;
     this.knob = this.seek.lastChild;
     this.fill = h('div', { class: 'fill' });
     this.rail.appendChild(this.fill);
-    this.timeEl = h('span', { class: 'p-time' }, '0:00 / 0:00');
+    // Current time / duration; clicking the duration swaps it for the time left (as VLC does).
+    this.nowEl = h('span', null, '0:00');
+    this.endEl = h('span', null, '0:00');
+    this.endLabel = h('span', { class: 'sr-only' });
+    this.endBtn = h('button', { class: 'p-end', type: 'button', onclick: (e) => { e.stopPropagation(); prefs.set('timeLeft', !prefs.get('timeLeft')); this.renderTime(); } }, this.endLabel, this.endEl);
+    this.timeEl = h('span', { class: 'p-time' }, h('span', { class: 'sr-only' }, 'Current time '), this.nowEl, h('span', { 'aria-hidden': 'true' }, ' / '), this.endBtn);
     this.endsEl = h('span', { class: 'p-ends', title: 'When playback will finish at the current speed' });
     this.chapEl = h('button', { class: 'p-chap hide-mobile', type: 'button', title: 'Chapters (PgUp / PgDn)', onclick: (e) => { e.stopPropagation(); this.toggleChapters(); } });
     this.methodEl = h('button', { class: 'p-method hide-mobile', type: 'button', title: 'Playback method (click for stats)', 'aria-pressed': 'false', onclick: (e) => { e.stopPropagation(); this.toggleStats(); } });
@@ -1531,7 +1537,15 @@ class Player {
     const pct = d ? (t / d) * 100 : 0;
     this.fill.style.width = `${pct}%`;
     this.knob.style.left = `${pct}%`;
-    this.timeEl.textContent = `${fmtTime(t)} / ${fmtTime(d)}`;
+    this.nowEl.textContent = fmtTime(t);
+    const left = prefs.get('timeLeft') && d > 0;
+    this.endEl.textContent = left ? fmtLeft(t, d) : fmtTime(d);
+    if (this.endLeft !== left) {
+      this.endLeft = left;
+      this.endLabel.textContent = left ? 'Time left ' : 'Duration ';
+      this.endBtn.title = left ? 'Show the duration' : 'Show the time left';
+      this.endBtn.setAttribute('aria-pressed', String(left));
+    }
     const chaps = this.chapters(), chap = chaps[this.chapterAt(t, chaps)];
     const chapText = chap?.named ? chap.title : '';
     if (this.chapEl && this.chapEl.textContent !== chapText) this.chapEl.textContent = chapText;

@@ -1056,6 +1056,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .p-controls { display: flex; align-items: center; gap: 4px; }
 .p-transport, .p-tools { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .p-time { font-variant-numeric: tabular-nums; font-size: 13.5px; margin: 0 10px; white-space: nowrap; color: rgba(255,255,255,.9); }
+.p-end { font: inherit; color: inherit; background: none; border: 0; padding: 2px 4px; margin: -2px -4px; border-radius: 4px; cursor: pointer; }
+@media (hover: hover) { .p-end:hover { background: rgba(255,255,255,.12); } }
 .p-ends { font-size: 12.5px; white-space: nowrap; color: rgba(255,255,255,.6); }
 .p-chap { font: inherit; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 28ch; margin-left: 8px; padding: 2px 6px; border: 0; border-radius: 4px; background: none; color: rgba(255,255,255,.85); cursor: pointer; text-shadow: 0 1px 2px rgba(0,0,0,.8); }
 .p-chap:empty { display: none; }

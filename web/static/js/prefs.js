@@ -46,6 +46,7 @@ export const DEFAULTS = {
   muted: false,
   nightMode: false,    // compress loud and quiet parts (audio-fx.js)
   voiceBoost: false,   // lift dialogue
+  timeLeft: false,     // the player's clock shows time left (−32:17) instead of the duration
   skipBack: 10,
   skipFwd: 30,
   heartbeat: 10,

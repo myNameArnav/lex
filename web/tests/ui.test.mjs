@@ -275,3 +275,11 @@ test('letterOffsets gives where each rail letter starts in either direction', as
   assert.equal(desc.a, 6);
   assert.equal(desc['#'], 9);
 });
+
+test('fmtLeft shows the time left in whole seconds, adding up to the duration shown', async () => {
+  const { ui } = await loadUI();
+  assert.equal(ui.fmtLeft(763.6, 2700.4), '−32:17'); // 12:43 + 32:17 = 45:00
+  assert.equal(ui.fmtLeft(0, 5400), '−1:30:00');
+  assert.equal(ui.fmtLeft(3000, 2700), '−0:00');
+  assert.equal(ui.fmtLeft(10, 0), '−0:00');
+});
