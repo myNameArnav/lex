@@ -66,6 +66,16 @@ export function fmtDate(ts) {
   return new Date(ts * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
+// fmtDateShort is for table cells: the time today, the day this year, the
+// day and year before that ("9:27 PM", "Nov 18", "Sep 30, 2025"). Pair it
+// with fmtDate in a title for the full time.
+export function fmtDateShort(ts, now = new Date()) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString(undefined, { timeStyle: 'short' });
+  return d.toLocaleDateString(undefined, d.getFullYear() === now.getFullYear() ? { month: 'short', day: 'numeric' } : { dateStyle: 'medium' });
+}
+
 // Air dates are date-only strings ("2024-03-05"), which Date parses as UTC
 // midnight; format them in UTC so they don't shift a day west of Greenwich.
 export function fmtAirDate(d) {

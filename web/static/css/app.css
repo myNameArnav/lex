@@ -680,7 +680,9 @@ body:has(.save-bar) > .toasts { bottom: calc(80px + var(--sab)); }
    content column whose width is the same on every page, so switching pages
    or loading one never moves anything sideways. */
 .settings .page-title { margin-bottom: 22px; }
-.settings-layout { display: grid; grid-template-columns: 232px minmax(0, 780px); gap: 40px; align-items: start; }
+/* 960px leaves tables (users, devices, backups, cache, history) room for a
+   line per row; help text keeps a readable measure on its own. */
+.settings-layout { display: grid; grid-template-columns: 232px minmax(0, 960px); gap: 40px; align-items: start; }
 .settings-side { position: sticky; top: calc(var(--top) + 20px); display: grid; gap: 14px; align-content: start; }
 .settings-side .side-nav { position: static; }
 .settings-content { min-width: 0; transition: opacity .15s; }
@@ -716,6 +718,7 @@ body:has(.save-bar) > .toasts { bottom: calc(80px + var(--sab)); }
 .settings .form-section .tv-channel-edit .form-grid { display: grid; }
 .settings .toggle-row { gap: 28px; }
 .settings .toggle-row .lbl { gap: 2px; }
+.settings .form-section .field > .help, .settings .toggle-row .help { max-width: 64ch; }
 .settings .form-section > .help:not(p) { margin-top: 10px; }
 .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 18px !important; }
 .form-actions .err { min-height: 0; }
@@ -764,6 +767,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tbl tr:hover td { background: var(--hover); }
 .table-wrap { overflow-x: auto; }
 .tbl-actions { justify-content: flex-end; }
+/* An IP or code in a cell keeps its line (.mono may otherwise break anywhere). */
+.tbl td.mono { overflow-wrap: normal; white-space: nowrap; }
 
 .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 14px; }
 .stat { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; position: relative; overflow: hidden; }

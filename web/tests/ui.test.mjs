@@ -110,6 +110,20 @@ test('method labels and reasons use the Title Case names', async () => {
   assert.equal(ui.KIND_LABELS.shows, 'TV Shows');
 });
 
+test('fmtDateShort gives the time today, the day this year, and the year before', async () => {
+  const { ui } = await loadUI();
+  const now = new Date(2026, 10, 18, 21, 30);
+  const at = (...a) => new Date(...a).getTime() / 1000;
+  const today = ui.fmtDateShort(at(2026, 10, 18, 21, 27), now);
+  assert.match(today, /9:27/);
+  assert.doesNotMatch(today, /Nov/);
+  const thisYear = ui.fmtDateShort(at(2026, 8, 30, 19, 24), now);
+  assert.match(thisYear, /Sep/);
+  assert.doesNotMatch(thisYear, /2026|7:24/);
+  assert.match(ui.fmtDateShort(at(2025, 8, 30, 19, 24), now), /2025/);
+  assert.equal(ui.fmtDateShort(0, now), '');
+});
+
 test('timeAgo falls back to a medium date after 30 days', async () => {
   const { ui } = await loadUI();
   const ts = Date.now() / 1000 - 40 * 86400;

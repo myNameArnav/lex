@@ -1,4 +1,4 @@
-import { h, clear, icons, toast, modal, confirmDialog, spinner, toggle, fmtBytes, fmtBitrate, fmtTime, fmtDate, timeAgo, fmtUptime, fmtDuration, LANG_OPTIONS, $, run, staleBanner, motionOK, KIND_LABELS, METHOD_LABEL, reasonLabel, emptyState } from './ui.js';
+import { h, clear, icons, toast, modal, confirmDialog, spinner, toggle, fmtBytes, fmtBitrate, fmtTime, fmtDate, fmtDateShort, timeAgo, fmtUptime, fmtDuration, LANG_OPTIONS, $, run, staleBanner, motionOK, KIND_LABELS, METHOD_LABEL, reasonLabel, emptyState } from './ui.js';
 import { api, img } from './api.js';
 import { state, loadLibraries, refreshSoft, setLeaveGuard, focusAfterRoute, renderNav, fixMatch } from './app.js';
 import { prefs, DEFAULTS, QUALITIES, qualityOptions } from './prefs.js';
@@ -426,8 +426,8 @@ function myDevices(devs) {
     h('p', { class: 'muted', style: { margin: 0 } }, 'Where you’re signed in. Sign out a lost or shared device here; changing your password also signs out every other device.'),
     h('div', { class: 'table-wrap' }, h('table', { class: 'tbl stack' }, h('tr', null, h('th', null, 'Client'), h('th', null, 'IP'), h('th', null, 'Signed in'), h('th', null, 'Last seen'), actionsTh()),
       devs.map((d) => h('tr', null,
-        h('td', null, h('b', null, d.client), d.current ? [' ', h('span', { class: 'chip this-device' }, 'This device')] : null),
-        h('td', { class: 'mono' }, d.ip), h('td', { 'data-label': 'Signed in' }, fmtDate(d.created)), h('td', { 'data-label': 'Last seen' }, timeAgo(d.lastSeen)),
+        h('td', { class: 'nowrap' }, h('b', null, d.client), d.current ? [' ', h('span', { class: 'chip this-device' }, 'This device')] : null),
+        h('td', { class: 'mono' }, d.ip), h('td', { class: 'nowrap', 'data-label': 'Signed in', title: fmtDate(d.created) }, fmtDateShort(d.created)), h('td', { class: 'nowrap', 'data-label': 'Last seen' }, timeAgo(d.lastSeen)),
         h('td', null, h('div', { class: 'row wrap tbl-actions' }, h('button', { class: 'btn sm danger', dataset: { focusKey: `my-device-${d.prefix}` },
           'aria-label': d.current ? 'Sign out here (this device)' : `Sign out ${d.client} (${d.ip})`, onclick: (e) => signOut(e, d) }, d.current ? 'Sign out here' : 'Sign out'))))))),
     others ? h('div', { class: 'row wrap' }, h('button', { class: 'btn danger', type: 'button', onclick: signOutOthers }, 'Sign out everywhere else')) : null);
@@ -1260,8 +1260,8 @@ async function devicesSection() {
   return h('div', { class: 'form' }, h('div', { class: 'form-section' }, h('h2', null, 'Signed-in devices'),
     h('div', { class: 'table-wrap' }, h('table', { class: 'tbl stack' }, h('tr', null, h('th', null, 'User'), h('th', null, 'Client'), h('th', null, 'IP'), h('th', null, 'Signed in'), h('th', null, 'Last seen'), actionsTh()),
       devs.map((d) => h('tr', null, h('td', null, h('b', null, d.userName)),
-        h('td', null, d.client, d.current ? [' ', h('span', { class: 'chip this-device' }, 'This device')] : null),
-        h('td', { class: 'mono' }, d.ip), h('td', { 'data-label': 'Signed in' }, fmtDate(d.created)), h('td', { 'data-label': 'Last seen' }, timeAgo(d.lastSeen)),
+        h('td', { class: 'nowrap' }, d.client, d.current ? [' ', h('span', { class: 'chip this-device' }, 'This device')] : null),
+        h('td', { class: 'mono' }, d.ip), h('td', { class: 'nowrap', 'data-label': 'Signed in', title: fmtDate(d.created) }, fmtDateShort(d.created)), h('td', { class: 'nowrap', 'data-label': 'Last seen' }, timeAgo(d.lastSeen)),
         h('td', null, h('div', { class: 'row wrap tbl-actions' }, h('button', { class: 'btn sm danger', dataset: { focusKey: `device-${d.prefix}` },
           'aria-label': d.current ? 'Sign out here (this device)' : `Sign out ${d.userName} on ${d.client} (${d.ip})`, onclick: (e) => signOut(e, d) }, d.current ? 'Sign out here' : 'Sign out')))))))));
 }
