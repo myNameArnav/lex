@@ -28,8 +28,26 @@ func hevcDecodeIssue(devDir string) string {
 // decoding couldn't start (FFmpeg then carries on in software).
 func hwDecodeFailure(line string) bool {
 	return strings.Contains(line, "hwaccel initialisation returned error") ||
+		strings.Contains(line, "probe_video_device: opening") ||
 		strings.Contains(line, "Failed to find a device for") ||
 		(strings.Contains(line, "Failed setup for format") && strings.Contains(line, "hwaccel"))
+}
+
+// HWDecodeAborted reports whether a failed FFmpeg run that used -hwaccel
+// failed because of the hardware decoder, so the same job may work in
+// software. Besides the usual setup errors, FFmpeg gives up outright when
+// a media controller lists a video node it can't open (bcm2835-codec's
+// image_fx at /dev/video18, which the container doesn't get).
+func HWDecodeAborted(args []string, stderr string) bool {
+	if !usesHWAccel(args) {
+		return false
+	}
+	for line := range strings.SplitSeq(stderr, "\n") {
+		if hwDecodeFailure(line) {
+			return true
+		}
+	}
+	return false
 }
 
 func usesHWAccel(args []string) bool { return slices.Contains(args, "-hwaccel") }

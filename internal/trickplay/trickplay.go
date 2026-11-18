@@ -220,7 +220,7 @@ func (g *Generator) loop() {
 		}
 		g.set(func(s *Status) { s.Paused = false; s.Running = true; s.Current = filepath.Base(f.Path) })
 		start := time.Now()
-		err := g.generate(f)
+		err := g.generate(f, true)
 		g.mu.Lock()
 		g.status.Running, g.status.Current = false, ""
 		if err == errPaused {
@@ -277,7 +277,10 @@ func (g *Generator) waitWake(d time.Duration) {
 	}
 }
 
-func (g *Generator) generate(f *store.File) error {
+// generate makes the preview sheets for f, decoding HEVC in hardware when
+// hw and the Pi's decoder is on; if that decoder makes FFmpeg fail, it
+// tries once more in software.
+func (g *Generator) generate(f *store.File, hw bool) error {
 	cfg := g.st.Config()
 	v := f.Info.Video()
 	interval, width := cfg.TrickplayInterval, cfg.TrickplayWidth
@@ -297,7 +300,7 @@ func (g *Generator) generate(f *store.File) error {
 		src = g.Resolve(f)
 	}
 	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error"}
-	if v.Codec == "hevc" && g.HWDecode != nil && g.HWDecode() {
+	if hw && v.Codec == "hevc" && g.HWDecode != nil && g.HWDecode() {
 		args = append(args, "-hwaccel", "drm")
 	}
 	// Decoding only keyframes keeps this cheap; fps= then picks one frame per
@@ -323,6 +326,9 @@ func (g *Generator) generate(f *store.File) error {
 			stream.CheckHWFallback("trickplay", args, stderr.String())
 			if err != nil {
 				os.RemoveAll(tmp)
+				if stream.HWDecodeAborted(args, stderr.String()) {
+					return g.generate(f, false)
+				}
 				return fmt.Errorf("%v %s", err, strings.TrimSpace(stderr.String()))
 			}
 			sheets := 0
