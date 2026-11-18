@@ -22,6 +22,9 @@ import (
 const apiBase = "https://api.opensubtitles.com/api/v1"
 const userAgent = "Lex v1.0"
 
+// ErrQuota means the account's daily download allowance is used up.
+var ErrQuota = errors.New("today's OpenSubtitles download allowance has run out; it renews within 24 hours")
+
 var ErrNoKey = errors.New("add an OpenSubtitles API key in Settings → Metadata to search for subtitles")
 
 // Client talks to the OpenSubtitles API. It's safe for concurrent use as
@@ -125,6 +128,10 @@ func (c *Client) do(ctx context.Context, method, base, path string, q url.Values
 		}
 		if msg == "" {
 			msg = http.StatusText(resp.StatusCode)
+		}
+		// 406 on /download: the daily allowance is used up.
+		if resp.StatusCode == http.StatusNotAcceptable && path == "/download" {
+			return fmt.Errorf("%w (%s)", ErrQuota, msg)
 		}
 		return fmt.Errorf("opensubtitles: %s (HTTP %d)", msg, resp.StatusCode)
 	}
@@ -247,8 +254,9 @@ func (c *Client) Search(ctx context.Context, q Query) ([]Result, error) {
 	return out, nil
 }
 
-// Download fetches a subtitle file (converted to SRT by the API).
-func (c *Client) Download(ctx context.Context, fileID int64) ([]byte, string, error) {
+// Download fetches a subtitle file (converted to SRT by the API), with the
+// number of downloads the account has left today.
+func (c *Client) Download(ctx context.Context, fileID int64) (data []byte, name string, remaining int, err error) {
 	c.login(ctx)
 	base := apiBase
 	c.mu.Lock()
@@ -263,26 +271,29 @@ func (c *Client) Download(ctx context.Context, fileID int64) ([]byte, string, er
 		Message   string `json:"message"`
 	}
 	if err := c.do(ctx, "POST", base, "/download", nil, map[string]any{"file_id": fileID, "sub_format": "srt"}, &r); err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	if r.Link == "" {
-		return nil, "", fmt.Errorf("opensubtitles: %s", r.Message)
+		if r.Remaining <= 0 && strings.Contains(strings.ToLower(r.Message), "quota") {
+			return nil, "", 0, fmt.Errorf("%w (%s)", ErrQuota, r.Message)
+		}
+		return nil, "", 0, fmt.Errorf("opensubtitles: %s", r.Message)
 	}
 	req, err := http.NewRequestWithContext(ctx, "GET", r.Link, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	req.Header.Set("User-Agent", userAgent)
 	resp, err := http_.Do(req)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, "", fmt.Errorf("opensubtitles download: HTTP %d", resp.StatusCode)
+		return nil, "", 0, fmt.Errorf("opensubtitles download: HTTP %d", resp.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
-	return data, r.FileName, err
+	data, err = io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	return data, r.FileName, r.Remaining, err
 }
 
 // Hash computes the OpenSubtitles "moviehash": file size plus the 64-bit

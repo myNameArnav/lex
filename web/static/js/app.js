@@ -4,6 +4,7 @@ import { api, img, castImg } from './api.js';
 import { openPlayer, isPlayerOpen, closePlayer, warmPlayer } from './player-loader.js';
 import { installShortcuts, showShortcuts, MOD } from './shortcuts.js';
 import { seasonMenuItems, seasonConfirm } from './season.js';
+import { versionLabel, orderFiles, chosenFile, rememberFile } from './versions.js';
 import { compatRequest, TIERS, causeLabel, verdictCauses } from './caps.js';
 
 // caps: { subtitleSearch, cacheEnabled, liveTv, maxTranscodeHeight, transcode } from the server (see /api/me).
@@ -1147,7 +1148,9 @@ function mediaView(ctx, d) {
   const it = d.item;
   const isEp = it.kind === 'episode';
   const poster = heroPoster(it, isEp ? 'thumb' : 'poster', isEp);
-  const file = d.files?.[0];
+  // Play plays the version last chosen on this device (see versions.js).
+  const files = orderFiles(d.files || []);
+  const file = files.length ? chosenFile(it.id, files) : null;
   const compat = file ? compatBadge(it, file) : null;
   const info = [];
   if (isEp && d.show) {
@@ -1171,6 +1174,7 @@ function mediaView(ctx, d) {
     it.kind === 'movie' ? favButton(it) : null,
     it.kind === 'movie' ? watchlistButton(it) : null,
     moreButton(it, d)));
+  if (files.length > 1) info.push(versionPicker(it, files, file));
   if (it.tagline) info.push(h('div', { class: 'tagline' }, it.tagline));
   info.push(h('p', { class: 'overview' }, it.overview || (it.metaStatus === 0 ? 'Fetching details…' : 'No description available.')));
   retryWhileFetching(ctx, it);
@@ -1191,7 +1195,18 @@ function mediaView(ctx, d) {
   return h('div', null, hero(it, poster, info, isEp && d.show ? d.show : it), castRow(it, true));
 }
 
-// compatBadge says how the file the Play button plays (the first) plays in
+// versionPicker chooses which of a title's files Play plays: its versions
+// (cuts, resolutions) or the parts of a split film. The choice is kept on
+// this device, and the page redraws for the chosen file.
+function versionPicker(it, files, file) {
+  const parts = files.every((f) => f.part > 0);
+  const sel = h('select', { 'aria-label': parts ? 'Part' : 'Version', dataset: { focusKey: `version-${it.id}` },
+    onchange: (e) => { rememberFile(it.id, Number(e.target.value), files); refreshSoft(); } },
+  files.map((f) => h('option', { value: String(f.id), selected: f.id === file.id }, versionLabel(f, files))));
+  return h('label', { class: 'row version-pick' }, h('span', { class: 'muted small' }, parts ? `${files.length} parts` : `${files.length} versions`), sel);
+}
+
+// compatBadge says how the file the Play button plays (the chosen one) plays in
 // this browser: a chip next to the resolution, and the reasons below the
 // file summary when the server has to do the work. Both stay empty until the
 // server answers, and on error.
@@ -1271,7 +1286,10 @@ function mediaInfoModal(files) {
   modal({ title: 'Media info', body, wide: true });
 }
 
-async function fixMatch(it) {
+// fixMatch searches the metadata providers for it (a movie or show) and
+// applies the chosen match. onDone runs after a match is applied; by default
+// the page redraws.
+export async function fixMatch(it, { onDone = refreshSoft } = {}) {
   const q = h('input', { type: 'text', value: it.title, 'aria-label': 'Title to search', style: { flex: '1 1 120px' } });
   const y = h('input', { type: 'number', value: it.year || '', placeholder: 'Year', 'aria-label': 'Year', style: { width: '84px' } });
   const list = h('div', { class: 'match-list' });
@@ -1287,7 +1305,7 @@ async function fixMatch(it) {
     }
     m.close();
     toast('Match updated', 'ok');
-    refreshSoft();
+    onDone();
   };
   const search = async () => {
     clear(list).appendChild(spinner());

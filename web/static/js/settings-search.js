@@ -38,7 +38,7 @@ const INDEX = {
       ['Keep behind playhead', 'back buffer rewind memory'],
       ['Progress update interval', 'resume position heartbeat save'],
     ]],
-    ['Audio & subtitles', 'language captions', [
+    ['Audio & subtitles', 'language captions per show remembered choices forget', [
       ['Preferred audio language', 'dub dubbed audio track language'],
       ['Subtitles', 'captions cc forced foreign'],
       ['Subtitle language', 'captions cc'],
@@ -68,6 +68,7 @@ const INDEX = {
       ['New password', 'change password reset'],
       ['Confirm new password', 'change password'],
     ]],
+    ['Your devices', 'sessions sign out logout devices lost phone tv everywhere', []],
   ],
   server: [
     ['General', '', [['Server name', 'title name branding']]],
@@ -134,6 +135,7 @@ const INDEX = {
       ['OpenSubtitles API key', 'opensubtitles api key'],
       ['OpenSubtitles username', 'opensubtitles account login'],
       ['OpenSubtitles password', 'opensubtitles account login'],
+      ['Who can download subtitles', 'opensubtitles admins only everyone users allowance quota permission'],
     ]],
     ['Seek previews', 'trickplay thumbnails scrubbing', [
       ['Generate seek previews', 'trickplay thumbnails scrubbing hover'],
