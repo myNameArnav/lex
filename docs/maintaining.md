@@ -36,7 +36,8 @@ deployment addresses, home paths, runtime/configuration files and personal
 commit attribution; `--since origin/main` checks only the branch's commits, as
 CI does. Commit emails must be a GitHub no-reply address (or the old neutral
 `Lex contributors` one); any name is fine. It complements manual review and cannot
-detect every form of PII.
+detect every form of PII. The [publication audit](PUBLISH_AUDIT.md) records the
+pre-publication review.
 
 Never `git push --mirror`: application checkpoint refs are local metadata.
 

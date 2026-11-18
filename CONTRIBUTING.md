@@ -26,7 +26,8 @@ CI runs these plus secret and vulnerability scans on every pull request.
 
 Use synthetic usernames, media paths and fixtures, and keep data directories,
 credentials, logs and personal media out of commits, screenshots and issues.
-See the [publication audit](docs/PUBLISH_AUDIT.md) for what the check covers.
+The publication check in CI catches common slips such as home paths, private
+addresses and personal commit emails.
 
 ## Code layout
 
