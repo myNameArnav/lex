@@ -429,7 +429,7 @@ main { padding: var(--top) var(--sar) 0 var(--sal); min-height: 100vh; }
 .card .art .ph { position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; text-align: center; color: var(--text3); font-weight: 700; font-size: 15px; background: linear-gradient(135deg, var(--ph-a), var(--ph-b)); }
 .card .play-hover { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; background: rgba(0,0,0,.35); opacity: 0; transition: opacity .2s; }
 .card .play-hover span { width: 52px; height: 52px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; }
-.card .play-hover svg { width: 26px; height: 26px; margin-left: 3px; }
+.card .play-hover svg { width: 26px; height: 26px; }
 .card.land .art { display: block; width: 100%; border: 0; padding: 0; color: inherit; cursor: pointer; }
 .card.land .art:focus-visible { outline-offset: 0; }
 .card .art:focus-visible .play-hover { opacity: 1; }
@@ -498,7 +498,7 @@ a.az:focus-visible { outline-offset: 0; }
   .shelf-arrow { display: none; }
   .card.land .play-hover { opacity: 1; background: none; place-items: end start; padding: 8px; }
   .card.land .play-hover span { width: 36px; height: 36px; box-shadow: 0 1px 6px rgba(0,0,0,.5); }
-  .card.land .play-hover svg { width: 18px; height: 18px; margin-left: 2px; }
+  .card.land .play-hover svg { width: 18px; height: 18px; }
 }
 @media (pointer: coarse) {
   .toolbar select, .toolbar .btn.sm, .toolbar .seg { height: 40px; }
@@ -656,7 +656,7 @@ a.person:focus-visible { outline-offset: 2px; }
 /* Touch: a small play badge marks thumbnails that play when tapped. */
 @media (hover: none) {
   .episode .art .ep-play { opacity: 1; background: none; place-items: end start; padding: 6px; }
-  .episode .ep-play svg { width: 28px; height: 28px; padding: 7px 6px 7px 8px; border-radius: 50%; background: rgba(0,0,0,.65); }
+  .episode .ep-play svg { width: 28px; height: 28px; padding: 7px; border-radius: 50%; background: rgba(0,0,0,.65); }
 }
 
 /* ---------- auth ---------- */
