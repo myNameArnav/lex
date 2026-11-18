@@ -7,12 +7,12 @@ const mbps = (bps) => `${(bps / 1e6).toFixed(bps < 1e7 ? 1 : 0)} Mbps`;
 
 // What an admin can do about each kind of server overload (sysstats Strain).
 const ADMIN_HINTS = {
-  disk: 'Other work on the same drive, such as downloads or copies to the media cache, slows it down.',
-  cpu: 'Other work on the server, such as transcodes or scans, is using the processor.',
-  memory: 'Other programs on the server are using its memory.',
-  throttled: "Check the Raspberry Pi's power supply and cooling.",
+  disk: 'Downloads or cache copies on the same drive slow it down.',
+  cpu: 'Transcodes or scans are using the CPU.',
+  memory: 'Other programs are using the memory.',
+  throttled: "Check the Pi's power supply and cooling.",
 };
-const VIEWER_HINT = 'Playback picks up when the server catches up.';
+const VIEWER_HINT = 'Should recover once the server catches up.';
 
 // needKbps: the stream's bitrate (plan.bitrate). bandwidth: how fast data
 // arrives, in bits/s (0 if unknown). job: the server's ffmpeg progress
@@ -32,7 +32,7 @@ export function bufferingCause({ needKbps = 0, bandwidth = 0, remote = false, jo
     const disk = (host || []).find((s) => s.kind === 'disk');
     return {
       kind: 'disk',
-      text: `${disk ? disk.text : "The server's disk is too slow right now."} It is waiting on the drive, not on your connection.`,
+      text: `${disk ? disk.text.replace(/\.$/, ';') : 'Server disk too slow:'} ${Math.round(diskWait * 100)}% of the stream's time goes to reading the file, not your connection.`,
       hint: serverHint('disk'),
     };
   }

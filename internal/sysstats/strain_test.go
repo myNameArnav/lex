@@ -26,7 +26,7 @@ func TestStrains(t *testing.T) {
 	cpu.Now.CPU = 99
 	cpu.ThrottleFlags = []string{"under-voltage now", "throttling occurred"}
 	s := cpu.Strains()
-	if len(s) != 2 || s[0].Kind != "throttled" || !strings.Contains(s[0].Text, "power supply") || s[1].Kind != "cpu" {
+	if len(s) != 2 || s[0].Kind != "throttled" || !strings.Contains(s[0].Text, "under-voltage") || s[1].Kind != "cpu" {
 		t.Fatalf("cpu + throttled: %v", s)
 	}
 	// Only past throttling: not a strain now.
