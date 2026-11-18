@@ -308,7 +308,7 @@ select { padding-right: 28px; appearance: none; background-image: url("data:imag
   border-bottom: 1px solid var(--hairline);
 }
 .logo { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 20px; letter-spacing: -.02em; }
-.logo b { width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font-size: 16px; }
+.logo img { width: 28px; height: 28px; border-radius: 8px; display: block; }
 .nav { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
 .nav::-webkit-scrollbar { display: none; }
 .nav a { padding: 7px 12px; border-radius: 8px; color: var(--text2); font-weight: 600; white-space: nowrap; }

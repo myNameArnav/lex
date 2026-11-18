@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/brand/banner.svg" alt="lex: no P, no pay. A self-hosted media server for small Linux hosts." width="640"></p>
+
 # Lex
 
 A lightweight, self-hosted media server for small Linux hosts such as a

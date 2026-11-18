@@ -144,7 +144,7 @@ function renderAuth(setup, notice = '') {
       pass.focus();
     }
   } },
-  h('div', { class: 'logo' }, h('b', null, 'L'), h('span', null, state.serverName)),
+  h('div', { class: 'logo' }, h('img', { src: '/favicon.svg', alt: '', width: 28, height: 28 }), h('span', null, state.serverName)),
   h('h1', null, setup ? 'Welcome! Create the admin account' : 'Sign in'),
   notice ? h('p', { class: 'muted', id: 'auth-notice', role: 'status', style: { margin: 0 } }, notice) : null,
   setup ? h('p', { class: 'muted', style: { margin: 0 } }, 'This account manages libraries, users and settings.') : null,
@@ -218,7 +218,7 @@ function renderShell() {
   searchPlaceholder();
   const avatarBtn = h('button', { class: 'avatar', title: state.me.name, 'aria-label': `Account menu (${state.me.name})`, 'aria-haspopup': 'menu', 'aria-expanded': 'false', onclick: (e) => userMenu(e.currentTarget) }, state.me.name.slice(0, 1).toUpperCase());
   const top = h('header', { class: 'topbar' },
-    h('a', { class: 'logo', href: '#/', 'aria-label': `${state.serverName} home` }, h('b', null, 'L'), h('span', null, state.serverName)),
+    h('a', { class: 'logo', href: '#/', 'aria-label': `${state.serverName} home` }, h('img', { src: '/favicon.svg', alt: '', width: 28, height: 28 }), h('span', null, state.serverName)),
     navEl,
     h('div', { class: 'spacer' }),
     h('div', { class: 'search-box', role: 'search' }, h('span', { html: icons.search }), searchInput, h('kbd', { class: 'search-kbd hide-mobile', title: 'Keyboard shortcuts: press ?' }, `${MOD} K`)),
