@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -30,7 +31,9 @@ func TestBackupAndList(t *testing.T) {
 	if !ValidBackupName(b.Name) || b.Reason != BackupManual || b.Size == 0 {
 		t.Fatalf("backup = %+v", b)
 	}
-	if _, err := st.Backup(bdir, BackupManual); !errors.Is(err, ErrBackupExists) {
+	// Same name as the first (the race detector can push a second call
+	// past a second boundary, so reuse the first one's timestamp).
+	if _, err := snapshot(context.Background(), st.db, bdir, BackupManual, time.Unix(b.Created, 0)); !errors.Is(err, ErrBackupExists) {
 		t.Fatalf("second backup in the same second: err = %v", err)
 	}
 	fi, err := os.Stat(filepath.Join(bdir, b.Name))
