@@ -73,7 +73,8 @@ archive verification keys, not private signing keys.
 
 ## Reporting a vulnerability
 
-When this repository is hosted on GitHub, use its private vulnerability reporting
-feature if the maintainer has enabled it. Otherwise contact the maintainer through
-an available private channel before publishing exploit details. Include affected
-versions, impact and a minimal reproduction with synthetic data.
+Report vulnerabilities privately through GitHub: the repository's **Security**
+tab → **Report a vulnerability**
+([direct link](https://github.com/myNameArnav/lex/security/advisories/new)).
+Don't open a public issue. Include affected versions, impact and a minimal
+reproduction with synthetic data.
