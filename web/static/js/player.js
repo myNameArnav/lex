@@ -1225,7 +1225,7 @@ class Player {
     const needBurn = next && !next.textSub && !draw;
     const hadBurn = !!this.plan?.burnSubs;
     // The choice is remembered for this show or movie, not as the global
-    // preference (Settings → Playback keeps that).
+    // preference (Settings → Audio & subtitles keeps that).
     const mode = this.tracks?.subMode ?? prefs.get('subMode');
     const remember = (patch) => { if (!Object.keys(patch).length) return; this.tracks = { ...this.tracks, ...patch }; rememberTracks(this.trackKey, patch); };
     if (!next) remember(subtitleChoice(null, mode));

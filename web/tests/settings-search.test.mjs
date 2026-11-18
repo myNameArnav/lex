@@ -102,6 +102,23 @@ test('search ranks label matches first and hides server settings from non-admins
   assert.ok(pw.length > 0);
   assert.ok(pw.every((e) => !e.admin), 'non-admins only see their own pages');
   assert.equal(searchSettings('   ', { isAdmin: true }).length, 0);
+  // Radarr's address and key live on one page with Sonarr's.
+  assert.ok(searchSettings('radarr', { isAdmin: true }).filter((e) => e.label).every((e) => e.page === 'arr'));
+});
+
+test('every page is in a group, users get only their own pages, and pages have unique ids', async () => {
+  const { PAGES, GROUPS, searchSettings } = await load();
+  assert.equal(new Set(PAGES.map((p) => p[0])).size, PAGES.length);
+  for (const [id, , , admin, group] of PAGES) {
+    assert.ok(GROUPS.includes(group), `${id} has a known group`);
+    assert.equal(admin, group !== 'You', `${id}: only "You" pages are for everyone`);
+  }
+  // Pages appear grouped, in the groups' order.
+  const order = [...PAGES].map((p) => GROUPS.indexOf(p[4]));
+  assert.ok(order.every((g, i) => i === 0 || g >= order[i - 1]));
+  for (const q of ['theme', 'subtitle size', 'shortcuts']) {
+    assert.ok(searchSettings(q, { isAdmin: false }).length > 0, `users can find ${q}`);
+  }
 });
 
 test('every indexed setting names a label, toggle or heading the page shows', async () => {
@@ -160,7 +177,7 @@ test('search → navigate → focus: typing, Enter, and the field is focused and
   // A section result focuses its heading; a toggle result its switch.
   input.value = 'trickplay';
   input.dispatch('input');
-  const i = [...list.children].findIndex((li) => /^Seek previewsMetadata$/.test(li.textContent));
+  const i = [...list.children].findIndex((li) => /^Seek previewsPreviews & intros$/.test(li.textContent));
   list.children[i].dispatch('click');
   assert.equal(document.activeElement.tagName, 'H2');
   assert.equal(document.activeElement.textContent, 'Seek previews');

@@ -1,10 +1,10 @@
-import { h, clear, icons, toast, modal, confirmDialog, spinner, toggle, fmtBytes, fmtBitrate, fmtTime, fmtDate, timeAgo, fmtUptime, fmtDuration, LANG_OPTIONS, $, run, staleBanner, motionOK, KIND_LABELS, METHOD_LABEL, reasonLabel, emptyState } from './ui.js';
+import { h, clear, icons, toast, modal, confirmDialog, spinner, toggle, fmtBytes, fmtBitrate, fmtTime, fmtDate, fmtDateShort, timeAgo, fmtUptime, fmtDuration, LANG_OPTIONS, $, run, staleBanner, motionOK, KIND_LABELS, METHOD_LABEL, reasonLabel, emptyState } from './ui.js';
 import { api, img } from './api.js';
 import { state, loadLibraries, refreshSoft, setLeaveGuard, focusAfterRoute, renderNav, fixMatch } from './app.js';
 import { prefs, DEFAULTS, QUALITIES, qualityOptions } from './prefs.js';
 import { SUB_SIZES, SUB_POSITIONS, SUB_FONTS, SUB_COLORS, SUB_OPACITIES, SUB_BG_OPACITIES, SUB_EDGES, SUB_WEIGHTS, subStyleVars } from './substyle.js';
 import { capsSummary, compatRequest, TIERS, TIER_ORDER, causeLabel } from './caps.js';
-import { PAGES, searchBox, reveal } from './settings-search.js';
+import { GROUPS, PAGES, searchBox, reveal } from './settings-search.js';
 import { applyTheme, applyFont } from './theme.js';
 import { rememberedCount, forgetTracks } from './track-memory.js';
 import { lineChart, columnChart, barList, axisHours, axisBitrate } from './charts.js';
@@ -59,9 +59,7 @@ export async function settingsView(ctx, section) {
   const link = ([id, label, ic]) => h('a', { href: `#/settings/${id}`, class: id === section ? 'active' : '', 'aria-current': id === section ? 'page' : null,
     dataset: { focusKey: `settings-nav-${id}`, page: id }, onclick: () => { if (id !== section) focusAfterRoute(`settings-nav-${id}`); } }, h('span', { html: icons[ic] }), label);
   const nav = h('nav', { class: 'side-nav', 'aria-label': 'Settings sections' },
-    h('div', { class: 'grp' }, 'You'),
-    PAGES.filter((s) => !s[3]).map(link),
-    state.me.isAdmin ? [h('div', { class: 'grp' }, 'Server'), PAGES.filter((s) => s[3]).map(link)] : null);
+    GROUPS.filter((g) => g === 'You' || state.me.isAdmin).map((g) => [h('div', { class: 'grp' }, g), PAGES.filter((s) => s[4] === g).map(link)]));
   const content = h('div', { class: 'settings-content' });
   const search = searchBox({ isAdmin: state.me.isAdmin, choose: (e) => {
     if (e.page === section) { reveal(content, e, { smooth: motionOK() }); return; }
@@ -75,8 +73,10 @@ export async function settingsView(ctx, section) {
     content.appendChild(emptyState({ level: 'h2', title: 'Admins only', text: 'Ask an administrator to change server settings.',
       actions: [h('a', { class: 'btn', href: '#/settings/preferences' }, 'Playback settings')] }));
   } else content.appendChild(await ({
-    preferences: prefsSection, account: accountSection, server: serverSection, transcoding: transcodingSection,
-    metadata: metadataSection, cache: cacheSection, backups: backupsSection, libraries: librariesSection, users: usersSection, devices: devicesSection, logs: logsSection, about: aboutSection,
+    preferences: playbackPrefsSection, subtitles: subtitlePrefsSection, interface: interfacePrefsSection, account: accountSection,
+    libraries: librariesSection, metadata: metadataSection, analysis: analysisSection, arr: arrPage, livetv: liveTvSection,
+    transcoding: transcodingSection, network: networkSection, cache: cacheSection,
+    server: generalSection, users: usersSection, devices: devicesSection, backups: backupsSection, logs: logsSection, about: aboutSection,
   })[section](ctx));
   // A search result on another page: show it once the route has put this
   // page up (and focused its heading).
@@ -187,50 +187,71 @@ function rememberedTracksRow() {
   return h('div', { class: 'row wrap remembered-tracks', style: { gap: '10px', alignItems: 'center' } }, help, btn);
 }
 
-// ---------- per-device playback prefs ----------
-let capsOpen = false; // stays open across re-renders
-function prefsSection() {
-  const p = prefs.all();
-  const set = (k, conv = (x) => x) => (v) => { prefs.set(k, conv(v)); toast('Saved on this device', 'ok'); };
-  const langs = [['', 'File default'], ...LANG_OPTIONS];
-  const caps = capsSummary();
+// ---------- per-device prefs ----------
+// Playback, Audio & subtitles and Interface are stored in this browser
+// (prefs.js), save as they change, and share one Reset.
+const prefSetter = (k, conv = (x) => x) => (v) => { prefs.set(k, conv(v)); toast('Saved on this device', 'ok'); };
+function devicePage(...sections) {
   return h('div', { class: 'form' },
+    h('p', { class: 'help', style: { margin: 0 } }, 'These settings are stored in this browser, so each device can have its own (e.g. lower quality on your phone).'),
+    sections,
+    h('div', null, h('button', { class: 'btn', dataset: { focusKey: 'prefs-reset' }, onclick: resetPrefs }, 'Reset this device’s settings')));
+}
+
+let capsOpen = false; // stays open across re-renders
+function playbackPrefsSection() {
+  const p = prefs.all();
+  const set = prefSetter;
+  const caps = capsSummary();
+  return devicePage(
     h('div', { class: 'form-section' }, h('h2', null, 'Quality & method'),
-      h('p', { class: 'help', style: { margin: 0 } }, 'These settings are stored in this browser, so each device can have its own (e.g. lower quality on your phone).'),
       h('div', { class: 'form-grid' },
         field('Streaming quality', select(p.quality, qualityOptions({ maxHeight: state.caps.maxTranscodeHeight}), set('quality', Number)), 'Max bitrate. "Original" direct-plays when the browser supports the file. The resolution is the most a transcode delivers on this server.'),
         field('Playback method', select(p.mode, [['auto', 'Automatic (recommended)'], ['direct', 'Prefer Direct Play'], ['remux', 'Always Direct Stream (remux)'], ['transcode', 'Always Transcode']], set('mode')), 'Automatic picks the lightest method that works here. Try “Always Transcode” if a video stutters or won’t play.'))),
+    h('div', { class: 'form-section' }, h('h2', null, 'Player'),
+      toggleRow('Autoplay next episode', 'Shows an "Up next" card near the end with a countdown.', p.autoplayNext, set('autoplayNext')),
+      toggleRow('Skip intros automatically', 'Otherwise a "Skip Intro" button appears while an intro plays.', p.autoSkipIntro, set('autoSkipIntro')),
+      toggleRow('Skip credits automatically', 'When the end credits start, play the next episode right away (with autoplay on), or jump to the end of a film or last episode. Otherwise a "Skip Credits" button appears.', p.autoSkipCredits, set('autoSkipCredits')),
+      toggleRow('Show stats for nerds by default', 'Overlay with codecs, bitrate, buffer health, dropped frames and server transcode speed (press i in the player).', p.showStats, set('showStats')),
+      h('div', { class: 'form-grid' },
+        field('Autoplay countdown', select(p.countdown, [[5, '5 seconds'], [10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds']], set('countdown', Number))),
+        field('Skip back', select(p.skipBack, [[5, '5 seconds'], [10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds']], set('skipBack', Number))),
+        field('Skip forward', select(p.skipFwd, [[10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds'], [60, '60 seconds']], set('skipFwd', Number))))),
     h('div', { class: 'form-section' }, h('h2', null, 'Buffering'),
       h('div', { class: 'form-grid' },
         field('Buffer ahead', select(p.bufferAhead, [[0, 'Automatic (recommended)'], [30, 'At most 30 seconds'], [60, 'At most 1 minute'], [90, 'At most 90 seconds'], [180, 'At most 3 minutes'], [300, 'At most 5 minutes']], set('bufferAhead', Number)), 'For direct stream and transcode (direct play is always buffered by the browser). Automatic fills as much as the browser allows, usually about 150 MB. A limit keeps a transcode from running far ahead of what you watch.'),
         field('Keep behind playhead', select(p.backBuffer, [[10, '10 seconds'], [30, '30 seconds'], [60, '1 minute'], [120, '2 minutes']], set('backBuffer', Number)), 'Lets you rewind instantly; lower saves memory on phones/TVs.'),
         field('Progress update interval', select(p.heartbeat, [[5, '5 seconds'], [10, '10 seconds'], [30, '30 seconds']], set('heartbeat', Number)), 'How often your position is saved, so you can resume on another device.'))),
-    h('div', { class: 'form-section' }, h('h2', null, 'Audio & subtitles'),
+    h('div', { class: 'form-section' }, h('details', { class: 'caps', open: capsOpen, ontoggle: (e) => { capsOpen = e.target.open; } }, h('summary', null, h('h2', null, 'Technical: this browser’s codecs')),
+      state.me.isAdmin ? h('p', { class: 'small', style: { margin: '0 0 12px' } }, h('a', { href: '#/dashboard/library' }, 'See how your library plays in this browser →')) : null,
+      h('dl', { class: 'kv' }, Object.entries(caps).map(([k, v]) => [h('dt', null, k), h('dd', null, v)])))));
+}
+
+function subtitlePrefsSection() {
+  const p = prefs.all();
+  const set = prefSetter;
+  const langs = [['', 'File default'], ...LANG_OPTIONS];
+  return devicePage(
+    h('div', { class: 'form-section' }, h('h2', null, 'Languages'),
       h('div', { class: 'form-grid' },
         field('Preferred audio language', select(p.audioLang, langs, set('audioLang'))),
         field('Subtitles', select(p.subMode, [['off', 'Off'], ['auto', 'Auto (forced / foreign audio)'], ['always', 'Always on']], set('subMode'))),
         field('Subtitle language', select(p.subLang, LANG_OPTIONS, set('subLang')))),
       rememberedTracksRow(),
       toggleRow('Burn in image subtitles', 'Blu-ray (PGS) subtitles are drawn over the video in the browser. Turn this on to have the server burn them into the picture instead, which means transcoding.', p.burnImageSubs, set('burnImageSubs'))),
-    subStyleSection(p, set),
+    subStyleSection(p, set));
+}
+
+function interfacePrefsSection() {
+  const p = prefs.all();
+  const set = prefSetter;
+  return devicePage(
     h('div', { class: 'form-section' }, h('h2', null, 'Appearance'),
       h('div', { class: 'form-grid' },
         field('Theme', select(p.theme, [['system', 'Same as the system'], ['dark', 'Dark'], ['light', 'Light']], (v) => { set('theme')(v); applyTheme(v); }), 'For this device. The player is always dark.'),
         field('Font', select(p.font, [['headings', 'Fredoka for titles'], ['all', 'Fredoka everywhere'], ['system', 'System font']], (v) => { set('font')(v); applyFont(v); }), 'For this device.'))),
-    h('div', { class: 'form-section' }, h('h2', null, 'Player'),
-      toggleRow('Autoplay next episode', 'Shows an "Up next" card near the end with a countdown.', p.autoplayNext, set('autoplayNext')),
-      toggleRow('Skip intros automatically', 'Otherwise a "Skip Intro" button appears while an intro plays.', p.autoSkipIntro, set('autoSkipIntro')),
-      toggleRow('Skip credits automatically', 'When the end credits start, play the next episode right away (with autoplay on), or jump to the end of a film or last episode. Otherwise a "Skip Credits" button appears.', p.autoSkipCredits, set('autoSkipCredits')),
-      toggleRow('Show stats for nerds by default', 'Overlay with codecs, bitrate, buffer health, dropped frames and server transcode speed (press i in the player).', p.showStats, set('showStats')),
-      toggleRow('Single-key shortcuts', 'p, /, ? and g-then-key. Ctrl/⌘ K and the player keys always work.', p.shortcuts, set('shortcuts')),
-      h('div', { class: 'form-grid' },
-        field('Autoplay countdown', select(p.countdown, [[5, '5 seconds'], [10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds']], set('countdown', Number))),
-        field('Skip back', select(p.skipBack, [[5, '5 seconds'], [10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds']], set('skipBack', Number))),
-        field('Skip forward', select(p.skipFwd, [[10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds'], [60, '60 seconds']], set('skipFwd', Number))))),
-    h('div', { class: 'form-section' }, h('details', { class: 'caps', open: capsOpen, ontoggle: (e) => { capsOpen = e.target.open; } }, h('summary', null, h('h2', null, 'Technical: this browser’s codecs')),
-      state.me.isAdmin ? h('p', { class: 'small', style: { margin: '0 0 12px' } }, h('a', { href: '#/dashboard/library' }, 'See how your library plays in this browser →')) : null,
-      h('dl', { class: 'kv' }, Object.entries(caps).map(([k, v]) => [h('dt', null, k), h('dd', null, v)])))),
-    h('div', null, h('button', { class: 'btn', dataset: { focusKey: 'prefs-reset' }, onclick: resetPrefs }, 'Reset to defaults')));
+    h('div', { class: 'form-section' }, h('h2', null, 'Keyboard'),
+      toggleRow('Single-key shortcuts', 'p, /, ? and g-then-key. Ctrl/⌘ K and the player keys always work.', p.shortcuts, set('shortcuts'))));
 }
 
 // compatPanel shows, on the Library dashboard, how the library plays in
@@ -309,7 +330,7 @@ function compatSummary(sum, req) {
 // Volume and the stats panel's compact state aren't shown on this page, so a
 // reset leaves them as they are.
 async function resetPrefs() {
-  if (!(await confirmDialog('Reset playback settings on this device to their defaults?', 'Reset', true, 'Reset playback settings?'))) return;
+  if (!(await confirmDialog('Reset playback, audio & subtitle and interface settings on this device to their defaults?', 'Reset', true, 'Reset this device’s settings?'))) return;
   const keep = ['volume', 'muted', 'statsCompact'].map((k) => [k, prefs.get(k)]);
   prefs.reset();
   keep.forEach(([k, v]) => prefs.set(k, v));
@@ -406,8 +427,8 @@ function myDevices(devs) {
     h('p', { class: 'muted', style: { margin: 0 } }, 'Where you’re signed in. Sign out a lost or shared device here; changing your password also signs out every other device.'),
     h('div', { class: 'table-wrap' }, h('table', { class: 'tbl stack' }, h('tr', null, h('th', null, 'Client'), h('th', null, 'IP'), h('th', null, 'Signed in'), h('th', null, 'Last seen'), actionsTh()),
       devs.map((d) => h('tr', null,
-        h('td', null, h('b', null, d.client), d.current ? [' ', h('span', { class: 'chip this-device' }, 'This device')] : null),
-        h('td', { class: 'mono' }, d.ip), h('td', { 'data-label': 'Signed in' }, fmtDate(d.created)), h('td', { 'data-label': 'Last seen' }, timeAgo(d.lastSeen)),
+        h('td', { class: 'nowrap' }, h('b', null, d.client), d.current ? [' ', h('span', { class: 'chip this-device' }, 'This device')] : null),
+        h('td', { class: 'mono' }, d.ip), h('td', { class: 'nowrap', 'data-label': 'Signed in', title: fmtDate(d.created) }, fmtDateShort(d.created)), h('td', { class: 'nowrap', 'data-label': 'Last seen' }, timeAgo(d.lastSeen)),
         h('td', null, h('div', { class: 'row wrap tbl-actions' }, h('button', { class: 'btn sm danger', dataset: { focusKey: `my-device-${d.prefix}` },
           'aria-label': d.current ? 'Sign out here (this device)' : `Sign out ${d.client} (${d.ip})`, onclick: (e) => signOut(e, d) }, d.current ? 'Sign out here' : 'Sign out'))))))),
     others ? h('div', { class: 'row wrap' }, h('button', { class: 'btn danger', type: 'button', onclick: signOutOthers }, 'Sign out everywhere else')) : null);
@@ -499,6 +520,7 @@ async function configForm(build, { check, onSaved } = {}) {
   const parts = build({ draft, num, text, list, tg, bind, info });
   const form = h('form', { class: 'form', novalidate: true, onsubmit: onSubmit, oninput: mark, onchange: mark },
     parts, h('div', { class: 'save-bar' }, save, note, err));
+  form.dirty = dirty;
   return form;
 }
 
@@ -578,19 +600,24 @@ function webhookManual(path, lanBases) {
       lan.length ? ['If its Test fails (common when the app runs in Docker or Podman), use a LAN address instead:', ...lan.map((b) => copyableUrl(b + path))] : null));
 }
 
-function arrSection(draft, text, info) {
-  const radarr = arrRow('Radarr', draft, 'radarrUrl', 'radarrKey',
-    ['Add Radarr’s address and API key under ', h('a', { href: '#/settings/metadata' }, 'Metadata'), ' first']);
-  const sonarr = arrRow('Sonarr', draft, 'sonarrUrl', 'sonarrKey', 'Enter Sonarr’s address and API key above');
-  let t = 0;
-  const recheck = () => { clearTimeout(t); t = setTimeout(sonarr.recheck, 600); };
-  return h('div', { class: 'form-section', dataset: { searchSection: 'Sonarr & Radarr' } }, h('h2', null, 'Sonarr & Radarr'),
-    h('p', { class: 'help', style: { margin: 0 } }, 'Connect them so lex rescans the moment they import, upgrade, rename or delete something, instead of waiting for the next scheduled scan.'),
-    h('div', { class: 'form-grid', oninput: recheck },
-      field('Sonarr URL', text('sonarrUrl', { placeholder: 'http://127.0.0.1:8989' })),
-      field('Sonarr API key', text('sonarrKey', { type: 'password', autocomplete: 'off' }), 'Sonarr → Settings → General → API Key')),
-    h('div', { class: 'arr-rows' }, radarr, sonarr),
-    webhookManual(info.webhookUrl, info.webhookLanUrls));
+// Both apps' addresses and keys live here: lex uses them for the rescan
+// webhook, and Radarr's also as a keyless movie metadata source.
+function arrPage() {
+  return configForm(({ text, info, draft }) => {
+    const radarr = arrRow('Radarr', draft, 'radarrUrl', 'radarrKey', 'Enter Radarr’s address and API key above');
+    const sonarr = arrRow('Sonarr', draft, 'sonarrUrl', 'sonarrKey', 'Enter Sonarr’s address and API key above');
+    const later = (row) => { let t = 0; return () => { clearTimeout(t); t = setTimeout(row.recheck, 600); }; };
+    return [h('div', { class: 'form-section', dataset: { searchSection: 'Sonarr & Radarr' } }, h('h2', null, 'Sonarr & Radarr'),
+      h('p', { class: 'help', style: { margin: 0 } }, 'Connect them so lex rescans the moment they import, upgrade, rename or delete something, instead of waiting for the next scheduled scan. Radarr is also used as a keyless TMDB source for movies (matched by folder name).'),
+      h('div', { class: 'form-grid', oninput: later(radarr) },
+        field('Radarr URL', text('radarrUrl', { placeholder: 'http://127.0.0.1:7878' })),
+        field('Radarr API key', text('radarrKey', { type: 'password', autocomplete: 'off' }), 'Radarr → Settings → General → API Key')),
+      h('div', { class: 'form-grid', oninput: later(sonarr) },
+        field('Sonarr URL', text('sonarrUrl', { placeholder: 'http://127.0.0.1:8989' })),
+        field('Sonarr API key', text('sonarrKey', { type: 'password', autocomplete: 'off' }), 'Sonarr → Settings → General → API Key')),
+      h('div', { class: 'arr-rows' }, radarr, sonarr),
+      webhookManual(info.webhookUrl, info.webhookLanUrls))];
+  });
 }
 
 // titlePicker edits a list of movies and shows (item ids): chips for the
@@ -707,7 +734,30 @@ function tvAutomaticEditor(draft, auto) {
         onchange: (e) => { const rest = (draft.tvHidden || []).filter((x) => x !== c.id); draft.tvHidden = e.target.checked ? rest : [...rest, c.id]; } }), c.name))));
 }
 
-async function serverSection() {
+// ---------- server: general, network, Live TV ----------
+function generalSection() {
+  return configForm(({ num, text }) => [
+    h('div', { class: 'form-section' }, h('h2', null, 'General'),
+      field('Server name', text('serverName'))),
+    h('div', { class: 'form-section' }, h('h2', null, 'Playback history'),
+      field('Keep history for (days)', num('historyRetentionDays', { min: 0, max: 36500 }), '0 keeps it forever. Older plays are deleted hourly, and the Playback dashboard only covers what is kept.')),
+  ]);
+}
+
+function networkSection() {
+  return configForm(({ num, list, tg }) => [
+    h('div', { class: 'form-section' }, h('h2', null, 'Remote access'),
+      field('Remote bitrate limit (kbps)', num('remoteMaxBitrate', { min: 0, step: 500 }), '0 = unlimited. Applies to clients outside the local networks below; files above it get transcoded.'),
+      field('Local networks (CIDR, comma separated)', list('localNetworks'))),
+    h('div', { class: 'form-section' }, h('h2', null, 'Reverse proxy'),
+      tg('trustProxy', 'Trust reverse-proxy headers', 'Enable only behind a proxy that replaces client-supplied forwarding headers.'),
+      field('Trusted proxy peers (CIDR, comma separated)', list('trustedProxies'), 'Only these peers may supply client IP and HTTPS headers. Defaults to loopback; use exact proxy addresses where possible.')),
+    h('div', { class: 'form-section' }, h('h2', null, 'Advanced'),
+      field('Stream write buffer (KB)', num('streamBufferKb', { min: 32, max: 4096 }))),
+  ]);
+}
+
+async function liveTvSection() {
   // Genres to offer custom Live TV channels, and the automatic channels.
   const [genres, auto] = await Promise.all([api('/api/genres').catch(() => []), api('/api/admin/tv/automatic').catch(() => [])]);
   const check = (d) => {
@@ -719,29 +769,12 @@ async function serverSection() {
     if (i >= 0) return [`Pick at least one title for ${chs[i].name.trim()}`, cards[i]?.querySelector('input[type=search]')];
     return null;
   };
-  return configForm(({ draft, num, text, list, tg, info }) => [
-    h('div', { class: 'form-section' }, h('h2', null, 'General'),
-      field('Server name', text('serverName'))),
+  return configForm(({ draft, tg }) => [
     h('div', { class: 'form-section' }, h('h2', null, 'Live TV'),
       h('p', { class: 'help', style: { margin: 0 } }, 'Channels that play the library at random, like broadcast TV: one for everything, one per library and one per common genre (turn off the ones you don’t want), plus any you make below. Everyone tuned to a channel sees the same program. Live TV saves no resume points or watched marks.'),
       tg('liveTv', 'Enable Live TV', 'Adds Live TV to the menu for every user.'),
       tvAutomaticEditor(draft, auto),
       tvChannelsEditor(draft, genres)),
-    h('div', { class: 'form-section' }, h('h2', null, 'Library scanning'),
-      h('div', { class: 'form-grid' },
-        field('Rescan every (minutes)', num('scanIntervalMin', { min: 0 }), '0 disables periodic scans. Scans only stat files, so they are cheap.'),
-        field('Probe workers', num('probeWorkers', { min: 1, max: 8 }), 'Parallel ffprobe processes for new files. 1 is best on a Pi.')),
-      tg('scanOnStartup', 'Scan on startup')),
-    arrSection(draft, text, info),
-    h('div', { class: 'form-section' }, h('h2', null, 'Playback history'),
-      field('Keep history for (days)', num('historyRetentionDays', { min: 0, max: 36500 }), '0 keeps it forever. Older plays are deleted hourly, and the Playback dashboard only covers what is kept.')),
-    h('div', { class: 'form-section' }, h('h2', null, 'Network & remote access'),
-      h('div', { class: 'form-grid' },
-        field('Remote bitrate limit (kbps)', num('remoteMaxBitrate', { min: 0, step: 500 }), '0 = unlimited. Applies to clients outside the local networks below; files above it get transcoded.'),
-        field('Stream write buffer (KB)', num('streamBufferKb', { min: 32, max: 4096 }))),
-      field('Local networks (CIDR, comma separated)', list('localNetworks')),
-      tg('trustProxy', 'Trust reverse-proxy headers', 'Enable only behind a proxy that replaces client-supplied forwarding headers.'),
-      field('Trusted proxy peers (CIDR, comma separated)', list('trustedProxies'), 'Only these peers may supply client IP and HTTPS headers. Defaults to loopback; use exact proxy addresses where possible.')),
   ], { check });
 }
 
@@ -789,17 +822,16 @@ function transcodingSection() {
 // The fields need Save; the Actions below the form run at once, with the
 // saved settings.
 async function metadataSection() {
-  const tasks = await api('/api/admin/tasks').catch(() => null);
-  const form = await configForm(({ draft, text, tg, num }) => [
+  const form = await configForm(({ draft, text, tg }) => [
     h('div', { class: 'form-section' }, h('h2', null, 'Providers'),
-      h('p', { class: 'help', style: { margin: 0 } }, 'TMDB gives the richest data (posters, backdrops, cast, episode stills). Get a free API key at themoviedb.org → Settings → API. Without it, TVmaze is used for shows and your local Radarr (auto-detected) for movies — no keys needed.'),
+      h('p', { class: 'help', style: { margin: 0 } }, 'TMDB gives the richest data (posters, backdrops, cast, episode stills). Get a free API key at themoviedb.org → Settings → API. Without it, TVmaze is used for shows and your local Radarr (auto-detected, or set under ', h('a', { href: '#/settings/arr' }, 'Sonarr & Radarr'), ') for movies — no keys needed.'),
       field('TMDB API key or read access token', text('tmdbKey', { type: 'password', placeholder: 'v3 key or v4 token', autocomplete: 'off' }), 'Saving a new key retries unmatched items automatically.'),
       field('Language', text('metadataLanguage', { placeholder: 'en-US' })),
       tg('enableTmdb', 'Use TMDB'),
-      tg('enableTvmaze', 'Use TVmaze for shows (no key)'),
-      h('div', { class: 'form-grid' },
-        field('Radarr URL', text('radarrUrl', { placeholder: 'http://127.0.0.1:7878' }), 'Used as a keyless TMDB source for movies (matched by folder name).'),
-        field('Radarr API key', text('radarrKey', { type: 'password', autocomplete: 'off' }), 'Radarr → Settings → General → API Key'))),
+      tg('enableTvmaze', 'Use TVmaze for shows (no key)')),
+    h('div', { class: 'form-section' }, h('h2', null, 'Local'),
+      tg('useLocalMetadata', 'Use local artwork & hints', 'poster.jpg / fanart.jpg / *-thumb.jpg, .plexmatch and .nfo ids.'),
+      tg('generateThumbs', 'Generate missing episode thumbnails', 'Grabs one frame with ffmpeg when no still is available (cached).')),
     h('div', { class: 'form-section' }, h('h2', null, 'Subtitle downloads'),
       h('p', { class: 'help', style: { margin: 0 } }, 'Search and download subtitles from the player (Subtitles → Search online). Needs a free API key: create an account at opensubtitles.com, then Profile → API consumers → New consumer. Username and password are optional but raise the daily download limit.'),
       field('OpenSubtitles API key', text('openSubtitlesKey', { type: 'password', autocomplete: 'off' })),
@@ -808,6 +840,25 @@ async function metadataSection() {
         field('OpenSubtitles password', text('openSubtitlesPass', { type: 'password', autocomplete: 'new-password' }))),
       field('Who can download subtitles', select(draft.subtitleDownloads, [['everyone', 'Everyone'], ['admins', 'Admins only']], (v) => { draft.subtitleDownloads = v; }),
         'Downloads use this server’s one OpenSubtitles account and its daily allowance, and are added to the file for everyone. Users can still remove subtitles they downloaded.')),
+  ]);
+  const actions = h('div', { class: 'form-section' }, h('h2', null, 'Actions'),
+    h('p', { class: 'help', style: { margin: 0 } }, 'These run now, using the saved settings. Save your changes above first.'),
+    h('div', { class: 'row wrap' },
+      h('button', { class: 'btn', type: 'button', onclick: (e) => run(e.currentTarget, () => api('/api/admin/metadata/refresh', { method: 'POST', body: { missingOnly: true } }), 'Retrying unmatched items') }, 'Retry unmatched items'),
+      h('button', { class: 'btn', type: 'button', 'aria-haspopup': 'dialog', onclick: () => unmatchedModal() }, 'Show unmatched items'),
+      h('button', { class: 'btn', type: 'button', onclick: async (e) => {
+        const btn = e.currentTarget;
+        if (await confirmDialog('Re-fetch metadata for every item? Manual matches are kept.', 'Refresh', false, 'Refresh all metadata?')) await run(btn, () => api('/api/admin/metadata/refresh', { method: 'POST', body: {} }), 'Refreshing all metadata in the background');
+      } }, 'Refresh all metadata')));
+  return h('div', { class: 'form' }, form, actions);
+}
+
+// Seek previews and intro/credits detection: background work on the media
+// files themselves. Detect now runs at once, with the saved settings.
+async function analysisSection() {
+  const tasks = await api('/api/admin/tasks').catch(() => null);
+  const introOK = tasks?.intro?.available !== false;
+  const form = await configForm(({ tg, num }) => [
     h('div', { class: 'form-section' }, h('h2', null, 'Seek previews'),
       h('p', { class: 'help', style: { margin: 0 } }, 'Thumbnails shown while hovering or dragging the seek bar. Generated in the background from keyframes only, at the lowest priority, and paused during playback (except for files in the SSD cache). About 1–3 MB per movie.'),
       tg('trickplayEnabled', 'Generate seek previews'),
@@ -824,24 +875,12 @@ async function metadataSection() {
       tg('creditsDetect', 'Detect end credits', '"Up next" then starts when the credits do, and films and last episodes get "Skip Credits".'),
       h('div', { class: 'form-grid' },
         field('Analyse the last (seconds)', num('creditsScanSecs', { min: 120, max: 1200, step: 30 }), 'At most 40% of an episode is analysed.'),
-        field('Shortest credits (seconds)', num('creditsMinSecs', { min: 5, max: 120 })))),
-    h('div', { class: 'form-section' }, h('h2', null, 'Local'),
-      tg('useLocalMetadata', 'Use local artwork & hints', 'poster.jpg / fanart.jpg / *-thumb.jpg, .plexmatch and .nfo ids.'),
-      tg('generateThumbs', 'Generate missing episode thumbnails', 'Grabs one frame with ffmpeg when no still is available (cached).')),
+        field('Shortest credits (seconds)', num('creditsMinSecs', { min: 5, max: 120 }))),
+      h('div', { class: 'row wrap' },
+        h('button', { class: 'btn', type: 'button', disabled: !introOK, 'aria-describedby': introOK ? null : 'intro-unavail', onclick: (e) => run(e.currentTarget, () => api('/api/admin/intro/scan', { method: 'POST' }), 'Intro & credits detection started') }, 'Detect intros & credits now')),
+      introOK ? h('p', { class: 'help', style: { margin: 0 } }, 'Detect now uses the saved settings: save your changes first.') : h('div', { class: 'help', id: 'intro-unavail' }, 'Intro & credits detection is unavailable: this ffmpeg has no chromaprint support.')),
   ]);
-  const introOK = tasks?.intro?.available !== false;
-  const actions = h('div', { class: 'form-section' }, h('h2', null, 'Actions'),
-    h('p', { class: 'help', style: { margin: 0 } }, 'These run now, using the saved settings. Save your changes above first.'),
-    h('div', { class: 'row wrap' },
-      h('button', { class: 'btn', type: 'button', onclick: (e) => run(e.currentTarget, () => api('/api/admin/metadata/refresh', { method: 'POST', body: { missingOnly: true } }), 'Retrying unmatched items') }, 'Retry unmatched items'),
-      h('button', { class: 'btn', type: 'button', 'aria-haspopup': 'dialog', onclick: () => unmatchedModal() }, 'Show unmatched items'),
-      h('button', { class: 'btn', type: 'button', onclick: async (e) => {
-        const btn = e.currentTarget;
-        if (await confirmDialog('Re-fetch metadata for every item? Manual matches are kept.', 'Refresh', false, 'Refresh all metadata?')) await run(btn, () => api('/api/admin/metadata/refresh', { method: 'POST', body: {} }), 'Refreshing all metadata in the background');
-      } }, 'Refresh all metadata'),
-      h('button', { class: 'btn', type: 'button', disabled: !introOK, 'aria-describedby': introOK ? null : 'intro-unavail', onclick: (e) => run(e.currentTarget, () => api('/api/admin/intro/scan', { method: 'POST' }), 'Intro & credits detection started') }, 'Detect intros & credits now')),
-    introOK ? null : h('div', { class: 'help', id: 'intro-unavail' }, 'Intro & credits detection is unavailable: this ffmpeg has no chromaprint support.'));
-  return h('div', { class: 'form' }, form, actions);
+  return form;
 }
 
 // ---------- libraries ----------
@@ -859,10 +898,18 @@ function libraryNote(l) {
 }
 
 // The list shows each library's scan progress while the scanner works on it
-// (from /api/admin/tasks) and reloads when a scan finishes.
+// (from /api/admin/tasks) and reloads when a scan finishes. The scanning
+// settings sit below it.
 async function librariesSection(ctx) {
   const tasks = await api('/api/admin/tasks').catch(() => null);
   const libs = await api('/api/admin/libraries');
+  const scanForm = await configForm(({ num, tg }) => [
+    h('div', { class: 'form-section' }, h('h2', null, 'Library scanning'),
+      h('div', { class: 'form-grid' },
+        field('Rescan every (minutes)', num('scanIntervalMin', { min: 0 }), '0 disables periodic scans. Scans only stat files, so they are cheap.'),
+        field('Probe workers', num('probeWorkers', { min: 1, max: 8 }), 'Parallel ffprobe processes for new files. 1 is best on a Pi.')),
+      tg('scanOnStartup', 'Scan on startup')),
+  ]);
   const box = h('div', { class: 'form' });
   box.appendChild(h('div', { class: 'row' }, h('div', { class: 'spacer' }),
     h('button', { class: 'btn', disabled: !libs.length, dataset: { focusKey: 'lib-scan-all' }, onclick: (e) => run(e.currentTarget, () => api('/api/admin/scan', { method: 'POST', body: {} }), 'Scanning all libraries') }, h('span', { html: icons.refresh }), 'Scan all'),
@@ -894,6 +941,7 @@ async function librariesSection(ctx) {
         } }, 'Remove'))));
   }
   box.appendChild(h('div', { class: 'help' }, 'Types: Movies (one movie per folder or file), TV Shows (Show/Season N/episodes), Mixed (auto-detects episodes by S01E01 or Season folders — good for anime folders with both series and films).'));
+  box.appendChild(scanForm);
   const show = (s) => {
     for (const [name, { meta, live }] of status) {
       const on = !!s?.running && s.library === name;
@@ -904,13 +952,14 @@ async function librariesSection(ctx) {
   };
   show(tasks?.scan);
   // A scan that finished since this render (or one seen running that has
-  // stopped) changes counts and "scanned" times: re-render in place.
+  // stopped) changes counts and "scanned" times: re-render in place, once
+  // the scanning settings have no unsaved edits.
   let seen = tasks?.scan || null;
   const banner = staleBanner(box);
   every(ctx, 2000, async () => {
     const { scan: s } = await api('/api/admin/tasks');
     if (!ctx.isCurrent()) return;
-    if (seen && !s.running && (seen.running || s.finishedAt !== seen.finishedAt)) { refreshSoft(); return; }
+    if (seen && !s.running && (seen.running || s.finishedAt !== seen.finishedAt)) { if (!scanForm.dirty()) refreshSoft(); return; }
     seen = s;
     show(s);
   }, banner.hooks());
@@ -1212,8 +1261,8 @@ async function devicesSection() {
   return h('div', { class: 'form' }, h('div', { class: 'form-section' }, h('h2', null, 'Signed-in devices'),
     h('div', { class: 'table-wrap' }, h('table', { class: 'tbl stack' }, h('tr', null, h('th', null, 'User'), h('th', null, 'Client'), h('th', null, 'IP'), h('th', null, 'Signed in'), h('th', null, 'Last seen'), actionsTh()),
       devs.map((d) => h('tr', null, h('td', null, h('b', null, d.userName)),
-        h('td', null, d.client, d.current ? [' ', h('span', { class: 'chip this-device' }, 'This device')] : null),
-        h('td', { class: 'mono' }, d.ip), h('td', { 'data-label': 'Signed in' }, fmtDate(d.created)), h('td', { 'data-label': 'Last seen' }, timeAgo(d.lastSeen)),
+        h('td', { class: 'nowrap' }, d.client, d.current ? [' ', h('span', { class: 'chip this-device' }, 'This device')] : null),
+        h('td', { class: 'mono' }, d.ip), h('td', { class: 'nowrap', 'data-label': 'Signed in', title: fmtDate(d.created) }, fmtDateShort(d.created)), h('td', { class: 'nowrap', 'data-label': 'Last seen' }, timeAgo(d.lastSeen)),
         h('td', null, h('div', { class: 'row wrap tbl-actions' }, h('button', { class: 'btn sm danger', dataset: { focusKey: `device-${d.prefix}` },
           'aria-label': d.current ? 'Sign out here (this device)' : `Sign out ${d.userName} on ${d.client} (${d.ip})`, onclick: (e) => signOut(e, d) }, d.current ? 'Sign out here' : 'Sign out')))))))));
 }

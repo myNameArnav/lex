@@ -1,7 +1,7 @@
 // Track choices made in the player, remembered per show (or per movie) on
 // this device: the audio language, subtitle language and mode, and subtitle
 // timing. Picking Japanese audio with English subtitles for one anime applies
-// to its next episodes, without changing what Settings → Playback says for
+// to its next episodes, without changing what Settings → Audio & subtitles says for
 // everything else. Kept free of the DOM so it can be tested on its own.
 
 const KEY = 'lex.tracks';

@@ -1598,8 +1598,8 @@ function programSub(it) {
 // The guide: each channel's program now (the art tunes in) and what's next.
 // It refreshes every minute; the time left is relative to the server clock.
 async function tvView(ctx) {
-  const off = () => emptyState({ title: 'Live TV is off', text: state.me.isAdmin ? 'Turn it on in Settings › Server.' : 'Ask your server admin to turn it on.',
-      actions: [state.me.isAdmin ? h('a', { class: 'btn primary', href: '#/settings/server' }, 'Open settings') : h('a', { class: 'btn primary', href: '#/' }, 'Go home')] });
+  const off = () => emptyState({ title: 'Live TV is off', text: state.me.isAdmin ? 'Turn it on in Settings › Live TV.' : 'Ask your server admin to turn it on.',
+      actions: [state.me.isAdmin ? h('a', { class: 'btn primary', href: '#/settings/livetv' }, 'Open settings') : h('a', { class: 'btn primary', href: '#/' }, 'Go home')] });
   if (!state.caps.liveTv) return off();
   let data;
   try { data = await api('/api/tv'); } catch (e) {

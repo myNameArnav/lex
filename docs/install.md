@@ -52,7 +52,7 @@ and device group IDs for your host first.
 For remote access, put lex behind an HTTPS reverse proxy or a VPN. If you
 enable **Trust reverse-proxy headers**, list every proxy in **Trusted proxy
 peers**. Clients outside **Local networks** get the **Remote bitrate limit**.
-Settings → Server → **Sonarr & Radarr** connects lex's rescan webhook with one
+Settings → **Sonarr & Radarr** connects lex's rescan webhook with one
 click (lex adds it through their API, trying its addresses until the app's own
 Test passes). The webhook URL carries its own token; keep it private.
 
