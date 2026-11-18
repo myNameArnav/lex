@@ -7,21 +7,29 @@
 
 import { h } from './ui.js';
 
-// [id, label, icon, adminOnly]
+// [id, label, icon, group]. Pages show in the side column in this order,
+// under their group's heading. Everything outside "You" is admin-only.
+export const GROUPS = ['You', 'Library', 'Streaming', 'Server'];
 export const PAGES = [
-  ['preferences', 'Playback', 'sliders', false],
-  ['account', 'Account', 'user', false],
-  ['server', 'Server', 'gear', true],
-  ['transcoding', 'Transcoding', 'cpu', true],
-  ['metadata', 'Metadata', 'film', true],
-  ['cache', 'SSD cache', 'drive', true],
-  ['backups', 'Backups', 'archive', true],
-  ['libraries', 'Libraries', 'library', true],
-  ['users', 'Users', 'users', true],
-  ['devices', 'Devices', 'devices', true],
-  ['logs', 'Tasks & logs', 'log', true],
-  ['about', 'About', 'info', true],
-];
+  ['preferences', 'Playback', 'sliders', 'You'],
+  ['subtitles', 'Audio & subtitles', 'cc', 'You'],
+  ['interface', 'Interface', 'keyboard', 'You'],
+  ['account', 'Account', 'user', 'You'],
+  ['libraries', 'Libraries', 'library', 'Library'],
+  ['metadata', 'Metadata', 'film', 'Library'],
+  ['analysis', 'Previews & intros', 'eye', 'Library'],
+  ['arr', 'Sonarr & Radarr', 'link', 'Library'],
+  ['livetv', 'Live TV', 'broadcast', 'Library'],
+  ['transcoding', 'Transcoding', 'cpu', 'Streaming'],
+  ['network', 'Network', 'globe', 'Streaming'],
+  ['cache', 'SSD cache', 'drive', 'Streaming'],
+  ['server', 'General', 'gear', 'Server'],
+  ['users', 'Users', 'users', 'Server'],
+  ['devices', 'Devices', 'devices', 'Server'],
+  ['backups', 'Backups', 'archive', 'Server'],
+  ['logs', 'Tasks & logs', 'log', 'Server'],
+  ['about', 'About', 'info', 'Server'],
+].map(([id, label, icon, group]) => [id, label, icon, group !== 'You', group]);
 
 // Per page: [section heading, section keywords, [[label, keywords], ...]].
 // A section listed with no fields is still a result of its own. A section
@@ -33,12 +41,24 @@ const INDEX = {
       ['Streaming quality', 'bitrate resolution max quality original 1080p 720p'],
       ['Playback method', 'direct play direct stream remux transcode automatic stutter'],
     ]],
+    ['Player', 'up next binge', [
+      ['Autoplay next episode', 'up next binge continue'],
+      ['Autoplay countdown', 'up next timer'],
+      ['Skip intros automatically', 'intro opening skip intro'],
+      ['Skip credits automatically', 'credits ending outro'],
+      ['Skip back', 'rewind seek jump'],
+      ['Skip forward', 'fast forward seek jump'],
+      ['Show stats for nerds by default', 'debug codec bitrate dropped frames overlay info'],
+    ]],
     ['Buffering', 'buffer memory', [
       ['Buffer ahead', 'preload read ahead memory'],
       ['Keep behind playhead', 'back buffer rewind memory'],
       ['Progress update interval', 'resume position heartbeat save'],
     ]],
-    ['Audio & subtitles', 'language captions per show remembered choices forget', [
+    ['Technical: this browser’s codecs', 'codec support hevc h265 av1 hdr capabilities compatibility', []],
+  ],
+  subtitles: [
+    ['Languages', 'language captions per show remembered choices forget dub', [
       ['Preferred audio language', 'dub dubbed audio track language'],
       ['Subtitles', 'captions cc forced foreign'],
       ['Subtitle language', 'captions cc'],
@@ -57,20 +77,14 @@ const INDEX = {
       ['Background color', 'captions colour box'],
       ['Background opacity', 'captions transparency box'],
     ]],
+  ],
+  interface: [
     ['Appearance', 'look colours colors', [
       ['Theme', 'dark light mode system appearance night day colour color scheme'],
     ]],
-    ['Player', '', [
-      ['Autoplay next episode', 'up next binge continue'],
-      ['Skip intros automatically', 'intro opening skip intro'],
-      ['Skip credits automatically', 'credits ending outro'],
-      ['Show stats for nerds by default', 'debug codec bitrate dropped frames overlay info'],
+    ['Keyboard', 'shortcuts hotkeys', [
       ['Single-key shortcuts', 'keyboard hotkeys keys speech'],
-      ['Autoplay countdown', 'up next timer'],
-      ['Skip back', 'rewind seek jump'],
-      ['Skip forward', 'fast forward seek jump'],
     ]],
-    ['Technical: this browser’s codecs', 'codec support hevc h265 av1 hdr capabilities compatibility', []],
   ],
   account: [
     ['Password', 'account sign in login', [
@@ -80,28 +94,60 @@ const INDEX = {
     ]],
     ['Your devices', 'sessions sign out logout devices lost phone tv everywhere', []],
   ],
-  server: [
-    ['General', '', [['Server name', 'title name branding']]],
-    ['Live TV', 'channels tv broadcast', [
-      ['Enable Live TV', 'channels tv broadcast'],
-      ['Automatic channels', 'genre channels hide'],
-    ]],
+  libraries: [
     ['Library scanning', 'rescan', [
       ['Rescan every (minutes)', 'scan interval periodic schedule'],
       ['Probe workers', 'ffprobe parallel threads'],
       ['Scan on startup', 'boot start'],
     ]],
-    ['Sonarr & Radarr', 'webhook import rescan connect arr', [
+  ],
+  metadata: [
+    ['Providers', 'tmdb tvmaze api key', [
+      ['TMDB API key or read access token', 'tmdb themoviedb api key token v3 v4'],
+      ['Language', 'locale metadata language en-us'],
+      ['Use TMDB', 'tmdb themoviedb'],
+      ['Use TVmaze for shows (no key)', 'tvmaze shows'],
+    ]],
+    ['Local', 'nfo artwork', [
+      ['Use local artwork & hints', 'nfo poster fanart plexmatch artwork'],
+      ['Generate missing episode thumbnails', 'stills thumbnails ffmpeg'],
+    ]],
+    ['Subtitle downloads', 'opensubtitles subtitles download', [
+      ['OpenSubtitles API key', 'opensubtitles api key'],
+      ['OpenSubtitles username', 'opensubtitles account login'],
+      ['OpenSubtitles password', 'opensubtitles account login'],
+      ['Who can download subtitles', 'opensubtitles admins only everyone users allowance quota permission'],
+    ]],
+    ['Actions', 'refresh metadata retry unmatched rematch', []],
+  ],
+  analysis: [
+    ['Seek previews', 'trickplay thumbnails scrubbing', [
+      ['Generate seek previews', 'trickplay thumbnails scrubbing hover'],
+      ['Interval (seconds)', 'trickplay thumbnails'],
+      ['Thumbnail width (px)', 'trickplay thumbnails size'],
+    ]],
+    ['Intro & credits detection', 'intro credits skip chromaprint fingerprint detect now', [
+      ['Detect intros', 'skip intro opening chromaprint'],
+      ['Analyse the first (seconds)', 'intro'],
+      ['Shortest intro (seconds)', 'intro minimum'],
+      ['Longest intro (seconds)', 'intro maximum'],
+      ['Detect end credits', 'credits ending outro'],
+      ['Analyse the last (seconds)', 'credits'],
+      ['Shortest credits (seconds)', 'credits minimum'],
+    ]],
+  ],
+  arr: [
+    ['Sonarr & Radarr', 'webhook import rescan connect arr movies metadata', [
+      ['Radarr URL', 'radarr movies'],
+      ['Radarr API key', 'radarr api key'],
       ['Sonarr URL', 'sonarr tv shows webhook'],
       ['Sonarr API key', 'sonarr api key'],
     ]],
-    ['Playback history', '', [['Keep history for (days)', 'retention delete history stats']]],
-    ['Network & remote access', 'remote internet lan proxy https', [
-      ['Remote bitrate limit (kbps)', 'bandwidth internet upload speed remote'],
-      ['Stream write buffer (KB)', 'network buffer'],
-      ['Local networks (CIDR, comma separated)', 'lan subnet ip range local'],
-      ['Trust reverse-proxy headers', 'proxy nginx caddy traefik x-forwarded-for https'],
-      ['Trusted proxy peers (CIDR, comma separated)', 'proxy ip nginx caddy'],
+  ],
+  livetv: [
+    ['Live TV', 'channels tv broadcast', [
+      ['Enable Live TV', 'channels tv broadcast'],
+      ['Automatic channels', 'genre channels hide'],
     ]],
   ],
   transcoding: [
@@ -132,40 +178,18 @@ const INDEX = {
       ['Remux in the browser', 'mkv webm client'],
     ]],
   ],
-  metadata: [
-    ['Providers', 'tmdb tvmaze radarr api key', [
-      ['TMDB API key or read access token', 'tmdb themoviedb api key token v3 v4'],
-      ['Language', 'locale metadata language en-us'],
-      ['Use TMDB', 'tmdb themoviedb'],
-      ['Use TVmaze for shows (no key)', 'tvmaze shows'],
-      ['Radarr URL', 'radarr movies'],
-      ['Radarr API key', 'radarr api key'],
+  network: [
+    ['Remote access', 'remote internet bandwidth', [
+      ['Remote bitrate limit (kbps)', 'bandwidth internet upload speed remote'],
+      ['Local networks (CIDR, comma separated)', 'lan subnet ip range local'],
     ]],
-    ['Subtitle downloads', 'opensubtitles subtitles download', [
-      ['OpenSubtitles API key', 'opensubtitles api key'],
-      ['OpenSubtitles username', 'opensubtitles account login'],
-      ['OpenSubtitles password', 'opensubtitles account login'],
-      ['Who can download subtitles', 'opensubtitles admins only everyone users allowance quota permission'],
+    ['Reverse proxy', 'proxy https nginx caddy traefik', [
+      ['Trust reverse-proxy headers', 'proxy nginx caddy traefik x-forwarded-for https'],
+      ['Trusted proxy peers (CIDR, comma separated)', 'proxy ip nginx caddy'],
     ]],
-    ['Seek previews', 'trickplay thumbnails scrubbing', [
-      ['Generate seek previews', 'trickplay thumbnails scrubbing hover'],
-      ['Interval (seconds)', 'trickplay thumbnails'],
-      ['Thumbnail width (px)', 'trickplay thumbnails size'],
+    ['Advanced', 'network buffer', [
+      ['Stream write buffer (KB)', 'network buffer'],
     ]],
-    ['Intro & credits detection', 'intro credits skip chromaprint fingerprint', [
-      ['Detect intros', 'skip intro opening chromaprint'],
-      ['Analyse the first (seconds)', 'intro'],
-      ['Shortest intro (seconds)', 'intro minimum'],
-      ['Longest intro (seconds)', 'intro maximum'],
-      ['Detect end credits', 'credits ending outro'],
-      ['Analyse the last (seconds)', 'credits'],
-      ['Shortest credits (seconds)', 'credits minimum'],
-    ]],
-    ['Local', 'nfo artwork', [
-      ['Use local artwork & hints', 'nfo poster fanart plexmatch artwork'],
-      ['Generate missing episode thumbnails', 'stills thumbnails ffmpeg'],
-    ]],
-    ['Actions', 'refresh metadata retry unmatched rematch detect now', []],
   ],
   cache: [
     ['SSD cache', 'ssd cache disk hard drive', [
@@ -181,15 +205,10 @@ const INDEX = {
     ['Status', 'cache usage', []],
     ['Cached files', 'clear cache remove', []],
   ],
-  backups: [
-    ['Database backups', 'backup restore database snapshot', [
-      ['Back up daily', 'schedule automatic'],
-      ['Backup folder', 'path directory disk'],
-      ['Backups to keep', 'retention count'],
-    ]],
-    ['Saved backups', 'download delete restore back up now', []],
+  server: [
+    ['General', '', [['Server name', 'title name branding']]],
+    ['Playback history', 'stats', [['Keep history for (days)', 'retention delete history stats']]],
   ],
-  libraries: [],
   users: [
     ['Users', 'accounts admin role library access reset password delete', []],
     ['Add user', 'create account new user', [
@@ -199,6 +218,14 @@ const INDEX = {
     ]],
   ],
   devices: [['Signed-in devices', 'sessions sign out logout clients', []]],
+  backups: [
+    ['Database backups', 'backup restore database snapshot', [
+      ['Back up daily', 'schedule automatic'],
+      ['Backup folder', 'path directory disk'],
+      ['Backups to keep', 'retention count'],
+    ]],
+    ['Saved backups', 'download delete restore back up now', []],
+  ],
   logs: [
     ['Background tasks', 'scan now tasks status', []],
     ['Log', 'logs errors debug server log report diagnostics bug download', []],
@@ -213,6 +240,8 @@ const INDEX = {
 
 const PAGE_KEYWORDS = {
   libraries: 'library folders media add library scan movies tv shows path',
+  interface: 'look feel ui',
+  network: 'lan remote proxy internet',
 };
 
 // Each entry: { page, pageLabel, section, label, keywords, admin }. Pages and

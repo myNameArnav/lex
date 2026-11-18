@@ -1,4 +1,4 @@
-// Light/dark theme (Settings → Playback → Theme, per device). "System"
+// Light/dark theme (Settings → Interface → Theme, per device). "System"
 // leaves data-theme off so the CSS follows prefers-color-scheme; Dark and
 // Light set it. The browser bar's colour (theme-color) follows. The player
 // is dark in every theme (see .player in app.css).

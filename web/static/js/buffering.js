@@ -51,7 +51,7 @@ export function bufferingCause({ needKbps = 0, bandwidth = 0, remote = false, jo
       ? 'Your connection to the server is too slow for this quality.'
       : "The server's network or disk can't keep up with this quality.";
     let hint;
-    if (canTranscode) hint = 'Choose a lower quality in Settings → Quality.';
+    if (canTranscode) hint = 'Choose a lower quality in Settings → Playback.';
     else if (isAdmin) hint = 'A lower quality needs transcoding, which is turned off in Settings → Transcoding.';
     else hint = "A lower quality isn't available: this server doesn't transcode.";
     return { kind: 'network', text: `${arriving} ${where}`, hint };

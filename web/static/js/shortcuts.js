@@ -1,6 +1,6 @@
 // App-wide keyboard shortcuts and the "?" help sheet. The player handles its
 // own keys while it's open; this module only adds the help sheet there.
-// Single-key shortcuts can be turned off (Settings > Playback) for speech
+// Single-key shortcuts can be turned off (Settings > Interface) for speech
 // input and accidental presses; Ctrl/⌘ shortcuts and the player keys stay.
 
 import { h, modal } from './ui.js';
@@ -53,7 +53,7 @@ export function showShortcuts() {
   // join: '+' held together, 'then' pressed in turn, '/' alternatives.
   const keys = (ks, join = '/') => h('span', { class: 'keys' }, ks.map((k, i) => [i ? h('span', { class: 'join' }, join) : null, h('kbd', null, k)]));
   const body = [
-    !single && !inPlayer ? h('p', { class: 'help', style: { margin: 0 } }, 'Single-key shortcuts are off (Settings › Playback), so only Ctrl/⌘ shortcuts work outside the player.') : null,
+    !single && !inPlayer ? h('p', { class: 'help', style: { margin: 0 } }, 'Single-key shortcuts are off (Settings › Interface), so only Ctrl/⌘ shortcuts work outside the player.') : null,
     h('div', { class: 'shortcuts' }, sections.map(([title, rows]) => h('section', null,
       h('h3', null, title),
       h('dl', null, rows.map(([ks, what, join]) => [h('dt', null, keys(ks, join)), h('dd', null, what)]))))),
