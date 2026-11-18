@@ -391,6 +391,9 @@ func TestMinifiedUIServesTheSameGraph(t *testing.T) {
 			t.Errorf("minified %s lost %q", p, want)
 		}
 	}
+	if len(min.imports) == 0 || min.static[importManifest] != nil {
+		t.Error("the import manifest must be read, and not served")
+	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", min.versioned("/js/app.js.map"), nil))
 	if w.Code != 200 || w.Header().Get("Content-Type") != "application/json" || !strings.Contains(w.Header().Get("Cache-Control"), "immutable") {

@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html"
 	"io"
 	"io/fs"
@@ -59,7 +60,8 @@ type Server struct {
 	ListenAddr string // -addr, used to suggest LAN webhook URLs
 
 	static    map[string]*asset
-	buildID   string // content hash of the UI files; assets are also served under /b/<buildID>/
+	imports   map[string][]string // a minified build's import manifest (see staticImports)
+	buildID   string              // content hash of the UI files; assets are also served under /b/<buildID>/
 	loginMu   sync.Mutex
 	loginFail map[string]*failWindow
 	thumbSem  chan struct{}
@@ -503,6 +505,9 @@ func (s *Server) loadStatic() error {
 	if err != nil {
 		return err
 	}
+	if err := s.loadImportManifest(); err != nil {
+		return err
+	}
 	s.buildID = s.computeBuildID()
 	s.preloadModules()
 	s.versionPages()
@@ -562,10 +567,8 @@ var (
 	// entryModuleRe finds the page's module script; staticImportRe the
 	// specifier of each static import (or re-export) in a module. Dynamic
 	// import() calls are left alone: those load on demand.
-	entryModuleRe = regexp.MustCompile(`<script type="module" src="([^"]+)"></script>`)
-	// A statement starts a line, or follows ; or } (the release image's
-	// minified modules put them all on one line).
-	staticImportRe = regexp.MustCompile(`(?m)(?:^|[;}])\s*(?:import|export)\s*(?:[\w$*{][^'";]*?from\s*)?['"]([^'"]+)['"]`)
+	entryModuleRe  = regexp.MustCompile(`<script type="module" src="([^"]+)"></script>`)
+	staticImportRe = regexp.MustCompile(`(?m)^\s*(?:import|export)\s+(?:[^'";]*?\s+from\s+)?['"]([^'"]+)['"]`)
 )
 
 // moduleGraph lists the modules entry imports statically, directly or
@@ -578,8 +581,7 @@ func (s *Server) moduleGraph(entry string) []string {
 		if a == nil {
 			continue
 		}
-		for _, m := range staticImportRe.FindAllSubmatch(a.body, -1) {
-			spec := string(m[1])
+		for _, spec := range s.staticImports(queue[0], a.body) {
 			if !strings.HasPrefix(spec, "/") {
 				spec = path.Join(path.Dir(queue[0]), spec)
 			}
@@ -590,6 +592,44 @@ func (s *Server) moduleGraph(entry string) []string {
 			out = append(out, spec)
 			queue = append(queue, spec)
 		}
+	}
+	return out
+}
+
+// importManifest is written by the release image's UI build
+// (internal/uibuild), which minifies each module onto one line: it lists the
+// static imports of every /js module as esbuild parsed them.
+const importManifest = "/js/imports.json"
+
+// loadImportManifest takes the manifest out of the served files, if the
+// build wrote one.
+func (s *Server) loadImportManifest() error {
+	a := s.static[importManifest]
+	if a == nil {
+		return nil
+	}
+	delete(s.static, importManifest)
+	var m map[string][]string
+	if err := json.Unmarshal(a.body, &m); err != nil {
+		return fmt.Errorf("%s: %w", importManifest, err)
+	}
+	s.imports = map[string][]string{}
+	for file, specs := range m {
+		s.imports["/js/"+file] = specs
+	}
+	return nil
+}
+
+// staticImports lists the specifiers module p imports statically (or
+// re-exports from): from the manifest in a minified build, otherwise read
+// from the source, where each such statement starts a line.
+func (s *Server) staticImports(p string, body []byte) []string {
+	if specs, ok := s.imports[p]; ok {
+		return specs
+	}
+	var out []string
+	for _, m := range staticImportRe.FindAllSubmatch(body, -1) {
+		out = append(out, string(m[1]))
 	}
 	return out
 }
