@@ -849,10 +849,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .dash-live { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
 .dash-live > * { min-width: 0; }
 .dash-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
-.dash-health { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text2); min-width: 0; }
-.dash-health .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--good); }
-.dash-health.warn { color: var(--warn); }
-.dash-health.warn .dot { background: var(--warn); }
+.dash-health { margin-left: auto; font-size: 13px; color: var(--text2); min-width: 0; text-align: right; }
+.dash-health.warn { color: var(--warn); font-weight: 600; }
 .bar-note { font-size: .9em; }
 .dcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
 .dcard { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }

@@ -1589,7 +1589,7 @@ async function liveTab(ctx) {
     // One line on whether the server is coping, in words.
     const strains = r.strains || [];
     health.className = `dash-health${strains.length ? ' warn' : ''}`;
-    put(health, h('i', { class: 'dot', 'aria-hidden': 'true' }), strains.length ? strains.map((x) => x.text).join(' ') : 'Running normally');
+    setText(health, strains.length ? strains.map((x) => x.text).join(' ') : 'Running normally');
     card(cards.cpu, `${n.cpu.toFixed(0)}%`,
       [[`${s.numCpu} cores`, s.freqMhz ? `${Math.round(s.freqMhz)} MHz` : '', n.temp ? `${n.temp.toFixed(0)}°C` : ''].filter(Boolean).join(' · '),
         flags ? h('span', { class: 'warn' }, ` · ${flags}`) : ''],
