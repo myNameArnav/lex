@@ -162,7 +162,7 @@ test('toasts are a live region, capitalised, deduplicated, keyed and capped', as
   ui.toast('database is locked', 'error');
   const err = box.children.at(-1);
   assert.equal(err.getAttribute('role'), 'alert');
-  assert.equal(err.children[1].getAttribute('aria-label'), 'Dismiss');
+  assert.ok(err.children.some((c) => c.getAttribute('aria-label') === 'Dismiss'), 'errors can be dismissed');
   assert.equal(timers.at(-1).ms, 7000);
   ui.toast('fourth');
   assert.deepEqual(toastTexts(dom), ['Subtitle timing +0.2s', 'Database is locked', 'Fourth'], 'at most three, oldest dropped');

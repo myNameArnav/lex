@@ -678,12 +678,18 @@ a.person:focus-visible { outline-offset: 2px; }
 @keyframes fade { from { opacity: 0 } to { opacity: 1 } }
 /* Toasts never take taps: only an error toast's close button does. */
 .toasts { position: fixed; bottom: calc(20px + var(--sab)); left: 50%; transform: translateX(-50%); z-index: 1000; display: grid; justify-items: center; gap: 8px; width: max-content; max-width: calc(100vw - 24px); pointer-events: none; }
-.toast { display: flex; align-items: center; gap: 10px; background: var(--bg4); border: 1px solid var(--line); padding: 10px 16px; border-radius: 10px; box-shadow: var(--shadow); animation: fade .2s; max-width: 100%; pointer-events: none; }
-.toast.ok { border-left: 3px solid var(--good); }
-.toast.error { border-left: 3px solid var(--bad); }
-.toast .toast-x { pointer-events: auto; flex: none; width: 30px; height: 30px; margin: -6px -10px -6px 0; display: grid; place-items: center; border: 0; border-radius: 6px; background: none; color: var(--text2); cursor: pointer; }
-.toast .toast-x:hover { background: var(--hover-strong); color: var(--text); }
+.toast { display: flex; align-items: center; gap: 9px; max-width: min(100%, 520px); padding: 8px 16px; border-radius: 18px; background: var(--text); color: var(--bg); font-size: 14px; font-weight: 500; line-height: 1.35; box-shadow: 0 6px 20px rgba(0, 0, 0, .28); animation: toast-in .24s cubic-bezier(.2, .8, .25, 1); pointer-events: none; }
+/* A status dot carries the kind: a check for done, ! for a problem. */
+.toast:is(.ok, .error) { padding-left: 9px; }
+.toast .toast-ic { order: -1; flex: none; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; color: var(--bg); }
+.toast .toast-ic svg { width: 12px; height: 12px; stroke-width: 3; }
+.toast.ok .toast-ic { background: var(--good); }
+.toast.error .toast-ic { background: var(--bad); }
+.toast .toast-x { pointer-events: auto; flex: none; width: 26px; height: 26px; margin: -4px -10px -4px -2px; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; color: inherit; opacity: .6; cursor: pointer; }
+.toast .toast-x:hover { opacity: 1; background: color-mix(in srgb, currentColor 12%, transparent); }
 .toast .toast-x svg { width: 14px; height: 14px; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px) scale(.97); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: fade .2s; } }
 /* Only the page's own stack: in a phone dialog it is pinned to the top. */
 body:has(.save-bar) > .toasts { bottom: calc(80px + var(--sab)); }
 /* In the player: under the title bar, clear of the seek bar and toolbar. */

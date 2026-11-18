@@ -272,7 +272,8 @@ export function toast(msg, kind = '', { key, ms } = {}) {
   t._msg = msg;
   t.className = `toast ${kind}`;
   if (kind === 'error') t.setAttribute('role', 'alert'); else t.removeAttribute('role');
-  t.replaceChildren(h('span', null, msg));
+  const ic = kind === 'ok' ? icons.check : kind === 'error' ? icons.alert : null;
+  t.replaceChildren(...[h('span', null, msg), ic && h('span', { class: 'toast-ic', 'aria-hidden': 'true', html: ic })].filter(Boolean)); // the icon shows first (CSS order)
   if (kind === 'error') t.appendChild(h('button', { class: 'toast-x', type: 'button', 'aria-label': 'Dismiss', html: icons.close, onclick: () => dropToast(t) }));
   t._timer = setTimeout(() => dropToast(t), dur);
 }
@@ -534,6 +535,7 @@ export const icons = {
   close: svg('<path d="M18 6 6 18M6 6l12 12"/>'),
   back: svg('<path d="M19 12H5M12 19l-7-7 7-7"/>'),
   check: svg('<path d="M20 6 9 17l-5-5"/>'),
+  alert: svg('<path d="M12 5v9M12 19h.01"/>'),
   heart: svg('<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/>'),
   heartFill: svg('<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/>', true),
   search: svg('<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>'),
