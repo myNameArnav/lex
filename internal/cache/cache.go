@@ -39,13 +39,14 @@ type Entry struct {
 }
 
 type Job struct {
-	FileID  int64   `json:"fileId"`
-	Name    string  `json:"name"`
-	Size    int64   `json:"size"`
-	Done    int64   `json:"done"`
-	Speed   float64 `json:"speed"` // bytes/s
-	Reason  string  `json:"reason"`
-	Started int64   `json:"started"`
+	FileID  int64         `json:"fileId"`
+	Name    string        `json:"name"`
+	Size    int64         `json:"size"`
+	Done    int64         `json:"done"`
+	Speed   float64       `json:"speed"` // bytes/s
+	Reason  string        `json:"reason"`
+	Started int64         `json:"started"`
+	paused  time.Duration // spent waiting for playback (yield)
 }
 
 type Status struct {
@@ -85,6 +86,11 @@ type Cache struct {
 	// OnCached, if set, is called (from the copy worker) once a file's
 	// copy is complete.
 	OnCached func(fileID int64)
+	// Contended, if set, reports that playback of another file than fileID
+	// is waiting on the disk; copying fileID pauses meanwhile, since it
+	// reads from the same slow drive. The copy of the file being played
+	// keeps going: it is what moves that playback off the drive.
+	Contended func(fileID int64) bool
 }
 
 // copyInfo is a complete cached copy and the source it was made from: it
@@ -497,8 +503,7 @@ func (c *Cache) copy(ctx context.Context, job *Job) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	dst := filepath.Join(dir, fmt.Sprintf("%d%s", f.ID, strings.ToLower(filepath.Ext(f.Path))))
-	tmp := dst + ".part"
+	dst, tmp := c.copyPaths(f)
 	src, err := os.Open(f.Path)
 	if err != nil {
 		return err
@@ -540,7 +545,11 @@ func (c *Cache) copy(ctx context.Context, job *Job) error {
 	c.ready[f.ID] = copyInfo{path: dst, size: f.Size, mtime: f.Mtime}
 	c.mu.Unlock()
 	secs := time.Since(start).Seconds()
-	c.log.Infof("cache: cached %s in %.0fs (%.1f MB/s)", job.Name, secs, float64(f.Size)/1e6/max(secs, 0.001))
+	note := ""
+	if job.paused > 0 {
+		note = fmt.Sprintf(", paused %.0fs for playback", job.paused.Seconds())
+	}
+	c.log.Infof("cache: cached %s in %.0fs (%.1f MB/s%s)", job.Name, secs, float64(f.Size)/1e6/max(secs-job.paused.Seconds(), 0.001), note)
 	return nil
 }
 
@@ -554,14 +563,17 @@ func (c *Cache) copyLimited(ctx context.Context, dst io.Writer, src io.Reader, j
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if err := c.yield(ctx, job); err != nil {
+			return err
+		}
 		n, rerr := src.Read(buf)
 		if n > 0 {
 			if _, err := dst.Write(buf[:n]); err != nil {
 				return err
 			}
 			done += int64(n)
-			elapsed := time.Since(start).Seconds()
 			c.mu.Lock()
+			elapsed := time.Since(start).Seconds() - job.paused.Seconds()
 			job.Done = done
 			if elapsed > 0 {
 				job.Speed = float64(done) / elapsed
@@ -587,6 +599,34 @@ func (c *Cache) copyLimited(ctx context.Context, dst io.Writer, src io.Reader, j
 			return rerr
 		}
 	}
+}
+
+// yield waits while playback of another file is waiting on the disk
+// (Contended), so the copy doesn't compete with it for the same drive. The first pause of a
+// job is logged; the total shows in the "cached" line.
+func (c *Cache) yield(ctx context.Context, job *Job) error {
+	if c.Contended == nil || !c.Contended(job.FileID) {
+		return nil
+	}
+	from := time.Now()
+	if job.paused == 0 {
+		c.log.Infof("cache: pausing the copy of %s at %d of %d MB while another playback waits on the disk", job.Name, job.Done>>20, job.Size>>20)
+	}
+	defer func() {
+		c.mu.Lock()
+		job.paused += time.Since(from)
+		c.mu.Unlock()
+	}()
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for c.Contended(job.FileID) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+		}
+	}
+	return nil
 }
 
 // OnDisable drops queued work when the cache is switched off.

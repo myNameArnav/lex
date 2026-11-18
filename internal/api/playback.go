@@ -365,18 +365,13 @@ func (s *Server) direct(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 403, "this file is over the remote streaming limit")
 		return
 	}
-	fh, err := os.Open(s.Cache.Resolve(f))
+	// The cached copy, or as much of it as is copied so far.
+	fh, err := s.Cache.OpenPlayback(f)
 	if err != nil {
 		writeErr(w, 404, "file missing on disk")
 		return
 	}
 	defer fh.Close()
-	st, err := fh.Stat()
-	if err != nil {
-		s.Log.Errorf("stat file %d: %v", f.ID, err)
-		writeErr(w, 500, "could not read media file")
-		return
-	}
 	// The player's own remux reads the file here too (via=remux): a session
 	// re-opened after a server restart should say so.
 	method := "direct"
@@ -416,10 +411,10 @@ func (s *Server) direct(w http.ResponseWriter, r *http.Request) {
 			case <-done:
 			}
 		}()
-		http.ServeContent(cw, r, "", st.ModTime(), &endedReader{ReadSeeker: src, ended: ended})
+		http.ServeContent(cw, r, "", fh.ModTime(), &endedReader{ReadSeeker: src, ended: ended})
 		return
 	}
-	http.ServeContent(cw, r, "", st.ModTime(), src)
+	http.ServeContent(cw, r, "", fh.ModTime(), src)
 }
 
 // endedReader fails reads once its session has ended.
