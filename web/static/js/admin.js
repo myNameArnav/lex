@@ -1400,7 +1400,9 @@ async function logsSection(ctx) {
   await renderTasks();
   await renderLogs();
   const page = h('div', { class: 'form' }, tasks,
-    h('div', { class: 'form-section' }, h('div', { class: 'row' }, h('h2', { class: 'grow' }, 'Log'), h('button', { class: 'btn sm', type: 'button', onclick: copy }, 'Copy log')), logBox));
+    h('div', { class: 'form-section' }, h('div', { class: 'row' }, h('h2', { class: 'grow' }, 'Log'),
+        h('a', { class: 'btn sm', href: '/api/admin/report', download: '', title: 'System state, load over the last hour, settings and this log, with names, titles, paths and addresses hidden' }, 'Download report'),
+        h('button', { class: 'btn sm', type: 'button', onclick: copy }, 'Copy log')), logBox));
   const banner = staleBanner(page);
   every(ctx, 2000, renderTasks, banner.hooks('tasks'));
   every(ctx, 3000, renderLogs, banner.hooks('logs'));

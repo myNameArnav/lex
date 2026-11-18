@@ -200,6 +200,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("GET /api/admin/history", a(s.history))
 	mux.Handle("DELETE /api/admin/history", a(s.clearHistory))
 	mux.Handle("GET /api/admin/logs", a(s.logs))
+	mux.Handle("GET /api/admin/report", a(s.report))
 	mux.Handle("POST /api/admin/cache/clear", a(s.clearCache))
 	mux.Handle("GET /api/admin/backups", a(s.listBackups))
 	mux.Handle("POST /api/admin/backups", a(s.createBackup))

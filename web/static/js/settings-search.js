@@ -201,7 +201,7 @@ const INDEX = {
   devices: [['Signed-in devices', 'sessions sign out logout clients', []]],
   logs: [
     ['Background tasks', 'scan now tasks status', []],
-    ['Log', 'logs errors debug server log', []],
+    ['Log', 'logs errors debug server log report diagnostics bug download', []],
   ],
   about: [
     ['AI disclosure', 'llm ai', []],

@@ -377,6 +377,10 @@ func (s *Server) direct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer fh.Close()
+	// A copy to the SSD in progress follows where playback reads.
+	if off, n, ok := rangeStart(r.Header.Get("Range")); ok {
+		s.Cache.Reading(f, off, n)
+	}
 	// The player's own remux reads the file here too (via=remux): a session
 	// re-opened after a server restart should say so.
 	method := "direct"
@@ -420,6 +424,28 @@ func (s *Server) direct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.ServeContent(cw, r, "", fh.ModTime(), src)
+}
+
+// rangeStart is where a single "bytes=a-b" (or "bytes=a-") range starts and
+// how long it is (-1: to the end). Suffix and multi-part ranges are ignored.
+func rangeStart(h string) (off, length int64, ok bool) {
+	spec, found := strings.CutPrefix(h, "bytes=")
+	if !found || strings.Contains(spec, ",") {
+		return 0, 0, false
+	}
+	a, b, _ := strings.Cut(spec, "-")
+	off, err := strconv.ParseInt(strings.TrimSpace(a), 10, 64)
+	if err != nil || off < 0 {
+		return 0, 0, false
+	}
+	if b = strings.TrimSpace(b); b == "" {
+		return off, -1, true
+	}
+	end, err := strconv.ParseInt(b, 10, 64)
+	if err != nil || end < off {
+		return 0, 0, false
+	}
+	return off, end - off + 1, true
 }
 
 // endedReader fails reads once its session has ended.
