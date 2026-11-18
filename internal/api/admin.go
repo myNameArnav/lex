@@ -470,7 +470,7 @@ func fsErr(p string, err error) string {
 	case errors.Is(err, os.ErrNotExist):
 		return "There's no folder at " + p
 	case errors.Is(err, os.ErrPermission):
-		return "Lex isn't allowed to read " + p
+		return "lex isn't allowed to read " + p
 	}
 	if st, serr := os.Stat(p); serr == nil && !st.IsDir() {
 		return p + " is a file, not a folder"

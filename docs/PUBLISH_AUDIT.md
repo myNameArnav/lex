@@ -59,7 +59,7 @@ OpenPGP verification certificates, not private keys.
 - `govulncheck` reported zero reachable or imported-package vulnerabilities.
   It still reports module advisory
   [GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932) for the unused, unmaintained
-  `golang.org/x/crypto/openpgp` component. Lex imports bcrypt from that module,
+  `golang.org/x/crypto/openpgp` component. lex imports bcrypt from that module,
   not OpenPGP; the scanner finds no call path to that advisory.
 
 ## Limits and publication status

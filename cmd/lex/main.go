@@ -47,7 +47,7 @@ func main() {
 	debugLog := flag.Bool("debug", os.Getenv("LEX_DEBUG") == "1", "verbose logging")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	healthcheck := flag.Bool("healthcheck", false, "check that the server on -addr answers, then exit (for container health checks)")
-	restore := flag.String("restore", "", "replace the database in -data with this backup file, then exit (stop Lex first)")
+	restore := flag.String("restore", "", "replace the database in -data with this backup file, then exit (stop lex first)")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println("lex", version)
@@ -331,7 +331,7 @@ func restoreBackup(addr, dataDir, src string) int {
 		fmt.Fprintf(os.Stderr, "restore: %v\n", err)
 		return 1
 	}
-	fmt.Printf("restored %s into %s; start Lex to use it\n", src, filepath.Join(abs, "lex.db"))
+	fmt.Printf("restored %s into %s; start lex to use it\n", src, filepath.Join(abs, "lex.db"))
 	return 0
 }
 

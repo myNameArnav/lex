@@ -1,4 +1,4 @@
-# Maintaining Lex
+# Maintaining lex
 
 Notes for the maintainer: releases, CI details and manual stress testing.
 Contributors only need [contributing](../CONTRIBUTING.md).
@@ -11,7 +11,7 @@ in Settings → About and the account menu). To release, bump that file, commit,
 and push a matching tag:
 
 ```sh
-git tag -a v0.0.21 -m "Lex v0.0.21" && git push origin v0.0.21
+git tag -a v0.0.21 -m "lex v0.0.21" && git push origin v0.0.21
 ```
 
 The container image workflow checks the tag against the file, publishes the

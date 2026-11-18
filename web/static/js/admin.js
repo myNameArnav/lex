@@ -550,11 +550,11 @@ function arrRow(name, draft, urlKey, keyKey, missing) {
   };
   btn.onclick = () => run(btn, async () => {
     ++seq;
-    show(`Connecting… ${name} is testing each address Lex has`);
+    show(`Connecting… ${name} is testing each address lex has`);
     try {
       const st = await api(`/api/admin/arr/${app}/connect`, { method: 'POST', body: body() });
       connected(st);
-      toast(`${name} will now tell Lex when it imports something`, 'ok');
+      toast(`${name} will now tell lex when it imports something`, 'ok');
     } catch (e) {
       show(`${e.message}. Try setting it up by hand below.`, 'bad');
     }
@@ -584,7 +584,7 @@ function arrSection(draft, text, info) {
   let t = 0;
   const recheck = () => { clearTimeout(t); t = setTimeout(sonarr.recheck, 600); };
   return h('div', { class: 'form-section', dataset: { searchSection: 'Sonarr & Radarr' } }, h('h2', null, 'Sonarr & Radarr'),
-    h('p', { class: 'help', style: { margin: 0 } }, 'Connect them so Lex rescans the moment they import, upgrade, rename or delete something, instead of waiting for the next scheduled scan.'),
+    h('p', { class: 'help', style: { margin: 0 } }, 'Connect them so lex rescans the moment they import, upgrade, rename or delete something, instead of waiting for the next scheduled scan.'),
     h('div', { class: 'form-grid', oninput: recheck },
       field('Sonarr URL', text('sonarrUrl', { placeholder: 'http://127.0.0.1:8989' })),
       field('Sonarr API key', text('sonarrKey', { type: 'password', autocomplete: 'off' }), 'Sonarr → Settings → General → API Key')),
@@ -867,7 +867,7 @@ async function librariesSection(ctx) {
     h('button', { class: 'btn', disabled: !libs.length, dataset: { focusKey: 'lib-scan-all' }, onclick: (e) => run(e.currentTarget, () => api('/api/admin/scan', { method: 'POST', body: {} }), 'Scanning all libraries') }, h('span', { html: icons.refresh }), 'Scan all'),
     h('button', { class: 'btn primary', dataset: { focusKey: 'lib-add' }, onclick: () => libraryModal() }, h('span', { html: icons.plus }), 'Add library')));
   if (!libs.length) {
-    box.appendChild(emptyState({ level: 'h2', title: 'Add your first library', text: 'Point Lex at the folder with your movies or TV shows, e.g. /media/movies.',
+    box.appendChild(emptyState({ level: 'h2', title: 'Add your first library', text: 'Point lex at the folder with your movies or TV shows, e.g. /media/movies.',
       actions: [h('button', { class: 'btn primary', onclick: () => libraryModal() }, 'Add library')] }));
   }
   const status = new Map();
@@ -1276,7 +1276,7 @@ async function cacheSection(ctx) {
     h('div', { class: 'form-section' }, h('h2', null, 'SSD cache'),
       h('p', { class: 'help', style: { margin: 0 } }, 'Keeps copies of media on a fast disk (e.g. the SSD) so playback — and seeking — reads from it instead of the hard drive, which can then stay asleep. Files are copied in the background at a capped speed; the least recently watched are evicted first.'),
       tg('cacheEnabled', 'Enable SSD cache'),
-      field('Cache folder', text('cacheDir', { placeholder: 'default: <data folder>/cache' }), 'A "lex-cache" folder is created inside it. Leave empty to use Lex\'s data folder (on the SSD here).'),
+      field('Cache folder', text('cacheDir', { placeholder: 'default: <data folder>/cache' }), 'A "lex-cache" folder is created inside it. Leave empty to use lex\'s data folder (on the SSD here).'),
       h('div', { class: 'form-grid' },
         field('Maximum size (GB)', num('cacheMaxGb', { min: 1 })),
         field('Keep free on disk (GB)', num('cacheMinFreeGb', { min: 0 })),
@@ -1312,7 +1312,7 @@ async function backupsSection() {
     };
     keepFocus(listBox, () => clear(listBox).append(
       h('div', { class: 'row' }, h('h2', { class: 'grow' }, 'Saved backups'), now),
-      h('p', { class: 'help', style: { margin: 0 } }, 'In ', h('span', { class: 'mono' }, r.dir), '. To restore one, stop Lex and run ', h('code', { class: 'mono' }, 'lex -restore <file>'), ' with the same data folder (the current database is backed up first), or copy the file over lex.db in the data folder, delete lex.db-wal and lex.db-shm, and start Lex.'),
+      h('p', { class: 'help', style: { margin: 0 } }, 'In ', h('span', { class: 'mono' }, r.dir), '. To restore one, stop lex and run ', h('code', { class: 'mono' }, 'lex -restore <file>'), ' with the same data folder (the current database is backed up first), or copy the file over lex.db in the data folder, delete lex.db-wal and lex.db-shm, and start lex.'),
       r.lastError ? h('p', { class: 'bad', role: 'alert', style: { margin: 0 } }, `The last daily backup failed: ${r.lastError}`) : null,
       r.backups.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'tbl stack' },
         h('tr', null, h('th', null, 'Made'), h('th', null, 'Kind'), h('th', null, 'Size'), actionsTh()),
@@ -1329,7 +1329,7 @@ async function backupsSection() {
   const refresh = () => render().catch((e) => toast(e?.message || String(e), 'error'));
   const form = await configForm(({ num, text, tg }) => [
     h('div', { class: 'form-section' }, h('h2', null, 'Database backups'),
-      h('p', { class: 'help', style: { margin: 0 } }, 'Copies of the database: users, watch history, matches, collections and settings. Lex also backs it up before every upgrade that changes it. Artwork, subtitles and previews aren’t included; they are rebuilt on demand.'),
+      h('p', { class: 'help', style: { margin: 0 } }, 'Copies of the database: users, watch history, matches, collections and settings. lex also backs it up before every upgrade that changes it. Artwork, subtitles and previews aren’t included; they are rebuilt on demand.'),
       tg('backupDaily', 'Back up daily'),
       field('Backup folder', text('backupDir', { placeholder: 'default: <data folder>/backups', autocapitalize: 'off', spellcheck: 'false' }), 'An existing folder, ideally on another disk than the data folder. A "lex-backups" folder is created inside it.'),
       field('Backups to keep', num('backupKeep', { min: 1, max: 100 }), 'Of each kind (daily, manual, before upgrade, before restore); older ones are deleted.')),
@@ -1414,8 +1414,8 @@ async function aboutSection() {
   const f = i.ffmpeg;
   return h('div', { class: 'form' },
     h('div', { class: 'form-section' }, h('h2', null, 'AI disclosure'),
-      h('p', null, 'Lex was built by large language models: LLM coding agents wrote its code, interface, tests and documentation under human direction. LLM-written code can contain mistakes, including security ones, and has not had an independent security review. Lex does not call AI model services at runtime.')),
-    h('div', { class: 'form-section' }, h('h2', null, 'Lex'), h('dl', { class: 'kv' },
+      h('p', null, 'lex was built by large language models: LLM coding agents wrote its code, interface, tests and documentation under human direction. LLM-written code can contain mistakes, including security ones, and has not had an independent security review. lex does not call AI model services at runtime.')),
+    h('div', { class: 'form-section' }, h('h2', null, 'lex'), h('dl', { class: 'kv' },
       h('dt', null, 'Version'), h('dd', null, i.version),
       h('dt', null, 'Go runtime'), h('dd', null, i.go),
       h('dt', null, 'Data folder'), h('dd', { class: 'mono' }, i.dataDir),
@@ -1505,7 +1505,7 @@ async function liveTab(ctx) {
       h('div', { class: 'cores' }, (s.cores || []).map((c, i) => h('div', { class: 'core', title: `Core ${i}: ${c.toFixed(0)}%` }, h('i', { style: { height: `${c}%` } }), h('span', null, `${c.toFixed(0)}`)))));
     card(cards.mem, `${memPct.toFixed(0)}%`,
       `${fmtBytes(s.memUsed)} of ${fmtBytes(s.memTotal)}${s.swapTotal ? ` · swap ${fmtBytes(s.swapUsed)}` : ''}`,
-      h('div', { class: 'small dim' }, `Lex uses ${fmtBytes(s.procRss)} (Go heap ${fmtBytes(s.goHeap)}) · ${s.procCpu.toFixed(1)}% CPU`));
+      h('div', { class: 'small dim' }, `lex uses ${fmtBytes(s.procRss)} (Go heap ${fmtBytes(s.goHeap)}) · ${s.procCpu.toFixed(1)}% CPU`));
     // Hosts without a sensor (VMs, containers on a laptop) get no card.
     const hasTemp = !!n.temp || hist.some((p) => p.temp);
     cards.temp.el.hidden = !hasTemp;
@@ -1517,7 +1517,7 @@ async function liveTab(ctx) {
     const times = hist.map((p) => p.t);
     if (times.length > 1) {
       const pct = (v) => `${v.toFixed(0)}%`;
-      lineChart(cards.cpu.chart, { title: 'CPU over the last hour', times, height: 96, max: 100, ticks: 2, fmt: pct, series: [{ name: 'Host', values: hist.map((p) => p.cpu) }, { name: 'Lex', values: hist.map((p) => p.pcpu / Math.max(1, s.numCpu)) }] });
+      lineChart(cards.cpu.chart, { title: 'CPU over the last hour', times, height: 96, max: 100, ticks: 2, fmt: pct, series: [{ name: 'Host', values: hist.map((p) => p.cpu) }, { name: 'lex', values: hist.map((p) => p.pcpu / Math.max(1, s.numCpu)) }] });
       lineChart(cards.mem.chart, { title: 'Memory over the last hour', times, height: 96, max: 100, ticks: 2, fmt: pct, series: [{ name: 'Used', values: hist.map((p) => p.mem) }] });
       if (hasTemp) lineChart(cards.temp.chart, { title: 'Temperature over the last hour', times, height: 96, max: 90, fmt: (v) => `${v.toFixed(0)}°`, series: [{ name: 'SoC', values: hist.map((p) => p.temp) }] });
       // In bits per second so the gridlines land on round rates; an idle
@@ -1867,7 +1867,7 @@ async function unreadableModal() {
   const list = h('div', { class: 'title-list' }, spinner());
   const count = h('div', { class: 'small muted' });
   modal({ title: 'Unreadable files', wide: true, body: [
-    h('p', { class: 'help', style: { marginTop: 0 } }, 'ffprobe couldn’t read these files, so they have no duration or codecs and may not play. A damaged or still-copying file, or a share that timed out, are the usual causes. Lex retries them by itself with a growing delay.'), count, list] });
+    h('p', { class: 'help', style: { marginTop: 0 } }, 'ffprobe couldn’t read these files, so they have no duration or codecs and may not play. A damaged or still-copying file, or a share that timed out, are the usual causes. lex retries them by itself with a growing delay.'), count, list] });
   const counted = (n) => { count.textContent = `${n} file${n === 1 ? '' : 's'}`; };
   try {
     const rows = await api('/api/admin/stats/library/unreadable');

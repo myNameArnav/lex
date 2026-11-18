@@ -205,7 +205,7 @@ const INDEX = {
   ],
   about: [
     ['AI disclosure', 'llm ai', []],
-    ['Lex', 'version database data folder go', []],
+    ['lex', 'version database data folder go', []],
     ['ffmpeg', 'ffprobe encoders version', []],
     ['Caches', 'artwork subtitles clear cache images', []],
   ],

@@ -273,7 +273,7 @@ func (c *Client) Connect(ctx context.Context, bases []string, path string) (Stat
 			if errors.Is(err, ErrBadKey) || ctx.Err() != nil {
 				return s, err
 			}
-			lastErr = fmt.Errorf("%s couldn't reach Lex at %s: %w", s.App, base, err)
+			lastErr = fmt.Errorf("%s couldn't reach lex at %s: %w", s.App, base, err)
 			continue
 		}
 		if id, ok := n["id"].(float64); ok && id > 0 {
@@ -289,7 +289,7 @@ func (c *Client) Connect(ctx context.Context, bases []string, path string) (Stat
 		return s, nil
 	}
 	if lastErr == nil {
-		lastErr = errors.New("no address for Lex to offer")
+		lastErr = errors.New("no address for lex to offer")
 	}
 	return s, lastErr
 }

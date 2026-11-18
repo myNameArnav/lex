@@ -58,5 +58,5 @@ scripts            release, WebAssembly builds and publication privacy checks
 
 ## License
 
-Lex is licensed under the [MIT License](LICENSE). By contributing, you agree
+lex is licensed under the [MIT License](LICENSE). By contributing, you agree
 that your contributions are licensed under the same terms.

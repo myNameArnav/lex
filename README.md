@@ -1,21 +1,21 @@
 <p align="center"><img src="docs/brand/banner.svg" alt="lex: no P, no pay. A self-hosted media server for small Linux hosts." width="640"></p>
 
-# Lex
+# lex
 
 A lightweight, self-hosted media server for small Linux hosts such as a
 Raspberry Pi: one Go binary with SQLite, FFmpeg for media work, and a web UI
 with no build step.
 
 > [!NOTE]
-> **Built by AI.** Lex was written by LLM coding agents under human direction.
+> **Built by AI.** lex was written by LLM coding agents under human direction.
 > See [AI disclosure](#ai-disclosure).
 
-![Lex home screen](docs/screenshots/home.webp)
+![lex home screen](docs/screenshots/home.webp)
 
-## Why Lex
+## Why lex
 
 Most media servers decide on their own to transcode, and you find out when the
-fan spins up. Lex is built around knowing **how each file will play in the
+fan spins up. lex is built around knowing **how each file will play in the
 browser you're using, and why**:
 
 - **It asks the browser.** The player reports exactly which containers and
@@ -75,7 +75,7 @@ and ffmpeg pauses when the browser's buffer is full. Browsers without MSE
   editions when a title has several versions. Sonarr/Radarr webhooks trigger
   instant rescans; admins get a list of unmatched titles and unreadable files.
 - **Metadata**: TMDB (free key), TVmaze for shows, or a local Radarr. Artwork
-  is cached and served by Lex. Collections, cast pages, genres, a per-user
+  is cached and served by lex. Collections, cast pages, genres, a per-user
   Watchlist and Favorites, and manual "Fix match".
 - **Player**: resume, Up next, Skip Intro / Skip Credits (detected with audio
   fingerprints; a title counts as watched once the credits start), chapters,
@@ -105,19 +105,19 @@ and ffmpeg pauses when the browser's buffer is full. Browsers without MSE
 
 ## Documentation
 
-- [Installing Lex](docs/install.md): build from source with Go **1.26.11 or newer**,
+- [Installing lex](docs/install.md): build from source with Go **1.26.11 or newer**,
   run the Docker image, or install it as a service.
 - [Backups](docs/backups.md): automatic database backups and restoring one.
 - [Contributing](CONTRIBUTING.md): development checks and code layout.
-- [Security and privacy](SECURITY.md): read before exposing Lex beyond your LAN.
+- [Security and privacy](SECURITY.md): read before exposing lex beyond your LAN.
 
 ## AI disclosure
 
-Lex was built by large language models: LLM coding agents wrote the server,
+lex was built by large language models: LLM coding agents wrote the server,
 UI, tests, documentation and screenshots, while a human maintainer chose the
 features, reported bugs and tested on real hardware. Commits name the model in
 a `Co-Authored-By` trailer. The code and its checks have not had an independent
-security review, so review Lex before exposing it to the internet. Lex calls no
+security review, so review lex before exposing it to the internet. lex calls no
 AI service at runtime.
 
 ## License

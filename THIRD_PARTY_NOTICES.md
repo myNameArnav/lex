@@ -7,7 +7,7 @@ and its loader `audio.js` are built by `scripts/build-audio-wasm.sh` from
 [FFmpeg 7.1.2](https://ffmpeg.org/releases/ffmpeg-7.1.2.tar.xz) (only
 libavcodec's AC-3/E-AC-3, DTS and TrueHD/MLP decoders and AAC encoder, plus
 libswresample and libavutil, without GPL or nonfree components) linked with
-Lex's `wasm/audio/audio.c`.
+lex's `wasm/audio/audio.c`.
 FFmpeg is licensed under the GNU Lesser General Public License 2.1 or later;
 see `web/static/vendor/lexaudio/LICENSE`. The FFmpeg source is available at the
 link above, and the script rebuilds the files, which can be replaced with
@@ -20,7 +20,7 @@ loader `remux.js` are built by `scripts/build-remux-wasm.sh` from
 [FFmpeg 7.1.2](https://ffmpeg.org/releases/ffmpeg-7.1.2.tar.xz) (only
 libavformat's Matroska demuxer and MP4 muxer, the parsers and bitstream
 filters a stream copy needs, and libavutil, without GPL or nonfree
-components) linked with Lex's `wasm/remux/remux.c`. FFmpeg is licensed under
+components) linked with lex's `wasm/remux/remux.c`. FFmpeg is licensed under
 the GNU Lesser General Public License 2.1 or later; see
 `web/static/vendor/lexremux/LICENSE`. The FFmpeg source is available at the
 link above, and the script rebuilds the files, which can be replaced with

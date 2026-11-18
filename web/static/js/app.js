@@ -8,7 +8,7 @@ import { versionLabel, orderFiles, chosenFile, rememberFile } from './versions.j
 import { compatRequest, TIERS, causeLabel, verdictCauses } from './caps.js';
 
 // caps: { subtitleSearch, cacheEnabled, liveTv, maxTranscodeHeight, transcode } from the server (see /api/me).
-export const state = { me: null, caps: {}, serverName: 'Lex', libraries: [], version: '' };
+export const state = { me: null, caps: {}, serverName: 'lex', libraries: [], version: '' };
 const app = document.getElementById('app');
 let mainEl = null, navEl = null, searchInput = null;
 let routeToken = 0;
@@ -92,7 +92,7 @@ async function boot() {
     if (e.status === 401) return renderAuth(false);
     const down = e.status === 0 || e.status >= 502;
     clear(app).appendChild(h('main', { id: 'main' }, emptyState({
-      title: down ? 'Can’t reach Lex' : 'Something went wrong', text: down ? 'It may be restarting. Try again in a moment.' : e.message, alert: true,
+      title: down ? 'Can’t reach lex' : 'Something went wrong', text: down ? 'It may be restarting. Try again in a moment.' : e.message, alert: true,
       actions: [h('button', { class: 'btn primary', onclick: () => { clear(app).appendChild(spinner()); boot(); } }, 'Try again')],
     })));
   }
@@ -312,7 +312,7 @@ function userMenu(anchor) {
   // Phones have no keyboard; iPads with one (or a trackpad) keep the entry.
   if (matchMedia('(any-pointer: fine)').matches) items.push({ label: 'Keyboard shortcuts', icon: 'keyboard', onClick: showShortcuts });
   items.push('-', { label: 'Sign out', icon: 'logout', onClick: signOut });
-  if (state.version) items.push('-', { note: `Lex ${state.version}` });
+  if (state.version) items.push('-', { note: `lex ${state.version}` });
   popupMenu(anchor, items);
 }
 
@@ -323,7 +323,7 @@ async function signOut() {
   try {
     await api('/api/auth/logout', { method: 'POST' });
   } catch {
-    toast('Couldn’t sign out: Lex is unreachable. Try again.', 'error');
+    toast('Couldn’t sign out: lex is unreachable. Try again.', 'error');
     return;
   }
   leaveGuard = null;
@@ -515,7 +515,7 @@ function errorView(e, section) {
   if (e.status === 404) return emptyState({ title: 'Not found', text: section === 'item' ? 'This title isn’t in your library any more.' : 'This page doesn’t exist.', actions: [h('a', { class: 'btn primary', href: '#/' }, 'Go home')] });
   const actions = [h('button', { class: 'btn primary', onclick: () => route() }, 'Try again'), section ? h('a', { class: 'btn', href: '#/' }, 'Go home') : null].filter(Boolean);
   // 0: no response; 502–504: a proxy in front of Lex while it restarts.
-  if (e.status === 0 || e.status >= 502) return emptyState({ title: 'Can’t reach Lex', text: 'It may be restarting. Try again in a moment.', alert: true, actions });
+  if (e.status === 0 || e.status >= 502) return emptyState({ title: 'Can’t reach lex', text: 'It may be restarting. Try again in a moment.', alert: true, actions });
   return emptyState({ title: 'Something went wrong', text: e.message, alert: true, actions });
 }
 

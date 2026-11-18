@@ -262,7 +262,7 @@ func CheckBackup(path string) error {
 		return err
 	}
 	if users == 0 {
-		return errors.New("not a Lex database (no users table)")
+		return errors.New("not a lex database (no users table)")
 	}
 	var version int
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {

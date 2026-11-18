@@ -24,8 +24,8 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) {
 	head := func(t string) { fmt.Fprintf(b, "\n== %s ==\n", t) }
 	now := time.Now()
 
-	line("Lex diagnostic report")
-	line("Generated %s · Lex %s · %s/%s", now.UTC().Format(time.RFC3339), s.Version, runtime.GOOS, runtime.GOARCH)
+	line("lex diagnostic report")
+	line("Generated %s · lex %s · %s/%s", now.UTC().Format(time.RFC3339), s.Version, runtime.GOOS, runtime.GOARCH)
 	line("User names, titles, file names and paths, IP addresses, host names and secrets are replaced with placeholders.")
 
 	if s.Stats != nil {

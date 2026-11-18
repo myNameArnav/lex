@@ -139,7 +139,7 @@ type TVChannel struct {
 
 func DefaultConfig() Config {
 	return Config{
-		ServerName:         "Lex",
+		ServerName:         "lex",
 		MetadataLanguage:   "en-US",
 		SubtitleDownloads:  "everyone",
 		EnableTMDB:         true,
