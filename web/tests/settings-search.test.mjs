@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
 
@@ -123,11 +123,14 @@ test('every page is in a group, users get only their own pages, and pages have u
 
 test('every indexed setting names a label, toggle or heading the page shows', async () => {
   const { ENTRIES } = await load();
-  const src = (await readFile(new URL('../static/js/admin.js', import.meta.url), 'utf8')).replace(/\\'/g, '\'');
+  // The settings pages: admin.js and the modules under admin/.
+  const dir = new URL('../static/js/admin/', import.meta.url);
+  const files = [new URL('../static/js/admin.js', import.meta.url), ...(await readdir(dir)).filter((f) => f.endsWith('.js')).map((f) => new URL(f, dir))];
+  const src = (await Promise.all(files.map((f) => readFile(f, 'utf8')))).join('\n').replace(/\\'/g, '\'');
   for (const e of ENTRIES) {
     for (const name of [e.label, e.section]) {
       if (!name || (name === 'Password' && e.page === 'account')) continue;
-      assert.ok(src.includes(`'${name}'`), `admin.js shows no "${name}" (${e.page})`);
+      assert.ok(src.includes(`'${name}'`), `the settings pages show no "${name}" (${e.page})`);
     }
   }
 });
