@@ -3,6 +3,7 @@ module lex
 go 1.26.11
 
 require (
+	github.com/evanw/esbuild v0.28.2
 	golang.org/x/crypto v0.57.0
 	golang.org/x/image v0.46.0
 	golang.org/x/sys v0.48.0

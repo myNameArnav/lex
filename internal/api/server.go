@@ -562,8 +562,10 @@ var (
 	// entryModuleRe finds the page's module script; staticImportRe the
 	// specifier of each static import (or re-export) in a module. Dynamic
 	// import() calls are left alone: those load on demand.
-	entryModuleRe  = regexp.MustCompile(`<script type="module" src="([^"]+)"></script>`)
-	staticImportRe = regexp.MustCompile(`(?m)^\s*(?:import|export)\s+(?:[^'";]*?\s+from\s+)?['"]([^'"]+)['"]`)
+	entryModuleRe = regexp.MustCompile(`<script type="module" src="([^"]+)"></script>`)
+	// A statement starts a line, or follows ; or } (the release image's
+	// minified modules put them all on one line).
+	staticImportRe = regexp.MustCompile(`(?m)(?:^|[;}])\s*(?:import|export)\s*(?:[\w$*{][^'";]*?from\s*)?['"]([^'"]+)['"]`)
 )
 
 // moduleGraph lists the modules entry imports statically, directly or
@@ -619,8 +621,11 @@ func (s *Server) preloadModules() {
 func newAsset(p string, b []byte) *asset {
 	sum := sha1.Sum(b)
 	a := &asset{body: b, etag: `"` + hex.EncodeToString(sum[:8]) + `"`, ctype: mime.TypeByExtension(path.Ext(p))}
-	if path.Ext(p) == ".woff2" { // not in Go's built-in table; system mime.types may lack it
+	switch path.Ext(p) { // not in Go's built-in table; system mime.types may lack them
+	case ".woff2":
 		a.ctype = "font/woff2"
+	case ".map": // source maps of the release image's minified UI
+		a.ctype = "application/json"
 	}
 	if a.ctype == "" {
 		a.ctype = "application/octet-stream"
@@ -648,7 +653,8 @@ func (s *Server) shellPaths() []string {
 	shell := []string{"/"}
 	for p := range s.static {
 		switch {
-		case p == "/index.html", p == "/sw.js", strings.HasPrefix(p, "/vendor/"):
+		case p == "/index.html", p == "/sw.js", strings.HasPrefix(p, "/vendor/"), path.Ext(p) == ".map":
+			// Source maps are only fetched by DevTools.
 		case strings.HasPrefix(p, "/js/") && path.Ext(p) == ".js", strings.HasPrefix(p, "/css/"):
 			// What the pages load: from the build prefix.
 			shell = append(shell, s.versioned(p))

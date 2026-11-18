@@ -10,9 +10,13 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"bytes"
+	"io/fs"
 	"lex/internal/logx"
 	"lex/internal/store"
+	"lex/internal/uibuild"
 	"lex/web"
+	"os"
 )
 
 func TestStaticFilesAndAppShell(t *testing.T) {
@@ -343,5 +347,59 @@ func TestBuildPrefixCaching(t *testing.T) {
 	other.Handler()
 	if other.buildID == s.buildID || other.buildID == "" {
 		t.Errorf("build ids %q and %q", other.buildID, s.buildID)
+	}
+}
+
+// The release image minifies the UI (internal/uibuild) before embedding it.
+// That build must preload the same modules, keep the worker and lazy-import
+// URLs, and serve the source maps.
+func TestMinifiedUIServesTheSameGraph(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.CopyFS(dir, web.FS()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uibuild.Minify(dir); err != nil {
+		t.Fatal(err)
+	}
+	load := func(fsys fs.FS) (*Server, http.Handler) {
+		st, err := store.Open(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { st.Close() })
+		s := &Server{Version: "test", St: st, Log: logx.New(10, false), Web: fsys}
+		h, err := s.Handler()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s, h
+	}
+	src, _ := load(web.FS())
+	min, h := load(os.DirFS(dir))
+	for _, entry := range []string{"/js/app.js", "/js/player.js", "/js/admin.js", "/js/offline.js"} {
+		if a, b := src.moduleGraph(entry), min.moduleGraph(entry); !slices.Equal(a, b) {
+			t.Errorf("%s imports differ once minified:\nsource   %v\nminified %v", entry, a, b)
+		}
+	}
+	for p, want := range map[string]string{
+		"/js/client-audio.js":  "./audio-worker.js",
+		"/js/client-remux.js":  "./remux-worker.js",
+		"/js/player-loader.js": "./player.js",
+		"/js/app.js":           "./admin.js",
+	} {
+		if !bytes.Contains(min.static[p].body, []byte(want)) {
+			t.Errorf("minified %s lost %q", p, want)
+		}
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", min.versioned("/js/app.js.map"), nil))
+	if w.Code != 200 || w.Header().Get("Content-Type") != "application/json" || !strings.Contains(w.Header().Get("Cache-Control"), "immutable") {
+		t.Errorf("source map: %d %q %q", w.Code, w.Header().Get("Content-Type"), w.Header().Get("Cache-Control"))
+	}
+	_, build := swBuild(t, h)
+	for _, p := range build.Shell {
+		if strings.HasSuffix(p, ".map") {
+			t.Errorf("the service worker must not precache source maps: %s", p)
+		}
 	}
 }
