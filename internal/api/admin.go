@@ -755,3 +755,62 @@ func (s *Server) clearCache(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]bool{"ok": true})
 }
+
+// unmatchedTitles lists the movies and shows without a metadata match, with
+// the folder each was parsed from (often why it missed).
+func (s *Server) unmatchedTitles(w http.ResponseWriter, r *http.Request) {
+	list, err := s.St.UnmatchedTitles()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	for i := range list {
+		list[i].Path = filepath.Base(list[i].Path)
+	}
+	writeJSON(w, list)
+}
+
+// unreadableFiles lists the files ffprobe couldn't read, with the error.
+func (s *Server) unreadableFiles(w http.ResponseWriter, r *http.Request) {
+	list, err := s.St.UnreadableFiles()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, list)
+}
+
+// probeFile probes one file again now, rather than waiting for its retry
+// delay, and answers with the outcome: {ok} or {ok:false, error}.
+func (s *Server) probeFile(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeErr(w, 400, "bad id")
+		return
+	}
+	f, err := s.St.File(id)
+	if err != nil {
+		notFoundOr500(w, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	info, perr := s.Scanner.ProbeFile(ctx, f.Path)
+	if perr != nil {
+		if ctx.Err() == nil {
+			s.St.SaveProbe(f.ID, nil, perr.Error())
+		}
+		s.Log.Warnf("probe %s: %v", f.Path, perr)
+		writeJSON(w, map[string]any{"ok": false, "error": perr.Error()})
+		return
+	}
+	if err := s.St.SaveProbe(f.ID, info, ""); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if s.Scanner.OnProbed != nil {
+		s.Scanner.OnProbed(f, info)
+	}
+	s.Log.Infof("probe %s: readable now", filepath.Base(f.Path))
+	writeJSON(w, map[string]any{"ok": true})
+}
