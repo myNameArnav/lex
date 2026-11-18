@@ -13,11 +13,11 @@ import { showView } from './show.js';
 
 // playExtra plays one of a title's local extras (a trailer, a featurette…)
 // from the top. Watching one leaves the title's progress alone.
-export function playExtra(it, x) {
+function playExtra(it, x) {
   openPlayer({ itemId: it.id, extra: x.id, start: 0, onClose: () => { if (!isPlayerOpen()) refreshSoft(); } });
 }
 
-export const EXTRA_KINDS = { trailer: 'Trailer', featurette: 'Featurette', behindthescenes: 'Behind the scenes', deleted: 'Deleted scene', interview: 'Interview', scene: 'Scene', short: 'Short', other: 'Extra' };
+const EXTRA_KINDS = { trailer: 'Trailer', featurette: 'Featurette', behindthescenes: 'Behind the scenes', deleted: 'Deleted scene', interview: 'Interview', scene: 'Scene', short: 'Short', other: 'Extra' };
 
 // trailerButton plays the title's first local trailer, if it has one.
 export function trailerButton(it, extras) {
@@ -82,7 +82,7 @@ export function facts(it, extra = []) {
   return h('div', { class: 'facts' }, f, extra);
 }
 
-export function playButtons(it, playId = it.id, label = 'Play') {
+function playButtons(it, playId = it.id, label = 'Play') {
   const ud = it.userData || {};
   const btns = [];
   if (ud.position > 0) {
@@ -176,11 +176,11 @@ export function genreLinks(it) {
   return h('div', { class: 'genres' }, it.genres.map((g) => h('a', { href: `#/library/${it.libraryId}?genre=${encodeURIComponent(g)}`, title: `More ${g} in this library` }, g)));
 }
 
-export const personHref = (name) => `#/person?name=${encodeURIComponent(name)}`;
+const personHref = (name) => `#/person?name=${encodeURIComponent(name)}`;
 
 // moreItems lists the ⋯ menu's actions. They depend only on the item, its
 // files and the user, so the button is left out when there are none.
-export function moreItems(it, d) {
+function moreItems(it, d) {
   const items = [];
   if (d.files?.length) items.push({ label: 'Media info', icon: 'info', onClick: () => mediaInfoModal(d.files) });
   const ud = it.userData || {};
@@ -243,14 +243,14 @@ export function castRow(it, excludeDirectors = false) {
 // Metadata still being fetched: look once more a little later (once per
 // title, so a stuck fetch doesn't poll forever). It counts once the re-check
 // runs, so an earlier in-page refresh doesn't use it up.
-export let metaRetried = 0;
+let metaRetried = 0;
 
 export function retryWhileFetching(ctx, it) {
   if (it.metaStatus !== 0 || metaRetried === it.id) return;
   refreshLater(ctx, 8000, () => { metaRetried = it.id; });
 }
 
-export function mediaView(ctx, d) {
+function mediaView(ctx, d) {
   const it = d.item;
   const isEp = it.kind === 'episode';
   const poster = heroPoster(it, isEp ? 'thumb' : 'poster', isEp);
@@ -305,7 +305,7 @@ export function mediaView(ctx, d) {
 // versionPicker chooses which of a title's files Play plays: its versions
 // (cuts, resolutions) or the parts of a split film. The choice is kept on
 // this device, and the page redraws for the chosen file.
-export function versionPicker(it, files, file) {
+function versionPicker(it, files, file) {
   const parts = files.every((f) => f.part > 0);
   const sel = h('select', { 'aria-label': parts ? 'Part' : 'Version', dataset: { focusKey: `version-${it.id}` },
     onchange: (e) => { rememberFile(it.id, Number(e.target.value), files); refreshSoft(); } },
@@ -317,7 +317,7 @@ export function versionPicker(it, files, file) {
 // this browser: a chip next to the resolution, and the reasons below the
 // file summary when the server has to do the work. Both stay empty until the
 // server answers, and on error.
-export function compatBadge(it, file) {
+function compatBadge(it, file) {
   const pill = h('span', { class: 'pill play-tier', hidden: true });
   const note = h('p', { class: 'small compat-note', hidden: true });
   api(`/api/items/${it.id}/compat`, { method: 'POST', body: compatRequest() }).then((r) => {
@@ -337,7 +337,7 @@ export function compatBadge(it, file) {
   return { pill, note };
 }
 
-export function fileSummary(f) {
+function fileSummary(f) {
   const s = f.info?.streams || [];
   const v = s.find((x) => x.type === 'video');
   const auds = s.filter((x) => x.type === 'audio');
@@ -353,9 +353,9 @@ export function fileSummary(f) {
   return h('p', { class: 'muted small', style: { marginTop: '10px' } }, bits.join(' · '));
 }
 
-export const CONTAINERS = { 'matroska,webm': 'MKV', 'mov,mp4,m4a,3gp,3g2,mj2': 'MP4' };
+const CONTAINERS = { 'matroska,webm': 'MKV', 'mov,mp4,m4a,3gp,3g2,mj2': 'MP4' };
 
-export function mediaInfoModal(files) {
+function mediaInfoModal(files) {
   const body = files.map((f) => {
     const info = f.info || {};
     const blocks = [h('div', { class: 'panel' }, h('h3', null, 'File'), h('dl', { class: 'kv' },

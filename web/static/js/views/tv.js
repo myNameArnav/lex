@@ -8,16 +8,16 @@ import { placeholder, progressBar } from './cards.js';
 
 // playChannel tunes into a Live TV channel; channels are what Next and
 // Page Up/Down switch through.
-export function playChannel(id, channels) {
+function playChannel(id, channels) {
   openPlayer({ channel: id, channels, onClose: () => { if (!isPlayerOpen()) refreshSoft(); } });
 }
 
 // The guide's two lines for a program: the show or movie, then the episode.
-export function programHead(it) {
+function programHead(it) {
   return it.kind === 'episode' ? it.showTitle || it.title : it.title;
 }
 
-export function programSub(it) {
+function programSub(it) {
   return it.kind === 'episode' ? `${fmtEpisode(it)} — ${it.title}` : String(it.year || '');
 }
 
