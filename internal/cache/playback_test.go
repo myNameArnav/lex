@@ -24,7 +24,8 @@ func TestSplitReaderUsesCopiedPart(t *testing.T) {
 	part, _ := os.Open(partPath)
 	var written atomic.Int64
 	written.Store(4000)
-	r := &splitReader{orig: orig, part: part, written: written.Load, size: int64(len(want))}
+	upTo := func(off int64) int64 { return max(written.Load()-off, 0) }
+	r := &splitReader{orig: orig, part: part, avail: upTo, size: int64(len(want))}
 	defer r.Close()
 	got, err := io.ReadAll(r)
 	if err != nil {
@@ -55,7 +56,7 @@ func TestSplitReaderWithoutCopy(t *testing.T) {
 	orig, _ := os.Open(origPath)
 	part, _ := os.Open(origPath)
 	part.Close() // reads fail
-	r := &splitReader{orig: orig, part: part, written: func() int64 { return 5 }, size: int64(len(want))}
+	r := &splitReader{orig: orig, part: part, avail: func(off int64) int64 { return max(5-off, 0) }, size: int64(len(want))}
 	got, err := io.ReadAll(r)
 	if err != nil || !bytes.Equal(got, want) {
 		t.Fatalf("got %q, %v", got, err)
@@ -74,14 +75,14 @@ func TestOpenPlaybackDuringCopy(t *testing.T) {
 	f := addFile(t, st, item, src, int64(len(data)))
 	c.Request(f, "playing")
 	deadline := time.Now().Add(5 * time.Second)
-	var written func() int64
-	for written == nil || written() < 1<<20 {
+	var avail func(int64) int64
+	for avail == nil || avail(0) < 1<<20 {
 		if time.Now().After(deadline) {
 			t.Fatal("copy didn't start")
 		}
 		time.Sleep(20 * time.Millisecond)
-		if _, w, ok := c.partial(f); ok {
-			written = w
+		if _, a, ok := c.partial(f); ok {
+			avail = a
 		}
 	}
 	s, err := c.OpenPlayback(f)

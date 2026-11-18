@@ -47,6 +47,7 @@ type Job struct {
 	Reason  string        `json:"reason"`
 	Started int64         `json:"started"`
 	paused  time.Duration // spent waiting for playback (yield)
+	state   *copyState    // what's copied (order.go); set when the copy starts
 }
 
 type Status struct {
@@ -509,7 +510,7 @@ func (c *Cache) copy(ctx context.Context, job *Job) error {
 		return err
 	}
 	defer src.Close()
-	out, err := os.Create(tmp)
+	out, err := os.OpenFile(tmp, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
@@ -549,16 +550,24 @@ func (c *Cache) copy(ctx context.Context, job *Job) error {
 	if job.paused > 0 {
 		note = fmt.Sprintf(", paused %.0fs for playback", job.paused.Seconds())
 	}
+	if job.state != nil && job.state.moves > 0 {
+		note += fmt.Sprintf(", moved %d times to follow playback", job.state.moves)
+	}
 	c.log.Infof("cache: cached %s in %.0fs (%.1f MB/s%s)", job.Name, secs, float64(f.Size)/1e6/max(secs-job.paused.Seconds(), 0.001), note)
 	return nil
 }
 
-// copyLimited copies with a simple rate limit so playback from the same disk
-// keeps priority.
-func (c *Cache) copyLimited(ctx context.Context, dst io.Writer, src io.Reader, job *Job) error {
-	buf := make([]byte, 1<<20)
+// copyLimited copies the file in the order copyState picks, with a simple
+// rate limit so playback from the same disk keeps priority.
+func (c *Cache) copyLimited(ctx context.Context, dst, src *os.File, job *Job) error {
+	if err := dst.Truncate(job.Size); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	job.state = newCopyState()
+	c.mu.Unlock()
+	buf := make([]byte, chunk)
 	start := time.Now()
-	var done int64
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -566,37 +575,43 @@ func (c *Cache) copyLimited(ctx context.Context, dst io.Writer, src io.Reader, j
 		if err := c.yield(ctx, job); err != nil {
 			return err
 		}
-		n, rerr := src.Read(buf)
-		if n > 0 {
-			if _, err := dst.Write(buf[:n]); err != nil {
-				return err
-			}
-			done += int64(n)
-			c.mu.Lock()
-			elapsed := time.Since(start).Seconds() - job.paused.Seconds()
-			job.Done = done
-			if elapsed > 0 {
-				job.Speed = float64(done) / elapsed
-			}
-			c.mu.Unlock()
-			if limit := c.st.Config().CacheSpeedMBs; limit > 0 {
-				want := float64(done) / (float64(limit) * 1e6)
-				if d := want - elapsed; d > 0 {
-					t := time.NewTimer(time.Duration(d * float64(time.Second)))
-					select {
-					case <-ctx.Done():
-						t.Stop()
-						return ctx.Err()
-					case <-t.C:
-					}
-				}
-			}
-		}
-		if rerr == io.EOF {
+		c.mu.Lock()
+		from, to, ok := job.state.next(job.Size)
+		c.mu.Unlock()
+		if !ok {
 			return nil
 		}
-		if rerr != nil {
-			return rerr
+		n, err := src.ReadAt(buf[:to-from], from)
+		if n == 0 {
+			if err == nil || err == io.EOF {
+				err = fmt.Errorf("file shorter than %d bytes", job.Size)
+			}
+			return err
+		}
+		if _, err := dst.WriteAt(buf[:n], from); err != nil {
+			return err
+		}
+		c.mu.Lock()
+		job.state.add(from, from+int64(n))
+		job.state.cursor = from + int64(n)
+		done := job.state.total()
+		elapsed := time.Since(start).Seconds() - job.paused.Seconds()
+		job.Done = done
+		if elapsed > 0 {
+			job.Speed = float64(done) / elapsed
+		}
+		c.mu.Unlock()
+		if limit := c.st.Config().CacheSpeedMBs; limit > 0 {
+			want := float64(done) / (float64(limit) * 1e6)
+			if d := want - elapsed; d > 0 {
+				t := time.NewTimer(time.Duration(d * float64(time.Second)))
+				select {
+				case <-ctx.Done():
+					t.Stop()
+					return ctx.Err()
+				case <-t.C:
+				}
+			}
 		}
 	}
 }

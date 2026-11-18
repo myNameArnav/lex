@@ -44,18 +44,18 @@ func (c *Cache) OpenPlayback(f *store.File) (Source, error) {
 	if p != f.Path {
 		return src, nil // the complete copy
 	}
-	if part, written, ok := c.partial(f); ok {
+	if part, avail, ok := c.partial(f); ok {
 		if pf, err := os.Open(part); err == nil {
-			src.part, src.written = pf, written
+			src.part, src.avail = pf, avail
 		}
 	}
 	return src, nil
 }
 
 // partial is the copy of f being made now, if any: its part file and how
-// much of it is written so far. written keeps returning the last count once
+// many bytes from an offset are copied in it. That stays answerable after
 // the copy ends (the part file stays readable through an open handle).
-func (c *Cache) partial(f *store.File) (path string, written func() int64, ok bool) {
+func (c *Cache) partial(f *store.File) (path string, avail func(off int64) int64, ok bool) {
 	if !c.enabled() {
 		return "", nil, false
 	}
@@ -66,22 +66,21 @@ func (c *Cache) partial(f *store.File) (path string, written func() int64, ok bo
 		return "", nil, false
 	}
 	_, tmp := c.copyPaths(f)
-	var last int64
-	return tmp, func() int64 {
+	return tmp, func(off int64) int64 {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		if c.current == job {
-			last = job.Done
+		if job.state == nil {
+			return 0
 		}
-		return last
+		return job.state.covered(off)
 	}, true
 }
 
-// splitReader reads a file from its part-made copy where that is written,
-// and from the original beyond it.
+// splitReader reads a file from its part-made copy where that is copied,
+// and from the original elsewhere.
 type splitReader struct {
 	orig, part *os.File
-	written    func() int64
+	avail      func(off int64) int64
 	size, off  int64
 	mtime      time.Time
 }
@@ -96,9 +95,9 @@ func (r *splitReader) Read(b []byte) (int, error) {
 		b = b[:rest]
 	}
 	if r.part != nil {
-		if w := r.written(); r.off < w {
-			if int64(len(b)) > w-r.off {
-				b = b[:w-r.off]
+		if a := r.avail(r.off); a > 0 {
+			if int64(len(b)) > a {
+				b = b[:a]
 			}
 			if n, _ := r.part.ReadAt(b, r.off); n > 0 {
 				r.off += int64(n)
