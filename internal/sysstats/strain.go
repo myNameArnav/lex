@@ -11,7 +11,7 @@ import (
 // a maxed-out CPU, too little memory, or a throttled Raspberry Pi.
 type Strain struct {
 	Kind string `json:"kind"` // disk | cpu | memory | throttled
-	// Text says what's wrong, for viewers ("The server's processor is 97% busy.").
+	// Text says what's wrong, with the numbers ("Server CPU at 97%.").
 	Text string `json:"text"`
 }
 
@@ -32,24 +32,27 @@ func (s Snapshot) Strains() []Strain {
 	if slices.ContainsFunc(s.ThrottleFlags, func(f string) bool {
 		return f == "under-voltage now" || f == "throttled now" || f == "frequency capped now"
 	}) {
-		why := "it is too hot"
-		if slices.Contains(s.ThrottleFlags, "under-voltage now") {
-			why = "its power supply isn't giving enough voltage"
+		why := "overheating"
+		if p.Temp > 0 {
+			why = fmt.Sprintf("overheating (%.0f°C)", p.Temp)
 		}
-		out = append(out, Strain{"throttled", fmt.Sprintf("The server is slowing its processor down because %s.", why)})
+		if slices.Contains(s.ThrottleFlags, "under-voltage now") {
+			why = "under-voltage"
+		}
+		out = append(out, Strain{"throttled", "Server CPU throttled: " + why + "."})
 	}
 	if p.IOWait >= strainIOWait {
-		out = append(out, Strain{"disk", fmt.Sprintf("The server's drives are overloaded: its processor spends %.0f%% of its time waiting on them.", p.IOWait)})
+		out = append(out, Strain{"disk", fmt.Sprintf("Server disk overloaded (%.0f%% I/O wait).", p.IOWait)})
 	}
 	if s.MemTotal > 0 && (float64(s.MemAvail) < strainMemAvail*float64(s.MemTotal) || p.SwapIO >= strainSwapIO) {
-		t := fmt.Sprintf("The server is short of memory (%s free)", mb(s.MemAvail))
+		t := fmt.Sprintf("Server low on memory (%s free", mb(s.MemAvail))
 		if p.SwapIO >= strainSwapIO {
-			t += fmt.Sprintf(" and swapping %s/s", mb(uint64(p.SwapIO)))
+			t += fmt.Sprintf(", swapping %s/s", mb(uint64(p.SwapIO)))
 		}
-		out = append(out, Strain{"memory", t + "."})
+		out = append(out, Strain{"memory", t + ")."})
 	}
 	if p.CPU >= strainCPU {
-		out = append(out, Strain{"cpu", fmt.Sprintf("The server's processor is %.0f%% busy.", p.CPU)})
+		out = append(out, Strain{"cpu", fmt.Sprintf("Server CPU at %.0f%%.", p.CPU)})
 	}
 	return out
 }
