@@ -295,6 +295,20 @@ func (m *Manager) AddBytes(s *Session, n int) {
 	m.mu.Unlock()
 }
 
+// DiskBound reports whether an open stream of another file than fileID is
+// mostly waiting on the disk (DiskWait), so background disk work (the
+// media cache copying fileID) can wait for it.
+func (m *Manager) DiskBound(fileID int64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, s := range m.m {
+		if s.active > 0 && s.DiskWait >= 0.5 && s.FileID != fileID {
+			return true
+		}
+	}
+	return false
+}
+
 // Health is how fast the server is sending the session's stream (bytes/s)
 // and its DiskWait.
 // s may be a copy (Get), so this reads the live session.
