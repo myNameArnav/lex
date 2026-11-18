@@ -95,6 +95,10 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	ip := s.clientIP(r)
+	creditsAt := 0.0
+	if f.Extra == "" {
+		creditsAt = intro.CreditsStart(s.St.DB(), f.ItemID, f)
+	}
 	remote := s.isRemote(ip)
 	cfg := s.St.Config()
 	req.HLSCopy = s.HLS.CanCopy(f)
@@ -132,6 +136,7 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 		Method: plan.Method, Reasons: plan.Reasons, VideoIn: vin, AudioIn: ain, VideoOut: plan.VideoOut, AudioOut: plan.AudioOut,
 		Container: stream.ContainerKey(f.Path), SrcBitrate: int(f.Info.Bitrate / 1000), OutBitrate: plan.Bitrate,
 		Client: clientName(r.UserAgent()), IP: ip, Remote: remote, Duration: f.Info.Duration, Position: req.Start,
+		CreditsAt: creditsAt,
 		AuthToken: s.token(r), Extra: f.Extra != "",
 	})
 	if err != nil {
@@ -305,8 +310,13 @@ func (s *Server) sessionFor(r *http.Request, f *store.File, sid, method string) 
 		title, _ = displayTitle(it, show)
 	}
 	ip := s.clientIP(r)
+	creditsAt := 0.0
+	if f.Extra == "" {
+		creditsAt = intro.CreditsStart(s.St.DB(), f.ItemID, f)
+	}
 	return s.Sess.Open(&stream.Session{ID: sid, UserID: u.ID, UserName: u.Name, ItemID: f.ItemID, FileID: f.ID, Title: title,
-		Method: method, Client: clientName(r.UserAgent()), IP: ip, Remote: s.isRemote(ip), Duration: f.Duration, Extra: f.Extra != ""})
+		Method: method, Client: clientName(r.UserAgent()), IP: ip, Remote: s.isRemote(ip), Duration: f.Duration,
+		CreditsAt: creditsAt, Extra: f.Extra != ""})
 }
 
 type countingWriter struct {

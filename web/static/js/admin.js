@@ -1,9 +1,11 @@
 import { h, clear, icons, toast, modal, confirmDialog, spinner, toggle, fmtBytes, fmtBitrate, fmtTime, fmtDate, timeAgo, fmtUptime, fmtDuration, LANG_OPTIONS, $, run, staleBanner, motionOK, KIND_LABELS, METHOD_LABEL, reasonLabel, emptyState } from './ui.js';
 import { api, img } from './api.js';
-import { state, loadLibraries, refreshSoft, setLeaveGuard, focusAfterRoute, renderNav } from './app.js';
+import { state, loadLibraries, refreshSoft, setLeaveGuard, focusAfterRoute, renderNav, fixMatch } from './app.js';
 import { prefs, DEFAULTS, QUALITIES, qualityOptions } from './prefs.js';
 import { capsSummary, compatRequest, TIERS, TIER_ORDER, causeLabel } from './caps.js';
 import { PAGES, searchBox, reveal } from './settings-search.js';
+import { applyTheme } from './theme.js';
+import { rememberedCount, forgetTracks } from './track-memory.js';
 import { lineChart, columnChart, barList, axisHours, axisBitrate } from './charts.js';
 
 // Pollers owned by the current admin view. Each stops at its next tick once
@@ -135,6 +137,22 @@ function select(value, options, onchange) {
   return h('select', { onchange: (e) => onchange(e.target.value) }, options.map(([v, l]) => h('option', { value: String(v), selected: String(v) === String(value) }, l)));
 }
 
+// Choices made in the player (audio, subtitles, timing) are kept per show or
+// movie (track-memory.js); the languages above are the defaults for the rest.
+function rememberedTracksRow() {
+  const n = rememberedCount();
+  const help = h('span', { class: 'help', style: { flex: '1 1 260px' } }, n
+    ? `Audio and subtitle choices made in the player are remembered for ${n} show${n === 1 ? '' : 's'} or movie${n === 1 ? '' : 's'} on this device, and used instead of the languages above for those titles.`
+    : 'Audio and subtitle choices made in the player are remembered per show or movie on this device, and used instead of the languages above for that title.');
+  const btn = n ? h('button', { class: 'btn sm', type: 'button', onclick: async (e) => {
+    if (!(await confirmDialog(`Forget the audio and subtitle choices for ${n} title${n === 1 ? '' : 's'}? They’ll use the languages above again.`, 'Forget', false, 'Forget per-title choices?'))) return;
+    forgetTracks();
+    toast('Per-title choices forgotten', 'ok');
+    e.target.closest('.remembered-tracks')?.replaceWith(rememberedTracksRow());
+  } }, 'Forget per-title choices') : null;
+  return h('div', { class: 'row wrap remembered-tracks', style: { gap: '10px', alignItems: 'center' } }, help, btn);
+}
+
 // ---------- per-device playback prefs ----------
 let capsOpen = false; // stays open across re-renders
 function prefsSection() {
@@ -161,7 +179,11 @@ function prefsSection() {
         field('Subtitle size', select(p.subSize, [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']], set('subSize'))),
         field('Subtitle position', select(p.subPos, [['low', 'Low'], ['normal', 'Normal'], ['high', 'High']], set('subPos')))),
       toggleRow('Subtitle background box', null, p.subBg, set('subBg')),
+      rememberedTracksRow(),
       toggleRow('Burn in image subtitles', 'Blu-ray (PGS) subtitles are drawn over the video in the browser. Turn this on to have the server burn them into the picture instead, which means transcoding.', p.burnImageSubs, set('burnImageSubs'))),
+    h('div', { class: 'form-section' }, h('h2', null, 'Appearance'),
+      h('div', { class: 'form-grid' },
+        field('Theme', select(p.theme, [['system', 'Same as the system'], ['dark', 'Dark'], ['light', 'Light']], (v) => { set('theme')(v); applyTheme(v); }), 'For this device. The player is always dark.'))),
     h('div', { class: 'form-section' }, h('h2', null, 'Player'),
       toggleRow('Autoplay next episode', 'Shows an "Up next" card near the end with a countdown.', p.autoplayNext, set('autoplayNext')),
       toggleRow('Skip intros automatically', 'Otherwise a "Skip Intro" button appears while an intro plays.', p.autoSkipIntro, set('autoSkipIntro')),
@@ -299,7 +321,8 @@ const PW_RULE = { minlength: 12, maxlength: 72 };
 const PW_MSG = 'Use 12–72 bytes (at least 12 characters).';
 const pwLength = (v) => { const n = new TextEncoder().encode(v).length; return n >= 12 && n <= 72; };
 
-function accountSection() {
+async function accountSection() {
+  const devs = await api('/api/me/devices');
   const cur = h('input', { type: 'password', name: 'current-password', autocomplete: 'current-password', required: true });
   const n1 = h('input', { type: 'password', name: 'new-password', autocomplete: 'new-password', required: true, ...PW_RULE });
   const n2 = h('input', { type: 'password', name: 'confirm-password', autocomplete: 'new-password', required: true, ...PW_RULE });
@@ -323,7 +346,38 @@ function accountSection() {
     // Lets password managers file the new password under this account.
     h('input', { type: 'text', name: 'username', autocomplete: 'username', value: state.me.name, hidden: true, readonly: true, tabindex: -1 }),
     field('Current password', cur), field('New password', n1, 'Use 12–72 bytes.'), field('Confirm new password', n2),
-    formActions(btn, errors.err)));
+    formActions(btn, errors.err)), myDevices(devs));
+}
+
+// "Your devices" on the Account page: the user's own sessions, each with Sign
+// out, plus Sign out everywhere else. Admins also see everyone's on Devices.
+function myDevices(devs) {
+  const signOut = async (e, d) => {
+    const btn = e.currentTarget;
+    if (d.current) {
+      if (await run(btn, () => api('/api/auth/logout', { method: 'POST' }))) { setLeaveGuard(null); location.hash = ''; location.reload(); }
+      return;
+    }
+    if (!(await confirmDialog(`Sign out ${d.client} (${d.ip})? It will need to sign in again.`, 'Sign out', true, 'Sign out device?'))) return;
+    if (!(await run(btn, () => api(`/api/me/devices/${d.prefix}`, { method: 'DELETE' }), `Signed out ${d.client}`))) return;
+    const i = devs.indexOf(d), next = devs[i + 1] || devs[i - 1];
+    if (next) focusAfterRoute(`my-device-${next.prefix}`);
+    refreshSoft();
+  };
+  const others = devs.filter((d) => !d.current).length;
+  const signOutOthers = async (e) => {
+    if (!(await confirmDialog(`Sign out ${others === 1 ? 'your other device' : `your ${others} other devices`}? You stay signed in here.`, 'Sign out', true, 'Sign out everywhere else?'))) return;
+    if (await run(e.currentTarget, () => api('/api/me/devices', { method: 'DELETE' }), 'Signed out everywhere else')) refreshSoft();
+  };
+  return h('div', { class: 'form-section' }, h('h2', null, 'Your devices'),
+    h('p', { class: 'muted', style: { margin: 0 } }, 'Where you’re signed in. Sign out a lost or shared device here; changing your password also signs out every other device.'),
+    h('div', { class: 'table-wrap' }, h('table', { class: 'tbl stack' }, h('tr', null, h('th', null, 'Client'), h('th', null, 'IP'), h('th', null, 'Signed in'), h('th', null, 'Last seen'), actionsTh()),
+      devs.map((d) => h('tr', null,
+        h('td', null, h('b', null, d.client), d.current ? [' ', h('span', { class: 'chip this-device' }, 'This device')] : null),
+        h('td', { class: 'mono' }, d.ip), h('td', { 'data-label': 'Signed in' }, fmtDate(d.created)), h('td', { 'data-label': 'Last seen' }, timeAgo(d.lastSeen)),
+        h('td', null, h('div', { class: 'row wrap tbl-actions' }, h('button', { class: 'btn sm danger', dataset: { focusKey: `my-device-${d.prefix}` },
+          'aria-label': d.current ? 'Sign out here (this device)' : `Sign out ${d.client} (${d.ip})`, onclick: (e) => signOut(e, d) }, d.current ? 'Sign out here' : 'Sign out'))))))),
+    others ? h('div', { class: 'row wrap' }, h('button', { class: 'btn danger', type: 'button', onclick: signOutOthers }, 'Sign out everywhere else')) : null);
 }
 
 // ---------- server config (shared by several sections) ----------
@@ -718,7 +772,9 @@ async function metadataSection() {
       field('OpenSubtitles API key', text('openSubtitlesKey', { type: 'password', autocomplete: 'off' })),
       h('div', { class: 'form-grid' },
         field('OpenSubtitles username', text('openSubtitlesUser', { autocomplete: 'off' })),
-        field('OpenSubtitles password', text('openSubtitlesPass', { type: 'password', autocomplete: 'new-password' })))),
+        field('OpenSubtitles password', text('openSubtitlesPass', { type: 'password', autocomplete: 'new-password' }))),
+      field('Who can download subtitles', select(draft.subtitleDownloads, [['everyone', 'Everyone'], ['admins', 'Admins only']], (v) => { draft.subtitleDownloads = v; }),
+        'Downloads use this server’s one OpenSubtitles account and its daily allowance, and are added to the file for everyone. Users can still remove subtitles they downloaded.')),
     h('div', { class: 'form-section' }, h('h2', null, 'Seek previews'),
       h('p', { class: 'help', style: { margin: 0 } }, 'Thumbnails shown while hovering or dragging the seek bar. Generated in the background from keyframes only, at the lowest priority, and paused during playback (except for files in the SSD cache). About 1–3 MB per movie.'),
       tg('trickplayEnabled', 'Generate seek previews'),
@@ -745,6 +801,7 @@ async function metadataSection() {
     h('p', { class: 'help', style: { margin: 0 } }, 'These run now, using the saved settings. Save your changes above first.'),
     h('div', { class: 'row wrap' },
       h('button', { class: 'btn', type: 'button', onclick: (e) => run(e.currentTarget, () => api('/api/admin/metadata/refresh', { method: 'POST', body: { missingOnly: true } }), 'Retrying unmatched items') }, 'Retry unmatched items'),
+      h('button', { class: 'btn', type: 'button', 'aria-haspopup': 'dialog', onclick: () => unmatchedModal() }, 'Show unmatched items'),
       h('button', { class: 'btn', type: 'button', onclick: async (e) => {
         const btn = e.currentTarget;
         if (await confirmDialog('Re-fetch metadata for every item? Manual matches are kept.', 'Refresh', false, 'Refresh all metadata?')) await run(btn, () => api('/api/admin/metadata/refresh', { method: 'POST', body: {} }), 'Refreshing all metadata in the background');
@@ -1713,8 +1770,9 @@ async function libraryTab() {
     h('div', { class: 'stats-grid' },
       stat('Movies', st.movies.toLocaleString()),
       stat('Shows', st.shows.toLocaleString(), `${st.seasons} seasons · ${st.episodes.toLocaleString()} episodes`),
-      stat('Storage', fmtBytes(st.totalBytes), `${st.files.toLocaleString()} files · ${fmtHours(st.totalDuration / 3600)} of video${st.unprobed ? ` · ${st.unprobed} awaiting analysis` : ''}${st.probeErrors ? ` · ${st.probeErrors} unreadable` : ''}`),
-      stat('Metadata', `${st.metaMatched} matched`, `${st.metaMissing} not found · ${st.metaPending} pending`)),
+      stat('Storage', fmtBytes(st.totalBytes), [`${st.files.toLocaleString()} files · ${fmtHours(st.totalDuration / 3600)} of video${st.unprobed ? ` · ${st.unprobed} awaiting analysis` : ''}`,
+        st.probeErrors ? [' · ', h('button', { class: 'link-btn', type: 'button', 'aria-haspopup': 'dialog', onclick: () => unreadableModal() }, `${st.probeErrors} unreadable`)] : null]),
+      stat('Metadata', `${st.metaMatched} matched`, [st.metaMissing ? h('button', { class: 'link-btn', type: 'button', 'aria-haspopup': 'dialog', onclick: () => unmatchedModal() }, `${st.metaMissing} not found`) : '0 not found', ` · ${st.metaPending} pending`])),
     st.files ? compatPanel() : null,
     st.files ? h('p', { class: 'small dim', style: { margin: '0 0 10px' } }, 'Bars show storage used; file counts are in brackets. Select a row to see its titles.') : null,
     h('div', { class: 'dash-3' },
@@ -1731,6 +1789,87 @@ const DIM_LABEL = { library: 'Library', resolution: 'Resolution', hdr: 'HDR', vi
 // libraryTitles shows the movies and shows in one Library-stats category.
 function libraryTitles(dim, key, label) {
   return titlesModal(label, () => api(`/api/admin/stats/library/titles?dim=${encodeURIComponent(dim)}&key=${encodeURIComponent(key)}`));
+}
+
+const META_STATUS = { 2: 'Not found', 3: 'Local artwork only' };
+
+// unmatchedModal lists the movies and shows without a metadata match, each
+// with the folder it was parsed from (often why it missed) and Fix match.
+export async function unmatchedModal() {
+  const list = h('div', { class: 'title-list' }, spinner());
+  const count = h('div', { class: 'small muted' });
+  const m = modal({ title: 'Unmatched titles', wide: true, body: [
+    h('p', { class: 'help', style: { marginTop: 0 } }, 'No metadata provider matched these. A folder name that isn’t “Title (Year)” is the usual cause: rename it, or pick the right title with Fix match.'), count, list] });
+  const counted = (n) => { count.textContent = `${n} title${n === 1 ? '' : 's'}`; };
+  try {
+    const rows = await api('/api/admin/stats/library/unmatched');
+    counted(rows.length);
+    clear(list);
+    if (!rows.length) list.append(h('div', { class: 'dim' }, 'Every title has a match.'));
+    let left = rows.length;
+    for (const r of rows) {
+      const row = h('div', { class: 'title-row' },
+        h('img', { src: img({ id: r.itemId }, 'poster', 80), alt: '', loading: 'lazy' }),
+        h('div', { class: 'grow', style: { minWidth: 0 } },
+          h('a', { class: 'ellipsis plain-link', href: `#/item/${r.itemId}`, onclick: () => m.close() }, r.title, r.year ? h('span', { class: 'dim' }, ` (${r.year})`) : null),
+          h('div', { class: 'small dim ellipsis', title: r.path }, `${r.kind === 'show' ? 'Show' : 'Movie'} · ${r.library} · `, h('span', { class: 'mono' }, r.path)),
+          h('div', { class: 'small muted' }, META_STATUS[r.metaStatus] || '')),
+        h('button', { class: 'btn sm', type: 'button', onclick: () => fixMatch({ id: r.itemId, kind: r.kind, title: r.title, year: r.year }, { onDone: () => {
+          row.remove();
+          counted(--left);
+          if (!left) list.append(h('div', { class: 'dim' }, 'Every title has a match.'));
+        } }) }, 'Fix match'));
+      list.append(row);
+    }
+  } catch (e) {
+    clear(list).append(h('div', { class: 'bad' }, e.message));
+  }
+  return m;
+}
+
+// unreadableModal lists the files ffprobe couldn't read with the error, each
+// with Probe again (failed files are otherwise retried with a growing delay).
+async function unreadableModal() {
+  const list = h('div', { class: 'title-list' }, spinner());
+  const count = h('div', { class: 'small muted' });
+  modal({ title: 'Unreadable files', wide: true, body: [
+    h('p', { class: 'help', style: { marginTop: 0 } }, 'ffprobe couldn’t read these files, so they have no duration or codecs and may not play. A damaged or still-copying file, or a share that timed out, are the usual causes. Lex retries them by itself with a growing delay.'), count, list] });
+  const counted = (n) => { count.textContent = `${n} file${n === 1 ? '' : 's'}`; };
+  try {
+    const rows = await api('/api/admin/stats/library/unreadable');
+    counted(rows.length);
+    clear(list);
+    if (!rows.length) list.append(h('div', { class: 'dim' }, 'Every file is readable.'));
+    let left = rows.length;
+    for (const r of rows) {
+      const title = r.show ? `${r.show} · S${r.season} E${r.episode}` : r.title;
+      const err = h('div', { class: 'small bad', style: { overflowWrap: 'anywhere' } }, r.error);
+      const when = h('div', { class: 'small dim' }, `Tried ${r.attempts} time${r.attempts === 1 ? '' : 's'}, last ${timeAgo(r.probedAt)} · ${fmtBytes(r.size)}`);
+      const btn = h('button', { class: 'btn sm', type: 'button' }, 'Probe again');
+      const row = h('div', { class: 'title-row', style: { alignItems: 'flex-start' } },
+        h('div', { class: 'grow', style: { minWidth: 0 } },
+          h('a', { class: 'plain-link', href: `#/item/${r.itemId}` }, title),
+          h('div', { class: 'small mono dim', style: { overflowWrap: 'anywhere' } }, r.path), err, when),
+        btn);
+      btn.onclick = async () => {
+        let res = null;
+        if (!(await run(btn, async () => { res = await api(`/api/admin/files/${r.fileId}/probe`, { method: 'POST' }); }, undefined, { busyLabel: 'Probing…' }))) return;
+        if (res.ok) {
+          toast('The file is readable now', 'ok');
+          row.remove();
+          counted(--left);
+          if (!left) list.append(h('div', { class: 'dim' }, 'Every file is readable.'));
+          return;
+        }
+        err.textContent = res.error;
+        when.textContent = `Tried again just now · ${fmtBytes(r.size)}`;
+        toast('Still unreadable', 'error');
+      };
+      list.append(row);
+    }
+  } catch (e) {
+    clear(list).append(h('div', { class: 'bad' }, e.message));
+  }
 }
 
 // titlesModal lists the movies and shows load() resolves to (LibraryTitle).

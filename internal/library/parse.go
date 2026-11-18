@@ -387,3 +387,69 @@ func Normalize(s string) string {
 	}
 	return b.String()
 }
+
+var (
+	// Plex's {edition-Director's Cut} tag names the edition outright.
+	reEditionTag = regexp.MustCompile(`(?i)\{edition-([^}]+)\}`)
+	reEditions   = []struct {
+		re   *regexp.Regexp
+		name string
+	}{
+		{regexp.MustCompile(`(?i)\bdirector'?s[ ._-]?cut\b`), "Director's Cut"},
+		{regexp.MustCompile(`(?i)\bfinal[ ._-]?cut\b`), "Final Cut"},
+		{regexp.MustCompile(`(?i)\bultimate[ ._-]?(?:cut|edition)\b`), "Ultimate Cut"},
+		{regexp.MustCompile(`(?i)\btheatrical(?:[ ._-]?(?:cut|edition|version))?\b`), "Theatrical"},
+		{regexp.MustCompile(`(?i)\bextended(?:[ ._-]?(?:cut|edition|version))?\b`), "Extended"},
+		{regexp.MustCompile(`(?i)\bspecial[ ._-]?edition\b`), "Special Edition"},
+		{regexp.MustCompile(`(?i)\bcriterion\b`), "Criterion"},
+		{regexp.MustCompile(`(?i)\bunrated\b`), "Unrated"},
+		{regexp.MustCompile(`(?i)\buncut\b`), "Uncut"},
+		{regexp.MustCompile(`(?i)\bimax\b`), "IMAX"},
+		{regexp.MustCompile(`(?i)\bremastered\b`), "Remastered"},
+	}
+	// cd1, disc 2, part.3, pt2: one part of a film split across files.
+	rePart = regexp.MustCompile(`(?i)(?:^|[ ._\-\[(])(?:cd|dvd|disc|disk|part|pt)[ ._-]?(\d{1,2})(?:$|[ ._\-\])])`)
+	reYear = regexp.MustCompile(`(?:^|[ ._\-(\[])(?:19|20)\d{2}(?:$|[ ._\-)\]])`)
+)
+
+// afterYear is the part of a file name after its release year (the whole
+// name when there's none): edition and part words before the year belong to
+// the title ("Uncut Gems (2019)", "Kill Bill Part 2 (2004)").
+func afterYear(path string) string {
+	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if locs := reYear.FindAllStringIndex(name, -1); len(locs) > 0 {
+		return name[locs[len(locs)-1][1]:]
+	}
+	return name
+}
+
+// Edition names the cut a video file holds ("Director's Cut", "Extended",
+// …) from its file name, or "" when the name gives none. It tells versions
+// of one title apart.
+func Edition(path string) string {
+	name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if m := reEditionTag.FindStringSubmatch(name); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	rest := afterYear(path)
+	for _, e := range reEditions {
+		if e.re.MatchString(rest) {
+			return e.name
+		}
+	}
+	return ""
+}
+
+// Part is the part number of a film split across files (Movie cd1.mkv,
+// Movie part 2.mkv), or 0.
+func Part(path string) int {
+	m := rePart.FindStringSubmatch(afterYear(path))
+	if m == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[1])
+	if n < 1 {
+		return 0
+	}
+	return n
+}

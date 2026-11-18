@@ -68,6 +68,9 @@ type Session struct {
 	// Extra is a local extra (trailer, featurette, ...): watching one saves
 	// no resume position, watched mark or history for its title.
 	Extra bool `json:"extra"`
+	// CreditsAt is where the end credits start (detected, or a Credits
+	// chapter), or 0 when unknown. Reaching it marks the title watched.
+	CreditsAt float64 `json:"-"`
 	// AuthToken is the login token that opened (or last re-planned) the
 	// session; the HLS stream key is only valid while it is.
 	AuthToken string `json:"-"`
@@ -169,6 +172,9 @@ func (m *Manager) Open(s *Session) (*Session, error) {
 		old.Method, old.Reasons, old.VideoOut, old.AudioOut, old.OutBitrate = s.Method, s.Reasons, s.VideoOut, s.AudioOut, s.OutBitrate
 		old.FileID, old.VideoIn, old.AudioIn, old.Container, old.SrcBitrate = s.FileID, s.VideoIn, s.AudioIn, s.Container, s.SrcBitrate
 		old.Cached, old.HLS, old.Extra = s.Cached, s.HLS, s.Extra
+		if s.CreditsAt > 0 {
+			old.CreditsAt = s.CreditsAt
+		}
 		if s.AuthToken != "" {
 			old.AuthToken = s.AuthToken
 		}
@@ -319,7 +325,7 @@ func (m *Manager) Heartbeat(id string, uid int64, pos float64, paused bool, cs C
 	stuck, resumed := s.watchProgress(now, pos, paused)
 	s.lastPos, s.lastBeat = pos, now
 	s.Position, s.Paused, s.Client_, s.LastSeen = pos, paused, cs, now.Unix()
-	itemID, dur, playedSet, live, watched := s.ItemID, s.Duration, s.playedSet, s.Live || s.Extra, s.Watched
+	itemID, dur, credits, playedSet, live, watched := s.ItemID, s.Duration, s.CreditsAt, s.playedSet, s.Live || s.Extra, s.Watched
 	user, title, method, client := s.UserName, s.Title, s.Method, s.Client
 	m.mu.Unlock()
 	if stuck != "" {
@@ -331,7 +337,7 @@ func (m *Manager) Heartbeat(id string, uid int64, pos float64, paused bool, cs C
 
 	switch {
 	case live:
-	case nearEnd(pos, dur):
+	case nearEnd(pos, dur, credits):
 		// Reaching the end by scrubbing isn't watching it: wait until the
 		// session has some real playback behind it.
 		if !playedSet && watched >= minWatchedToMark {
@@ -362,10 +368,26 @@ func (m *Manager) Heartbeat(id string, uid int64, pos float64, paused bool, cs C
 // the end marks the title watched.
 const minWatchedToMark = 30
 
-// nearEnd reports whether a position counts as finished: past 92%, or within
-// the last two minutes of anything longer than 20 minutes.
-func nearEnd(pos, dur float64) bool {
-	return dur > 0 && pos/dur >= 0.92 || (dur > 1200 && dur-pos < 120 && pos > 0)
+// nearEnd reports whether a position counts as finished. When the end
+// credits' start is known, that is reaching the credits. Otherwise it is the
+// last 8% of the runtime, but never more than five minutes before the end
+// (so stopping 12 minutes before the end of a long film keeps the resume
+// point) and, for anything over 20 minutes, at least the last two minutes.
+func nearEnd(pos, dur, credits float64) bool {
+	if dur <= 0 || pos <= 0 {
+		return false
+	}
+	// Credits in the second half only: an early "credits" mark is a bad
+	// detection or chapter name, not the end of the story. A couple of
+	// seconds' slack covers a stop right as they begin.
+	if credits >= dur/2 && credits < dur {
+		return pos >= credits-2
+	}
+	left := min(dur*0.08, 300)
+	if dur > 1200 {
+		left = max(left, 120)
+	}
+	return dur-pos <= left
 }
 
 // A session whose position hasn't moved for stuckAfter while unpaused, with

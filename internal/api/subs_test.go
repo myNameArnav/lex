@@ -141,3 +141,61 @@ func TestSubSearchNoKeyAndDownloadedBy(t *testing.T) {
 		t.Fatalf("stream JSON %s lacks downloadedBy", b)
 	}
 }
+
+// With subtitle downloads limited to admins, other users can neither search
+// nor download (403 not_allowed, before any OpenSubtitles call), and /api/me
+// hides the search for them.
+func TestSubtitleDownloadsAdminsOnly(t *testing.T) {
+	s, h := securityServer(t)
+	admin, _ := s.St.CreateInitialAdmin("admin", "test-password-123")
+	bob, _ := s.St.CreateUser("bob", "test-password-123", false)
+	for _, q := range []string{
+		`INSERT INTO libraries(id,name,kind,paths,created_at) VALUES(1,'Movies','movies','[]',0)`,
+		`INSERT INTO items(id,library_id,kind,title,sort_title,added_at,updated_at) VALUES(1,1,'movie','Dune','dune',0,0)`,
+		`INSERT INTO files(id,item_id,library_id,path,size,mtime,added_at) VALUES(1,1,1,'/missing/dune.mkv',1,1,0)`,
+	} {
+		if _, err := s.St.DB().Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := s.St.Config()
+	c.OpenSubtitlesKey = "test-key"
+	c.SubtitleDownloads = "admins"
+	if _, err := s.St.SaveConfig(c); err != nil {
+		t.Fatal(err)
+	}
+	adminTok, _ := s.St.CreateToken(admin.ID, "Test", "127.0.0.1")
+	bobTok, _ := s.St.CreateToken(bob.ID, "Test", "127.0.0.1")
+	for _, req := range []struct{ method, path, body string }{
+		{"GET", "/api/files/1/subsearch?lang=eng", ""},
+		{"POST", "/api/files/1/subsearch", `{"fileId":5}`},
+	} {
+		w := adminRequest(t, h, bobTok, req.method, req.path, req.body)
+		var body struct{ Code string }
+		json.Unmarshal(w.Body.Bytes(), &body)
+		if w.Code != 403 || body.Code != "not_allowed" {
+			t.Fatalf("%s %s as user = %d %s, want 403 not_allowed", req.method, req.path, w.Code, w.Body)
+		}
+	}
+	caps := func(tok string) bool {
+		w := adminRequest(t, h, tok, "GET", "/api/me", "")
+		var me struct{ Caps struct{ SubtitleSearch bool } }
+		json.Unmarshal(w.Body.Bytes(), &me)
+		return me.Caps.SubtitleSearch
+	}
+	if caps(bobTok) {
+		t.Fatal("subtitle search offered to a user when downloads are admins-only")
+	}
+	if !caps(adminTok) {
+		t.Fatal("subtitle search hidden from the admin")
+	}
+	c.SubtitleDownloads = "everyone"
+	s.St.SaveConfig(c)
+	if !caps(bobTok) {
+		t.Fatal("subtitle search hidden from a user when downloads are open to everyone")
+	}
+	c.SubtitleDownloads = "bogus"
+	if c, _ = s.St.SaveConfig(c); c.SubtitleDownloads != "everyone" {
+		t.Fatalf("unknown setting saved as %q, want everyone", c.SubtitleDownloads)
+	}
+}

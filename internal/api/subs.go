@@ -80,7 +80,26 @@ func writeNoKey(w http.ResponseWriter) {
 	json.NewEncoder(w).Encode(map[string]string{"error": subsearch.ErrNoKey.Error(), "code": "no_key"})
 }
 
+// subsAllowed says whether u may search and download subtitles: admins can
+// keep the server's OpenSubtitles allowance to themselves.
+func subsAllowed(c store.Config, u *store.User) bool {
+	return u.IsAdmin || c.SubtitleDownloads != "admins"
+}
+
+// writeNotAllowed answers a subtitle search or download by a user the
+// server's setting leaves out.
+func writeNotAllowed(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(403)
+	json.NewEncoder(w).Encode(map[string]string{"error": "only admins can download subtitles on this server", "code": "not_allowed"})
+}
+
 func (s *Server) subSearch(w http.ResponseWriter, r *http.Request) {
+	if !subsAllowed(s.St.Config(), userOf(r)) {
+		writeNotAllowed(w)
+		return
+	}
 	f, ok := s.pathFile(w, r)
 	if !ok {
 		return
@@ -133,6 +152,10 @@ func (s *Server) subSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) subDownload(w http.ResponseWriter, r *http.Request) {
+	if !subsAllowed(s.St.Config(), userOf(r)) {
+		writeNotAllowed(w)
+		return
+	}
 	f, ok := s.pathFile(w, r)
 	if !ok {
 		return
@@ -153,14 +176,20 @@ func (s *Server) subDownload(w http.ResponseWriter, r *http.Request) {
 	// than spending quota on a second copy.
 	if d, err := s.St.DownloadedSubByPath(f.ID, path); err == nil {
 		if st, err := os.Stat(path); err == nil && st.Size() > 0 {
-			s.writeDownloaded(w, f.ID, d.ID)
+			s.writeDownloaded(w, f.ID, d.ID, -1)
 			return
 		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
-	data, _, err := s.subClient().Download(ctx, req.FileID)
-	if err != nil {
+	data, _, remaining, err := s.subClient().Download(ctx, req.FileID)
+	if errors.Is(err, subsearch.ErrQuota) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(429)
+		json.NewEncoder(w).Encode(map[string]any{"error": subsearch.ErrQuota.Error(), "code": "quota", "remaining": 0})
+		return
+	} else if err != nil {
 		writeErr(w, 502, err.Error())
 		return
 	}
@@ -183,19 +212,27 @@ func (s *Server) subDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Log.Infof("subtitles: downloaded %s (%s) for %s", title, d.Language, filepath.Base(f.Path))
-	s.writeDownloaded(w, f.ID, d.ID)
+	s.writeDownloaded(w, f.ID, d.ID, remaining)
 }
 
-// writeDownloaded responds with the stream entry for a downloaded subtitle.
-func (s *Server) writeDownloaded(w http.ResponseWriter, fileID, id int64) {
-	st := s.downloadedStreams(fileID)
-	for _, x := range st {
-		if x.Index == store.DownloadedSubBase+int(id) {
-			writeJSON(w, x)
-			return
+// writeDownloaded responds with the stream entry for a downloaded subtitle,
+// and the downloads left today when known (remaining >= 0), so the search
+// dialog can show the shared allowance.
+func (s *Server) writeDownloaded(w http.ResponseWriter, fileID, id int64, remaining int) {
+	var out struct {
+		store.Stream
+		Remaining *int `json:"remaining,omitempty"`
+	}
+	out.Index = store.DownloadedSubBase + int(id)
+	for _, x := range s.downloadedStreams(fileID) {
+		if x.Index == out.Index {
+			out.Stream = x
 		}
 	}
-	writeJSON(w, map[string]int{"index": store.DownloadedSubBase + int(id)})
+	if remaining >= 0 {
+		out.Remaining = &remaining
+	}
+	writeJSON(w, out)
 }
 
 func (s *Server) subDelete(w http.ResponseWriter, r *http.Request) {
