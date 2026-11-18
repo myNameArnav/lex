@@ -305,6 +305,13 @@ func (g *Generator) generate(f *store.File) error {
 	args = append(args, "-skip_frame", "nokey", "-i", src, "-an", "-sn", "-dn",
 		"-vf", fmt.Sprintf("fps=1/%d,scale=%d:%d:flags=fast_bilinear,tile=%dx%d", interval, width, height, cols, rows),
 		"-q:v", "7", "-f", "image2", filepath.Join(tmp, "%d.jpg"))
+	// One whole-file background read at a time (see proc.AcquireDisk).
+	release, err := proc.AcquireDisk(context.Background())
+	if err != nil {
+		os.RemoveAll(tmp)
+		return err
+	}
+	defer release()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, g.ffmpeg, args...)

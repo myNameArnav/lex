@@ -31,6 +31,10 @@ import (
 // Each Chromaprint (algorithm 2) point covers 4096/11025/3 seconds.
 const pointSecs = 4096.0 / 11025.0 / 3.0
 
+// stallLimit: a fingerprint run that reports no progress for this long is
+// stuck, not slow, and is stopped.
+const stallLimit = 2 * time.Minute
+
 const (
 	maxBitDiff = 6   // bits that may differ for two points to count as equal
 	maxGapSecs = 3.5 // tolerated mismatch inside an intro
@@ -470,9 +474,18 @@ func (d *Detector) chromaprint(ctx context.Context, ep *episode, from, secs floa
 	if audio < 0 {
 		return nil
 	}
-	cctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	// One whole-file background read at a time (see proc.AcquireDisk).
+	release, err := proc.AcquireDisk(ctx)
+	if err != nil {
+		return nil
+	}
+	defer release()
+	// ffmpeg reads the whole file to get secs of audio, which takes many
+	// minutes on a busy hard drive: it's stopped when it stops making
+	// progress, not after a fixed time.
+	cctx, cancel := context.WithTimeout(ctx, 45*time.Minute)
 	defer cancel()
-	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error"}
+	args := append([]string{"-hide_banner", "-nostdin", "-loglevel", "error"}, proc.ProgressArgs...)
 	if from > 0 {
 		args = append(args, "-ss", strconv.FormatFloat(from, 'f', 3, 64))
 	}
@@ -481,12 +494,9 @@ func (d *Detector) chromaprint(ctx context.Context, ep *episode, from, secs floa
 	cmd := exec.CommandContext(cctx, d.ffmpeg, args...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Start(); err != nil {
-		return nil
-	}
-	// Background analysis must never compete with playback.
-	proc.Nice(cmd.Process.Pid, 19)
-	if err := cmd.Wait(); err != nil || out.Len() < 4*50 {
+	// Background analysis must never compete with playback: RunWatched
+	// runs it at the lowest priority.
+	if err := proc.RunWatched(cmd, stallLimit); err != nil || out.Len() < 4*50 {
 		d.log.Warnf("intro: fingerprint %s at %.0fs failed: %v %s", ep.item.Title, from, err, errb.String())
 		return nil
 	}
