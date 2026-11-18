@@ -21,3 +21,8 @@ export const secs = (s) => (s < 600 ? `${Math.round(s)}s` : fmtTime(s));
 export const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 // The server says "copy"; the UI says "copied".
 export const copied = (s) => (s || '').replace(/ \(copy\)$/, ' · copied');
+
+// Vendored libraries (static/vendor/), relative to this module so they come
+// from the same build prefix (and long-lived cache) as the code; see
+// buildPrefix in internal/api/server.go.
+export const vendorURL = (p) => new URL(`../../vendor/${p}`, import.meta.url).href;

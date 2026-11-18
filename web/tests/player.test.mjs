@@ -895,7 +895,7 @@ test('discarded video with transcoding off explains what happened instead of the
 test('feature modules in player/ are installed as Player methods, like its own', async () => {
   const { player } = await fixture();
   const proto = Object.getPrototypeOf(player);
-  for (const name of ['tune', 'goLive', 'switchChannel', 'checkUpNext', 'playNext', 'onMovieEnd', 'checkSkip', 'credits', 'chapters', 'jumpChapter', 'loadTrickplay', 'renderThumb']) {
+  for (const name of ['tune', 'goLive', 'switchChannel', 'checkUpNext', 'playNext', 'onMovieEnd', 'checkSkip', 'credits', 'chapters', 'jumpChapter', 'loadTrickplay', 'renderThumb', 'setSubtitleTrack', 'setASS', 'searchSubtitles', 'chooseSubtitle', 'chooseAudio', 'applyFx', 'toggleStats', 'renderStats', 'toggleMenu', 'renderMenu', 'closeMenu']) {
     const desc = Object.getOwnPropertyDescriptor(proto, name);
     assert.equal(typeof desc?.value, 'function', name);
     assert.equal(desc.enumerable, false, name);
