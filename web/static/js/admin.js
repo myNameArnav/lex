@@ -108,30 +108,69 @@ export async function settingsView(ctx, section) {
   return view;
 }
 
+// A setting's description sits behind an ⓘ button beside its name, so a
+// page reads as a list of settings rather than paragraphs. The text stays in
+// the page (hidden until opened), so it is still the control's description
+// for screen readers and still found by the browser's find-in-page.
+let infoId = 0;
+function infoPair(name, help, tag = 'div') {
+  const text = h(tag, { class: 'help info-text', id: `info-${++infoId}`, hidden: true }, help);
+  const btn = h('button', { type: 'button', class: 'info-btn', title: 'More about this', 'aria-label': `About ${name}`, 'aria-expanded': 'false', 'aria-controls': text.id, html: icons.info,
+    onclick: (e) => {
+      e.preventDefault(); // not the label's click: it would toggle or focus the control
+      text.hidden = !text.hidden;
+      btn.setAttribute('aria-expanded', String(!text.hidden));
+      btn.classList.toggle('on', !text.hidden);
+    } });
+  return [btn, text];
+}
+const nameOf = (label) => (typeof label === 'string' ? label : label?.textContent || 'this setting');
+
+// heading is a section's title with its description behind an ⓘ button.
+function heading(title, ...help) {
+  const [btn, text] = infoPair(title, help, 'p');
+  return [h('h2', { class: 'with-info' }, title, btn), text];
+}
+
 // field wraps a control with its label and help. The label alone names the
 // control; the help describes it (so it isn't read as part of the name).
-// help may be text or a ready .help element.
+// Text help goes behind an ⓘ button; help that is already an element (a
+// status or a warning) stays in view.
 let fieldId = 0;
 function field(label, input, help) {
   const id = `field-${++fieldId}`;
-  const helpEl = help == null ? null : help instanceof Node ? help : h('div', { class: 'help' }, help);
-  if (helpEl) helpEl.id = `${id}-h`;
-  if (input.matches?.('input, select, textarea')) {
+  let btn = null, helpEl = null;
+  if (help instanceof Node) helpEl = help;
+  else if (help != null && help !== '') [btn, helpEl] = infoPair(nameOf(label), help);
+  if (helpEl) helpEl.id ||= `${id}-h`;
+  const isControl = input.matches?.('input, select, textarea');
+  if (isControl) {
     // aria-label for plain text: Chrome would read the label's CSS uppercase into the name.
     if (typeof label === 'string') input.setAttribute('aria-label', label);
     else input.setAttribute('aria-labelledby', `${id}-l`);
     if (helpEl) input.setAttribute('aria-describedby', [helpEl.id, input.getAttribute('aria-describedby')].filter(Boolean).join(' '));
+    input.id ||= `${id}-c`;
   }
-  return h('label', { class: 'field' }, h('span', { id: `${id}-l` }, label), input, helpEl);
+  // for= keeps the ⓘ button (the first button in the label) from becoming
+  // the control the label clicks.
+  return h('label', { class: 'field', for: btn ? (isControl ? input.id : `${id}-none`) : null }, h('span', { id: `${id}-l` }, label, btn), input, helpEl);
 }
 
 let toggleId = 0;
 function toggleRow(label, help, checked, onchange, { disabled = false } = {}) {
   const control = toggle(checked, onchange, label);
-  const helpId = `toggle-help-${++toggleId}`;
-  if (help) control.firstChild.setAttribute('aria-describedby', helpId);
-  control.firstChild.disabled = disabled;
-  return h('label', { class: 'toggle-row' }, h('span', { class: 'lbl' }, h('b', null, label), help ? h('span', { class: 'help', id: helpId }, help) : null), control);
+  const input = control.firstChild;
+  input.id = `toggle-${++toggleId}`;
+  input.disabled = disabled;
+  let btn = null, helpEl = null;
+  if (help instanceof Node) helpEl = help;
+  else if (help) [btn, helpEl] = infoPair(label, help, 'span');
+  if (helpEl) {
+    helpEl.id ||= `${input.id}-h`;
+    helpEl.classList.add('help');
+    input.setAttribute('aria-describedby', helpEl.id);
+  }
+  return h('label', { class: 'toggle-row', for: input.id }, h('span', { class: 'lbl' }, h('span', { class: 'lbl-name' }, h('b', null, label), btn), helpEl), control);
 }
 
 function select(value, options, onchange) {
@@ -153,8 +192,7 @@ function subStyleSection(p, set) {
     pick('Background color', 'subBgColor', SUB_COLORS),
     pick('Background opacity', 'subBgOpacity', SUB_BG_OPACITIES, Number));
   const edgeColor = pick('Edge color', 'subEdgeColor', SUB_COLORS);
-  const section = h('div', { class: 'form-section' }, h('h2', null, 'Subtitle style'),
-    h('p', { class: 'help', style: { margin: 0 } }, 'Applies to text subtitles (SRT, WebVTT) and the dialogue of styled ASS subtitles, which keep their own font. Image subtitles (PGS) can’t be restyled.'),
+  const section = h('div', { class: 'form-section' }, heading('Subtitle style', 'Applies to text subtitles (SRT, WebVTT) and the dialogue of styled ASS subtitles, which keep their own font. Image subtitles (PGS) can’t be restyled.'),
     preview,
     h('div', { class: 'form-grid' },
       pick('Subtitle size', 'subSize', SUB_SIZES),
@@ -173,18 +211,22 @@ function subStyleSection(p, set) {
 
 // Choices made in the player (audio, subtitles, timing) are kept per show or
 // movie (track-memory.js); the languages above are the defaults for the rest.
+// A row like the others: name, a short status, and Forget when there's any.
 function rememberedTracksRow() {
   const n = rememberedCount();
-  const help = h('span', { class: 'help', style: { flex: '1 1 260px' } }, n
-    ? `Audio and subtitle choices made in the player are remembered for ${n} show${n === 1 ? '' : 's'} or movie${n === 1 ? '' : 's'} on this device, and used instead of the languages above for those titles.`
-    : 'Audio and subtitle choices made in the player are remembered per show or movie on this device, and used instead of the languages above for that title.');
-  const btn = n ? h('button', { class: 'btn sm', type: 'button', onclick: async (e) => {
+  const name = 'Per-title choices';
+  const [btn, more] = infoPair(name, 'Audio and subtitle tracks you pick in the player are remembered for that show or movie on this device, and used instead of the languages above.', 'span');
+  const forget = n ? h('button', { class: 'btn sm', type: 'button', onclick: async (e) => {
     if (!(await confirmDialog(`Forget the audio and subtitle choices for ${n} title${n === 1 ? '' : 's'}? They’ll use the languages above again.`, 'Forget', false, 'Forget per-title choices?'))) return;
     forgetTracks();
     toast('Per-title choices forgotten', 'ok');
     e.target.closest('.remembered-tracks')?.replaceWith(rememberedTracksRow());
-  } }, 'Forget per-title choices') : null;
-  return h('div', { class: 'row wrap remembered-tracks', style: { gap: '10px', alignItems: 'center' } }, help, btn);
+  } }, 'Forget') : null;
+  if (forget) forget.setAttribute('aria-label', `Forget per-title choices (${n})`);
+  return h('div', { class: 'toggle-row remembered-tracks' },
+    h('span', { class: 'lbl' }, h('span', { class: 'lbl-name' }, h('b', null, name), btn),
+      h('span', { class: 'help' }, n ? `Remembered for ${n} title${n === 1 ? '' : 's'}` : 'None yet'), more),
+    forget);
 }
 
 // ---------- per-device prefs ----------
@@ -193,7 +235,7 @@ function rememberedTracksRow() {
 const prefSetter = (k, conv = (x) => x) => (v) => { prefs.set(k, conv(v)); toast('Saved on this device', 'ok'); };
 function devicePage(...sections) {
   return h('div', { class: 'form' },
-    h('p', { class: 'help', style: { margin: 0 } }, 'These settings are stored in this browser, so each device can have its own (e.g. lower quality on your phone).'),
+    h('p', { class: 'help', style: { margin: 0 } }, 'Saved in this browser, so each device can have its own.'),
     sections,
     h('div', null, h('button', { class: 'btn', dataset: { focusKey: 'prefs-reset' }, onclick: resetPrefs }, 'Reset this device’s settings')));
 }
@@ -607,8 +649,7 @@ function arrPage() {
     const radarr = arrRow('Radarr', draft, 'radarrUrl', 'radarrKey', 'Enter Radarr’s address and API key above');
     const sonarr = arrRow('Sonarr', draft, 'sonarrUrl', 'sonarrKey', 'Enter Sonarr’s address and API key above');
     const later = (row) => { let t = 0; return () => { clearTimeout(t); t = setTimeout(row.recheck, 600); }; };
-    return [h('div', { class: 'form-section', dataset: { searchSection: 'Sonarr & Radarr' } }, h('h2', null, 'Sonarr & Radarr'),
-      h('p', { class: 'help', style: { margin: 0 } }, 'Connect them so lex rescans the moment they import, upgrade, rename or delete something, instead of waiting for the next scheduled scan. Radarr is also used as a keyless TMDB source for movies (matched by folder name).'),
+    return [h('div', { class: 'form-section', dataset: { searchSection: 'Sonarr & Radarr' } }, heading('Sonarr & Radarr', 'Connect them so lex rescans the moment they import, upgrade, rename or delete something, instead of waiting for the next scheduled scan. Radarr is also used as a keyless TMDB source for movies (matched by folder name).'),
       h('div', { class: 'form-grid', oninput: later(radarr) },
         field('Radarr URL', text('radarrUrl', { placeholder: 'http://127.0.0.1:7878' })),
         field('Radarr API key', text('radarrKey', { type: 'password', autocomplete: 'off' }), 'Radarr → Settings → General → API Key')),
@@ -770,8 +811,7 @@ async function liveTvSection() {
     return null;
   };
   return configForm(({ draft, tg }) => [
-    h('div', { class: 'form-section' }, h('h2', null, 'Live TV'),
-      h('p', { class: 'help', style: { margin: 0 } }, 'Channels that play the library at random, like broadcast TV: one for everything, one per library and one per common genre (turn off the ones you don’t want), plus any you make below. Everyone tuned to a channel sees the same program. Live TV saves no resume points or watched marks.'),
+    h('div', { class: 'form-section' }, heading('Live TV', 'Channels that play the library at random, like broadcast TV: one for everything, one per library and one per common genre (turn off the ones you don’t want), plus any you make below. Everyone tuned to a channel sees the same program. Live TV saves no resume points or watched marks.'),
       tg('liveTv', 'Enable Live TV', 'Adds Live TV to the menu for every user.'),
       tvAutomaticEditor(draft, auto),
       tvChannelsEditor(draft, genres)),
@@ -823,8 +863,7 @@ function transcodingSection() {
 // saved settings.
 async function metadataSection() {
   const form = await configForm(({ draft, text, tg }) => [
-    h('div', { class: 'form-section' }, h('h2', null, 'Providers'),
-      h('p', { class: 'help', style: { margin: 0 } }, 'TMDB gives the richest data (posters, backdrops, cast, episode stills). Get a free API key at themoviedb.org → Settings → API. Without it, TVmaze is used for shows and your local Radarr (auto-detected, or set under ', h('a', { href: '#/settings/arr' }, 'Sonarr & Radarr'), ') for movies — no keys needed.'),
+    h('div', { class: 'form-section' }, heading('Providers', 'TMDB gives the richest data (posters, backdrops, cast, episode stills). Get a free API key at themoviedb.org → Settings → API. Without it, TVmaze is used for shows and your local Radarr (auto-detected, or set under ', h('a', { href: '#/settings/arr' }, 'Sonarr & Radarr'), ') for movies — no keys needed.'),
       field('TMDB API key or read access token', text('tmdbKey', { type: 'password', placeholder: 'v3 key or v4 token', autocomplete: 'off' }), 'Saving a new key retries unmatched items automatically.'),
       field('Language', text('metadataLanguage', { placeholder: 'en-US' })),
       tg('enableTmdb', 'Use TMDB'),
@@ -832,8 +871,7 @@ async function metadataSection() {
     h('div', { class: 'form-section' }, h('h2', null, 'Local'),
       tg('useLocalMetadata', 'Use local artwork & hints', 'poster.jpg / fanart.jpg / *-thumb.jpg, .plexmatch and .nfo ids.'),
       tg('generateThumbs', 'Generate missing episode thumbnails', 'Grabs one frame with ffmpeg when no still is available (cached).')),
-    h('div', { class: 'form-section' }, h('h2', null, 'Subtitle downloads'),
-      h('p', { class: 'help', style: { margin: 0 } }, 'Search and download subtitles from the player (Subtitles → Search online). Needs a free API key: create an account at opensubtitles.com, then Profile → API consumers → New consumer. Username and password are optional but raise the daily download limit.'),
+    h('div', { class: 'form-section' }, heading('Subtitle downloads', 'Search and download subtitles from the player (Subtitles → Search online). Needs a free API key: create an account at opensubtitles.com, then Profile → API consumers → New consumer. Username and password are optional but raise the daily download limit.'),
       field('OpenSubtitles API key', text('openSubtitlesKey', { type: 'password', autocomplete: 'off' })),
       h('div', { class: 'form-grid' },
         field('OpenSubtitles username', text('openSubtitlesUser', { autocomplete: 'off' })),
@@ -841,8 +879,7 @@ async function metadataSection() {
       field('Who can download subtitles', select(draft.subtitleDownloads, [['everyone', 'Everyone'], ['admins', 'Admins only']], (v) => { draft.subtitleDownloads = v; }),
         'Downloads use this server’s one OpenSubtitles account and its daily allowance, and are added to the file for everyone. Users can still remove subtitles they downloaded.')),
   ]);
-  const actions = h('div', { class: 'form-section' }, h('h2', null, 'Actions'),
-    h('p', { class: 'help', style: { margin: 0 } }, 'These run now, using the saved settings. Save your changes above first.'),
+  const actions = h('div', { class: 'form-section' }, h('h2', null, 'Actions'), h('p', { class: 'help', style: { margin: 0 } }, 'These use the saved settings, so save your changes first.'),
     h('div', { class: 'row wrap' },
       h('button', { class: 'btn', type: 'button', onclick: (e) => run(e.currentTarget, () => api('/api/admin/metadata/refresh', { method: 'POST', body: { missingOnly: true } }), 'Retrying unmatched items') }, 'Retry unmatched items'),
       h('button', { class: 'btn', type: 'button', 'aria-haspopup': 'dialog', onclick: () => unmatchedModal() }, 'Show unmatched items'),
@@ -859,14 +896,12 @@ async function analysisSection() {
   const tasks = await api('/api/admin/tasks').catch(() => null);
   const introOK = tasks?.intro?.available !== false;
   const form = await configForm(({ tg, num }) => [
-    h('div', { class: 'form-section' }, h('h2', null, 'Seek previews'),
-      h('p', { class: 'help', style: { margin: 0 } }, 'Thumbnails shown while hovering or dragging the seek bar. Generated in the background from keyframes only, at the lowest priority, and paused during playback (except for files in the SSD cache). About 1–3 MB per movie.'),
+    h('div', { class: 'form-section' }, heading('Seek previews', 'Thumbnails shown while hovering or dragging the seek bar. Generated in the background from keyframes only, at the lowest priority, and paused during playback (except for files in the SSD cache). About 1–3 MB per movie.'),
       tg('trickplayEnabled', 'Generate seek previews'),
       h('div', { class: 'form-grid' },
         field('Interval (seconds)', num('trickplayInterval', { min: 2, max: 60 }), 'Changes apply to newly generated previews.'),
         field('Thumbnail width (px)', num('trickplayWidth', { min: 120, max: 480, step: 20 })))),
-    h('div', { class: 'form-section' }, h('h2', null, 'Intro & credits detection'),
-      h('p', { class: 'help', style: { margin: 0 } }, 'Finds TV intros and end credits by comparing audio fingerprints of neighbouring episodes (like Jellyfin\'s Intro Skipper), or from chapters named Intro/Opening and Credits/Ending. Runs in the background at the lowest CPU priority after scans.'),
+    h('div', { class: 'form-section' }, heading('Intro & credits detection', 'Finds TV intros and end credits by comparing audio fingerprints of neighbouring episodes (like Jellyfin\'s Intro Skipper), or from chapters named Intro/Opening and Credits/Ending. Runs in the background at the lowest CPU priority after scans.'),
       tg('introDetect', 'Detect intros'),
       h('div', { class: 'form-grid' },
         field('Analyse the first (seconds)', num('introScanSecs', { min: 120, max: 1800, step: 30 }), 'Intros after cold opens can start a few minutes in.'),
@@ -1323,8 +1358,7 @@ async function cacheSection(ctx) {
   };
   const refresh = () => render().catch(() => {});
   const form = await configForm(({ draft, num, text, tg }) => [
-    h('div', { class: 'form-section' }, h('h2', null, 'SSD cache'),
-      h('p', { class: 'help', style: { margin: 0 } }, 'Keeps copies of media on a fast disk (e.g. the SSD) so playback — and seeking — reads from it instead of the hard drive, which can then stay asleep. Files are copied in the background at a capped speed; the least recently watched are evicted first.'),
+    h('div', { class: 'form-section' }, heading('SSD cache', 'Keeps copies of media on a fast disk (e.g. the SSD) so playback — and seeking — reads from it instead of the hard drive, which can then stay asleep. Files are copied in the background at a capped speed; the least recently watched are evicted first.'),
       tg('cacheEnabled', 'Enable SSD cache'),
       field('Cache folder', text('cacheDir', { placeholder: 'default: <data folder>/cache' }), 'A "lex-cache" folder is created inside it. Leave empty to use lex\'s data folder (on the SSD here).'),
       h('div', { class: 'form-grid' },
@@ -1378,8 +1412,7 @@ async function backupsSection() {
   };
   const refresh = () => render().catch((e) => toast(e?.message || String(e), 'error'));
   const form = await configForm(({ num, text, tg }) => [
-    h('div', { class: 'form-section' }, h('h2', null, 'Database backups'),
-      h('p', { class: 'help', style: { margin: 0 } }, 'Copies of the database: users, watch history, matches, collections and settings. lex also backs it up before every upgrade that changes it. Artwork, subtitles and previews aren’t included; they are rebuilt on demand.'),
+    h('div', { class: 'form-section' }, heading('Database backups', 'Copies of the database: users, watch history, matches, collections and settings. lex also backs it up before every upgrade that changes it. Artwork, subtitles and previews aren’t included; they are rebuilt on demand.'),
       tg('backupDaily', 'Back up daily'),
       field('Backup folder', text('backupDir', { placeholder: 'default: <data folder>/backups', autocapitalize: 'off', spellcheck: 'false' }), 'An existing folder, ideally on another disk than the data folder. A "lex-backups" folder is created inside it.'),
       field('Backups to keep', num('backupKeep', { min: 1, max: 100 }), 'Of each kind (daily, manual, before upgrade, before restore); older ones are deleted.')),

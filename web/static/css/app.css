@@ -748,13 +748,23 @@ body:has(.save-bar) > .toasts { bottom: calc(80px + var(--sab)); }
 .settings .form-section > .form-grid > .field > :is(input, select) { grid-column: 2; grid-row: 1 / span 2; }
 .settings .form-section > .field:not(:has(textarea, .check-chips, .title-picker)) > .help,
 .settings .form-section > .form-grid > .field > .help { grid-column: 1; grid-row: 2; align-self: start; }
-.settings .form-section > .field:not(:has(.help)) > span:first-child,
-.settings .form-section > .form-grid > .field:not(:has(.help)) > span:first-child { grid-row: 1 / span 2; align-self: center; }
+.settings .form-section > .field:not(:has(> .help:not([hidden]))) > span:first-child,
+.settings .form-section > .form-grid > .field:not(:has(> .help:not([hidden]))) > span:first-child { grid-row: 1 / span 2; align-self: center; }
 .settings .form-section .tv-channel-edit .form-grid { display: grid; }
 .settings .toggle-row { gap: 28px; }
 .settings .toggle-row .lbl { gap: 2px; }
 .settings .form-section .field > .help, .settings .toggle-row .help { max-width: 64ch; }
 .settings .form-section > .help:not(p) { margin-top: 10px; }
+.settings .form-section > h2 + p.info-text[hidden] + :is(.field, .toggle-row, .form-grid) { margin-top: 8px; }
+/* Descriptions sit behind an ⓘ button beside the setting's name. */
+.info-text[hidden] { display: none !important; }
+.info-btn { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin: -3px 0 -3px 4px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--text3); cursor: pointer; vertical-align: middle; flex: none; }
+.info-btn svg { width: 15px; height: 15px; }
+.info-btn:hover, .info-btn.on { color: var(--accent); }
+.info-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+h2.with-info { display: flex; align-items: center; }
+.toggle-row .lbl-name { display: flex; align-items: center; }
+.info-text { max-width: 64ch; }
 .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 18px !important; }
 .form-actions .err { min-height: 0; }
 .settings .save-bar { margin-top: 0; }

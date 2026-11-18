@@ -79,7 +79,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
       rememberTracks: (key, patch) => remembered.push([key, patch]), subtitleChoice },
     './versions.js': { versionLabel: f => String(f.id), orderFiles: files => files, chosenFile: (id, files) => files[0], rememberFile() {} },
     './app.js': { state: { me: { id: 1, isAdmin: false }, caps: {} } },
-    './prefs.js': { prefs: { get: k => k in prefValues ? prefValues[k] : k === 'heartbeat' ? 10 : 0, set: (k, v) => { prefValues[k] = v; } }, QUALITIES: [], qualityOptions: () => [] },
+    './prefs.js': { prefs: { get: k => k in prefValues ? prefValues[k] : k === 'heartbeat' ? 10 : 0, set: (k, v) => { prefValues[k] = v; } }, QUALITIES: [], qualityOptions: () => [], lang1to3: (l) => l },
     './mse.js': { clock: t => String(Math.floor(t)), MseEngine: class {
       async open() {
         if (openGate) await (typeof openGate === 'function' ? openGate() : openGate);
