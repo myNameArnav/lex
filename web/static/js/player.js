@@ -1109,6 +1109,10 @@ class Player {
     };
     const failed = (e) => {
       status.textContent = '';
+      if (e.code === 'not_allowed') {
+        list.append(h('div', { class: 'sub-err', role: 'alert' }, 'Only admins can download subtitles on this server.'));
+        return;
+      }
       if (e.code === 'no_key') {
         list.append(h('div', { class: 'sub-err', role: 'alert' }, state.me?.isAdmin
           ? ['Subtitle search isn’t set up yet. Add an OpenSubtitles API key in ', h('a', { href: '#/settings/metadata', onclick: (ev) => { ev.preventDefault(); this.goTo('#/settings/metadata'); } }, 'Settings › Metadata'), '.']
@@ -1135,12 +1139,21 @@ class Player {
             btn.disabled = true; btn.textContent = 'Downloading…';
             try {
               const st = await api(`/api/files/${this.file.id}/subsearch`, { method: 'POST', body: { fileId: r.fileId, language: r.language, release: r.release || r.fileName, hearingImpaired: r.hearingImpaired } });
-              this.file.subtitles = [...(this.file.subtitles || []), st];
+              const { remaining, ...track } = st;
+              if (remaining != null) state.subsRemaining = remaining;
+              this.file.subtitles = [...(this.file.subtitles || []), track];
               this.syncFileSubs();
               m.close();
-              await this.chooseSubtitle(st.index);
-              toast('Subtitles added');
+              await this.chooseSubtitle(track.index);
+              toast(remaining != null ? `Subtitles added · ${remaining} download${remaining === 1 ? '' : 's'} left today` : 'Subtitles added');
             } catch (e) {
+              if (e.code === 'quota') {
+                state.subsRemaining = 0;
+                allowance.textContent = allowanceText();
+                list.prepend(h('div', { class: 'sub-err', role: 'alert' }, 'Today’s OpenSubtitles download allowance has run out. It renews within 24 hours; subtitles already downloaded still work.'));
+                btn.textContent = 'Use';
+                return;
+              }
               toast(e.message, 'error');
               btn.disabled = false; btn.textContent = 'Use';
             }
@@ -1155,13 +1168,18 @@ class Player {
         failed(e);
       }
     };
+    // The allowance is shared by the server, known only from the last
+    // download (this session): shown so nobody spends the last few blindly.
+    const allowanceText = () => (state.subsRemaining == null ? '' : state.subsRemaining > 0
+      ? `${state.subsRemaining} download${state.subsRemaining === 1 ? '' : 's'} left today on this server` : 'No downloads left today on this server');
+    const allowance = h('div', { class: 'small muted' }, allowanceText());
     // A filter for this search, not the preferred subtitle language.
     langSel.onchange = search;
     if (wasPlaying) this.video.pause();
     const m = modal({
       title: 'Search subtitles', wide: true, parent: this.root,
       body: [h('div', { class: 'row wrap', style: { gap: '10px', alignItems: 'center' } },
-        h('label', { class: 'row', style: { gap: '10px' } }, h('span', { class: 'muted' }, 'Language'), langSel), h('div', { class: 'spacer' }), status), downloaded, list],
+        h('label', { class: 'row', style: { gap: '10px' } }, h('span', { class: 'muted' }, 'Language'), langSel), h('div', { class: 'spacer' }), status), allowance, downloaded, list],
       onClose: () => {
         if (this.closed) return;
         // The menu item that opened this is gone: back to the CC button.
