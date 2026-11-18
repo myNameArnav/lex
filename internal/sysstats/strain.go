@@ -19,6 +19,7 @@ type Strain struct {
 // a transcode alone keeps the CPU near 100%, so CPU counts only above 95%.
 const (
 	strainIOWait   = 30   // % of CPU time waiting on disk
+	strainDiskBusy = 80   // % of time one device spends doing I/O
 	strainCPU      = 95   // % busy
 	strainMemAvail = 0.05 // share of RAM available
 	strainSwapIO   = 4e6  // bytes/s swapped
@@ -26,7 +27,14 @@ const (
 
 // Strains names what is overloading the host in this snapshot, worst
 // first, or nil when it is fine.
-func (s Snapshot) Strains() []Strain {
+func (s Snapshot) Strains() []Strain { return s.StrainsReading("") }
+
+// StrainsReading is Strains for a stream reading from device dev (see
+// Device). I/O wait is host-wide: a library HDD pegged by downloads or
+// SSD cache copies raises it even while the stream reads from an idle SSD.
+// So when dev's busy time is known, the disk strain is about that device
+// alone; otherwise it falls back to I/O wait.
+func (s Snapshot) StrainsReading(dev string) []Strain {
 	var out []Strain
 	p := s.Now
 	if slices.ContainsFunc(s.ThrottleFlags, func(f string) bool {
@@ -41,7 +49,11 @@ func (s Snapshot) Strains() []Strain {
 		}
 		out = append(out, Strain{"throttled", "Server CPU throttled: " + why + "."})
 	}
-	if p.IOWait >= strainIOWait {
+	if busy, ok := s.DiskBusy[dev]; ok && dev != "" {
+		if busy >= strainDiskBusy {
+			out = append(out, Strain{"disk", fmt.Sprintf("Server disk overloaded (%.0f%% busy).", busy)})
+		}
+	} else if p.IOWait >= strainIOWait {
 		out = append(out, Strain{"disk", fmt.Sprintf("Server disk overloaded (%.0f%% I/O wait).", p.IOWait)})
 	}
 	if s.MemTotal > 0 && (float64(s.MemAvail) < strainMemAvail*float64(s.MemTotal) || p.SwapIO >= strainSwapIO) {

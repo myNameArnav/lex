@@ -67,16 +67,21 @@ type Snapshot struct {
 	ThrottleFlags []string   `json:"throttleFlags"`
 	Ifaces        []Iface    `json:"ifaces"`
 	Disks         []Disk     `json:"disks"`
-	ProcRSS       uint64     `json:"procRss"`
-	ProcCPU       float64    `json:"procCpu"`
-	GoHeap        uint64     `json:"goHeap"`
-	Goroutines    int        `json:"goroutines"`
-	Started       int64      `json:"started"`
-	Model         string     `json:"model"`
-	OS            string     `json:"os"`
-	Arch          string     `json:"arch"`
-	NumCPU        int        `json:"numCpu"`
-	Hostname      string     `json:"hostname"`
+	// DiskBusy is the percent of time each block device (disk or
+	// partition, by kernel name: "sdb1") spent doing I/O. Unlike IOWait,
+	// it tells which drive is the busy one. A fresh map each sample, never
+	// changed after, so snapshots can share it.
+	DiskBusy   map[string]float64 `json:"diskBusy,omitempty"`
+	ProcRSS    uint64             `json:"procRss"`
+	ProcCPU    float64            `json:"procCpu"`
+	GoHeap     uint64             `json:"goHeap"`
+	Goroutines int                `json:"goroutines"`
+	Started    int64              `json:"started"`
+	Model      string             `json:"model"`
+	OS         string             `json:"os"`
+	Arch       string             `json:"arch"`
+	NumCPU     int                `json:"numCpu"`
+	Hostname   string             `json:"hostname"`
 }
 
 type Sampler struct {
@@ -94,6 +99,7 @@ type Sampler struct {
 	prevSwap     uint64 // pages swapped in + out
 	prevNet      map[string][2]uint64
 	prevDisk     [2]uint64
+	prevTicks    map[string]uint64 // per device: ms spent doing I/O
 	prevProc     float64
 	prevT        time.Time
 	started      time.Time
@@ -329,8 +335,18 @@ func (s *Sampler) sample() {
 	if f, err := os.Open("/proc/diskstats"); err == nil {
 		sc := bufio.NewScanner(f)
 		var rd, wr uint64
+		ticks := map[string]uint64{}
+		busy := map[string]float64{}
 		for sc.Scan() {
 			fs := strings.Fields(sc.Text())
+			if len(fs) >= 13 {
+				name := fs[2]
+				t, _ := strconv.ParseUint(fs[12], 10, 64)
+				ticks[name] = t
+				if prev, ok := s.prevTicks[name]; ok && !first && dt > 0 && t >= prev {
+					busy[name] = min(100, float64(t-prev)/(dt*10))
+				}
+			}
 			if len(fs) < 10 || !wholeDisk(fs[2]) {
 				continue
 			}
@@ -345,6 +361,8 @@ func (s *Sampler) sample() {
 			p.DiskW = float64(wr-s.prevDisk[1]) / dt
 		}
 		s.prevDisk = [2]uint64{rd, wr}
+		s.prevTicks = ticks
+		snap.DiskBusy = busy
 	}
 	// Our own process.
 	if b, err := os.ReadFile("/proc/self/stat"); err == nil {

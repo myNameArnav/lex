@@ -37,6 +37,30 @@ func TestStrains(t *testing.T) {
 	}
 }
 
+// High I/O wait from the library HDD (downloads, SSD cache copies) is not
+// a strain for a stream read from the idle SSD, and a busy read disk is one
+// even when I/O wait is low.
+func TestStrainsReading(t *testing.T) {
+	s := Snapshot{Now: Point{CPU: 20, IOWait: 71}, MemTotal: 2 << 30, MemAvail: 500 << 20,
+		DiskBusy: map[string]float64{"sda2": 3, "sdb1": 99}}
+	if got := s.StrainsReading("sda2"); got != nil {
+		t.Fatalf("reading from the idle SSD: %v", got)
+	}
+	if got := s.StrainsReading("sdb1"); len(got) != 1 || got[0].Kind != "disk" || !strings.Contains(got[0].Text, "99% busy") {
+		t.Fatalf("reading from the busy HDD: %v", got)
+	}
+	// Unknown device (overlay, not Linux): back to host-wide I/O wait.
+	for _, dev := range []string{"", "md0"} {
+		if got := s.StrainsReading(dev); len(got) != 1 || !strings.Contains(got[0].Text, "71% I/O wait") {
+			t.Fatalf("unknown device %q: %v", dev, got)
+		}
+	}
+	s.Now.IOWait = 5
+	if got := s.StrainsReading("sdb1"); len(got) != 1 || got[0].Kind != "disk" {
+		t.Fatalf("busy read disk, low I/O wait: %v", got)
+	}
+}
+
 func TestSummary(t *testing.T) {
 	s := Snapshot{Now: Point{CPU: 12, IOWait: 65}, Load: [3]float64{11.8}, MemAvail: 512 << 20, SwapUsed: 1 << 30, ThrottleFlags: []string{"under-voltage now", "throttling occurred"}}
 	got := s.Summary()
