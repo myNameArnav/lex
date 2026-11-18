@@ -106,8 +106,7 @@ and ffmpeg pauses when the browser's buffer is full. Browsers without MSE
 - [Installing Lex](docs/install.md): build from source with Go **1.26.11 or newer**,
   run the Docker image, or install it as a service.
 - [Backups](docs/backups.md): automatic database backups and restoring one.
-- [Contributing](CONTRIBUTING.md): development checks, code layout and
-  releases.
+- [Contributing](CONTRIBUTING.md): development checks and code layout.
 - [Security and privacy](SECURITY.md): read before exposing Lex beyond your LAN.
 
 ## AI disclosure
