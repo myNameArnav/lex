@@ -28,7 +28,7 @@ func (s *Server) cacheItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.St.Config().CacheEnabled {
-		writeErr(w, 400, "the SSD cache is disabled (Settings → Cache)")
+		writeErr(w, 400, "the SSD cache is disabled (Settings → SSD cache)")
 		return
 	}
 	n := 0

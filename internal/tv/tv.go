@@ -60,7 +60,7 @@ func New(st *store.Store) *Guide {
 	return &Guide{St: st, days: map[string][]Program{}, libs: map[string]channelLibs{}}
 }
 
-// Channels lists the admin's channels (Settings › Server), then the
+// Channels lists the admin's channels (Settings › Live TV), then the
 // automatic ones the admin hasn't turned off. A channel with nothing to air
 // (e.g. a library still scanning) is still listed here, with no programs, so
 // numbers don't shift. The list is kept for a minute, or until the admin's

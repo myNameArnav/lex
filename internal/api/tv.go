@@ -14,7 +14,7 @@ import (
 // lets the player work out how far into a program it joins without trusting
 // the device's clock.
 
-// liveTV answers 404 while Live TV is turned off (Settings › Server).
+// liveTV answers 404 while Live TV is turned off (Settings › Live TV).
 func (s *Server) liveTV(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !s.St.Config().LiveTV {
@@ -78,7 +78,7 @@ func (s *Server) tvGuide(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"channels": out, "serverTime": now.UnixMilli()})
 }
 
-// tvAutomatic lists the automatic channels for Settings › Server, including
+// tvAutomatic lists the automatic channels for Settings › Live TV, including
 // the ones turned off, and answers while Live TV is off so it can be set up
 // first.
 func (s *Server) tvAutomatic(w http.ResponseWriter, r *http.Request) {
