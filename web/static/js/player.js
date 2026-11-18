@@ -1628,7 +1628,6 @@ class Player {
     if (!this.plan) return;
     prefs.set('showStats', true);
     const stop = (on) => (e) => { e.stopPropagation(); on(e); };
-    this.statsDot = h('span', { class: 'ps-dot' });
     this.statsSum = h('span', { class: 'ps-sum' });
     this.statsCanvas = h('canvas');
     this.statsIssues = h('div', { class: 'ps-issues', role: 'status' });
@@ -1642,7 +1641,7 @@ class Player {
       const c = this.statsEl.classList.toggle('compact');
       toggle.setAttribute('aria-expanded', String(!c));
       prefs.set('statsCompact', c);
-    }) }, this.statsDot, this.statsSum);
+    }) }, this.statsSum);
     this.statsEl = h('div', { class: `p-stats${compact ? ' compact' : ''}`, onclick: (e) => e.stopPropagation() },
       h('div', { class: 'ps-head' }, toggle,
         h('button', { class: 'ps-btn', title: 'Copy stats as text', onclick: stop(() => this.copyStats()) }, 'Copy'),
@@ -1795,11 +1794,11 @@ class Player {
   renderStats(cs) {
     if (!this.plan) return;
     const m = this.statsModel(cs);
-    this.statsDot.className = `ps-dot ${m.lvl}`;
     // Expanded, the tiles carry the numbers; collapsed, the header does.
     if (this.statsSum.dataset.v !== m.summary) {
       this.statsSum.dataset.v = m.summary;
-      clear(this.statsSum).append(m.status, h('span', { class: 'ps-sum-more' }, m.summary.slice(m.status.length)));
+      // The status word carries the level in its color.
+      clear(this.statsSum).append(h('span', { class: `ps-status ${m.lvl}` }, m.status), h('span', { class: 'ps-sum-more' }, m.summary.slice(m.status.length)));
     }
     const put = (el, ...kids) => clear(el).append(...kids.flat().filter(Boolean));
     this.statsIssues.hidden = !m.issues.length;
@@ -1819,7 +1818,7 @@ class Player {
           if (now.has(sec.title)) now.delete(sec.title); else now.add(sec.title);
           prefs.set('statsOpen', [...now]);
           this.renderStats(this.clientStats());
-        } }, h('span', { class: 'chev', html: icons.chevR }), h('span', { class: 't' }, sec.title), h('i', { class: 'ps-dot' }), h('span', { class: 's' }));
+        } }, h('span', { class: 'chev', html: icons.chevR }), h('span', { class: 't' }, sec.title), h('span', { class: 's' }));
         el = { box: h('div', { class: 'ps-sec' }, btn, h('div', { id, class: 'ps-sec-b' })), btn };
         this.statsSecs.set(sec.title, el);
       }
@@ -1827,9 +1826,9 @@ class Player {
       const lvl = sec.rows.some((r) => r.lvl === 'bad') ? 'bad' : sec.rows.some((r) => r.lvl === 'warn') ? 'warn' : '';
       el.box.classList.toggle('open', isOpen);
       el.btn.setAttribute('aria-expanded', String(isOpen));
-      el.btn.querySelector('.ps-dot').className = `ps-dot ${lvl}`;
-      el.btn.querySelector('.ps-dot').hidden = !lvl;
       const sumEl = el.btn.querySelector('.s');
+      // Something off inside shows as the summary's color.
+      sumEl.className = `s ${lvl}`;
       if (sumEl.textContent !== sec.sum) sumEl.textContent = sec.sum;
       const body = el.box.lastChild;
       if (isOpen) {

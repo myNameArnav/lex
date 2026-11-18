@@ -1153,8 +1153,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ps-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; background: none; border: none; color: #fff; font: inherit; text-align: left; padding: 4px; border-radius: 6px; cursor: pointer; }
 @media (hover: hover) { .ps-toggle:hover, .ps-btn:hover { background: rgba(255,255,255,.1); } }
 .ps-sum { min-width: 0; }
-.ps-dot { flex: none; align-self: flex-start; margin-top: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--good-ink); }
-.ps-dot.warn { background: var(--accent); } .ps-dot.bad { background: var(--bad-ink); }
+.ps-status { color: var(--good-ink); font-weight: 700; }
+.ps-status.warn { color: var(--accent); } .ps-status.bad { color: var(--bad-ink); }
 .ps-btn { flex: none; background: none; border: none; color: rgba(255,255,255,.75); font: inherit; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
 .ps-close { display: grid; place-items: center; padding: 4px; }
 .ps-close svg { width: 14px; height: 14px; }
@@ -1169,9 +1169,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .p-stats td:first-child { color: rgba(255,255,255,.6); padding-right: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .p-stats td .sub { display: inline-block; max-width: 100%; color: rgba(255,255,255,.55); }
 .p-stats td.warn { color: var(--accent); } .p-stats td.bad { color: var(--bad-ink); }
-.ps-issues { margin: 6px 0 4px; display: grid; gap: 4px; }
-.ps-issue { padding: 5px 8px; border-radius: 6px; border-left: 3px solid var(--accent); background: rgba(242,179,61,.12); color: #fff; font-family: var(--font-system); font-size: 12px; line-height: 1.4; }
-.ps-issue.bad { border-left-color: var(--bad-ink); background: rgba(255,90,90,.14); }
+.ps-issues { margin: 4px 0 2px; display: grid; gap: 2px; }
+.ps-issue { color: var(--accent); }
+.ps-issue.bad { color: var(--bad-ink); }
 .ps-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 8px 0 6px; }
 .ps-tile { min-width: 0; padding: 4px 7px 5px; border-radius: 6px; background: rgba(255,255,255,.07); display: flex; flex-direction: column; line-height: 1.3; }
 .ps-tile .k { color: rgba(255,255,255,.6); font-size: 10px; }
@@ -1187,7 +1187,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ps-sec-h .chev svg { width: 12px; height: 12px; }
 .ps-sec.open .ps-sec-h .chev { transform: rotate(90deg); }
 .ps-sec-h .t { flex: none; color: var(--accent); font-weight: 700; }
-.ps-sec-h .ps-dot { margin-top: 0; align-self: center; }
+.ps-sec-h .s.warn { color: var(--accent); } .ps-sec-h .s.bad { color: var(--bad-ink); }
 .ps-sec-h .s { flex: 1; min-width: 0; color: rgba(255,255,255,.55); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
 .ps-sec-b table { margin: 2px 0 6px 18px; width: calc(100% - 18px); }
 .upnext { position: absolute; right: max(24px, var(--sar)); bottom: calc(110px + var(--sab)); width: 340px; background: rgba(20,21,26,.96); border: 1px solid rgba(255,255,255,.12); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); z-index: 4; }
