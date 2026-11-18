@@ -47,6 +47,7 @@ type Job struct {
 	Reason  string        `json:"reason"`
 	Started int64         `json:"started"`
 	paused  time.Duration // spent waiting for playback (yield)
+	mtime   int64         // the source's mtime when queued
 	state   *copyState    // what's copied (order.go); set when the copy starts
 }
 
@@ -83,6 +84,15 @@ type Cache struct {
 	// recheck asks the worker to reconcile before its next job.
 	recheck bool
 	disk    func(dir string) (free, total int64, ok bool) // diskSpace; tests fake it
+	// failed holds files whose copy failed, so playing them again doesn't
+	// read the whole file off the hard drive (and write it to the SSD)
+	// once more right away; see retryFailedAfter.
+	failed map[int64]failure
+
+	// RequireSeparateDisk skips files on the same filesystem as the cache
+	// folder: copying them would only read and write the same disk twice.
+	// Tests leave it off (their files and cache share a temp disk).
+	RequireSeparateDisk bool
 
 	// OnCached, if set, is called (from the copy worker) once a file's
 	// copy is complete.
@@ -105,6 +115,13 @@ type copyInfo struct {
 
 func (ci copyInfo) matches(f *store.File) bool { return ci.size == f.Size && ci.mtime == f.Mtime }
 
+// failure is a failed copy of a file at a given size and mtime; a changed
+// file is retried at once.
+type failure struct {
+	size, mtime int64
+	until       time.Time
+}
+
 const (
 	// Entries used within keepRecent are never evicted. last_access only
 	// moves when playback starts or seeks, so a film being watched looks
@@ -114,10 +131,14 @@ const (
 	// reconcileEvery re-reads the directory to drop copies whose files left
 	// the library behind the cache's back (e.g. a deleted library).
 	reconcileEvery = 30 * time.Minute
+	// retryFailedAfter is how long a file whose copy failed (a read error
+	// on a failing drive, a full SSD) isn't copied again for playback.
+	// Every failed attempt can read gigabytes off the hard drive.
+	retryFailedAfter = 6 * time.Hour
 )
 
 func New(st *store.Store, log *logx.Logger, dataDir string) *Cache {
-	c := &Cache{st: st, log: log, dataDir: dataDir, wake: make(chan struct{}, 1), touched: map[int64]int64{}, ready: map[int64]copyInfo{}, disk: diskSpace}
+	c := &Cache{st: st, log: log, dataDir: dataDir, wake: make(chan struct{}, 1), touched: map[int64]int64{}, ready: map[int64]copyInfo{}, failed: map[int64]failure{}, disk: diskSpace}
 	c.reconcile()
 	go c.worker()
 	return c
@@ -271,9 +292,19 @@ func (c *Cache) Request(f *store.File, reason string) {
 	if f.Size > int64(cfg.CacheMaxFileGB)<<30 || f.Size > int64(cfg.CacheMaxGB)<<30 {
 		return
 	}
+	if c.RequireSeparateDisk && sameDisk(f.Path, c.Dir()) {
+		c.mu.Lock()
+		c.lastErr = fmt.Sprintf("%s: on the same disk as the cache folder, not copied", filepath.Base(f.Path))
+		c.mu.Unlock()
+		return
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if ci, ok := c.ready[f.ID]; ok && ci.matches(f) {
+		return
+	}
+	// An admin asking for it ("manual") retries at once.
+	if fl, ok := c.failed[f.ID]; ok && reason != "manual" && fl.size == f.Size && fl.mtime == f.Mtime && time.Now().Before(fl.until) {
 		return
 	}
 	if c.current != nil && c.current.FileID == f.ID {
@@ -284,7 +315,7 @@ func (c *Cache) Request(f *store.File, reason string) {
 			return
 		}
 	}
-	job := Job{FileID: f.ID, Name: filepath.Base(f.Path), Size: f.Size, Reason: reason}
+	job := Job{FileID: f.ID, Name: filepath.Base(f.Path), Size: f.Size, Reason: reason, mtime: f.Mtime}
 	// What's being watched right now jumps ahead of prefetches.
 	if reason == "playing" {
 		c.queue = append([]Job{job}, c.queue...)
@@ -314,6 +345,7 @@ func (c *Cache) Remove(fileID int64) {
 	ci, ok := c.ready[fileID]
 	delete(c.ready, fileID)
 	delete(c.touched, fileID)
+	delete(c.failed, fileID)
 	c.mu.Unlock()
 	if ok {
 		os.Remove(ci.path)
@@ -329,6 +361,7 @@ func (c *Cache) Clear() {
 		ids = append(ids, id)
 	}
 	c.queue = nil
+	c.failed = map[int64]failure{}
 	if c.cancel != nil {
 		c.cancel()
 	}
@@ -405,6 +438,7 @@ func (c *Cache) makeRoom(need int64) error {
 	if need > max {
 		return fmt.Errorf("file is larger than the cache")
 	}
+	var evicted int64 = -1
 	for {
 		used := c.used()
 		free, _, diskOK := c.disk(c.Dir())
@@ -426,6 +460,11 @@ func (c *Cache) makeRoom(need int64) error {
 		if err := c.db().QueryRow(`SELECT file_id FROM cache_entries WHERE last_access < ? ORDER BY last_access ASC LIMIT 1`, cutoff).Scan(&id); err != nil {
 			return err
 		}
+		if id == evicted {
+			// Its row didn't go (a database error): stop rather than spin.
+			return fmt.Errorf("could not evict cached file %d", id)
+		}
+		evicted = id
 		c.log.Infof("cache: evicting file %d to make room", id)
 		c.Remove(id)
 	}
@@ -464,12 +503,16 @@ func (c *Cache) worker() {
 		cancel()
 		c.mu.Lock()
 		c.current, c.cancel = nil, nil
-		if err != nil && !errors.Is(err, context.Canceled) {
+		failed := err != nil && !errors.Is(err, context.Canceled)
+		if failed {
 			c.lastErr = fmt.Sprintf("%s: %v", job.Name, err)
+			c.failed[job.FileID] = failure{size: job.Size, mtime: job.mtime, until: time.Now().Add(retryFailedAfter)}
+		} else if err == nil {
+			delete(c.failed, job.FileID)
 		}
 		c.mu.Unlock()
-		if err != nil && !errors.Is(err, context.Canceled) {
-			c.log.Warnf("cache: %s: %v", job.Name, err)
+		if failed {
+			c.log.Warnf("cache: %s: %v (not retried for %s unless asked)", job.Name, err, retryFailedAfter)
 		}
 		// Once the job is no longer current, so the hook sees the file as
 		// cached and not pending.

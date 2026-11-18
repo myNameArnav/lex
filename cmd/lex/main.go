@@ -147,6 +147,7 @@ func main() {
 	scanner.OnFileChanged = srv.FileChanged
 	mediaCache.OnCached = srv.FileCached
 	mediaCache.Contended = sessions.DiskBound
+	mediaCache.RequireSeparateDisk = true
 	scanner.OnDone = func() {
 		srv.SweepDerived()
 		agent.Trigger()

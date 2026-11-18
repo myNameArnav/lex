@@ -154,3 +154,65 @@ func TestPendingAndOnCached(t *testing.T) {
 		t.Fatalf("after copy: pending=%v cached=%v", c.Pending(f.ID), c.IsCached(f.ID))
 	}
 }
+
+// A copy that failed isn't made again on the next play: each attempt can
+// read the whole file off the hard drive. A manual request still retries.
+func TestFailedCopyNotRetried(t *testing.T) {
+	c, st, item := testCache(t, 0)
+	src := filepath.Join(t.TempDir(), "Heat.mkv")
+	os.WriteFile(src, make([]byte, 1024), 0o644)
+	// The library says it's bigger than it is: the copy fails.
+	f := addFile(t, st, item, src, 4096)
+	c.Request(f, "playing")
+	deadline := time.Now().Add(5 * time.Second)
+	for c.Status().LastError == "" {
+		if time.Now().After(deadline) {
+			t.Fatal("copy didn't fail")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	for c.Pending(f.ID) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	c.Request(f, "playing")
+	if c.Pending(f.ID) {
+		t.Fatal("failed copy queued again on the next play")
+	}
+	// A changed file is tried again, and so is a manual request.
+	failedAt := func() failure {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.failed[f.ID]
+	}
+	waitFor := func(what string, ok func(failure) bool) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for !ok(failedAt()) {
+			if time.Now().After(deadline) {
+				t.Fatal(what)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	g := *f
+	g.Mtime = 2
+	c.Request(&g, "playing")
+	waitFor("changed file not tried", func(fl failure) bool { return fl.mtime == 2 })
+	before := failedAt().until
+	time.Sleep(5 * time.Millisecond)
+	c.Request(&g, "manual")
+	waitFor("manual request not tried", func(fl failure) bool { return fl.until.After(before) })
+}
+
+// With RequireSeparateDisk, a file on the cache's own disk isn't copied.
+func TestSameDiskNotCopied(t *testing.T) {
+	c, st, item := testCache(t, 0)
+	c.RequireSeparateDisk = true
+	src := filepath.Join(c.Dir(), "..", "Heat.mkv")
+	os.WriteFile(src, make([]byte, 4096), 0o644)
+	f := addFile(t, st, item, src, 4096)
+	c.Request(f, "playing")
+	if c.Pending(f.ID) || c.IsCached(f.ID) {
+		t.Fatal("file on the cache disk queued for copying")
+	}
+}

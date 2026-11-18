@@ -81,7 +81,7 @@ func TestOpenPlaybackDuringCopy(t *testing.T) {
 			t.Fatal("copy didn't start")
 		}
 		time.Sleep(20 * time.Millisecond)
-		if _, a, ok := c.partial(f); ok {
+		if _, a, _, ok := c.partial(f); ok {
 			avail = a
 		}
 	}
