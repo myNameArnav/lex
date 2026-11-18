@@ -27,6 +27,12 @@ type Point struct {
 	Stream   float64 `json:"stream"` // bytes/s delivered to players
 	Sessions int     `json:"sessions"`
 	ProcCPU  float64 `json:"pcpu"`
+	// IOWait is the percent of CPU time spent idle waiting on disk I/O; a
+	// slow or overloaded drive shows up here even when CPU use is low.
+	IOWait float64 `json:"iowait"`
+	// SwapIO is bytes/s swapped in and out: steady swapping means memory
+	// is short, which stalls everything.
+	SwapIO float64 `json:"swapio"`
 }
 
 type Iface struct {
@@ -84,6 +90,8 @@ type Sampler struct {
 	interval time.Duration
 
 	prevCPU      [][2]uint64 // per line: idle, total
+	prevIOWait   uint64
+	prevSwap     uint64 // pages swapped in + out
 	prevNet      map[string][2]uint64
 	prevDisk     [2]uint64
 	prevProc     float64
@@ -180,7 +188,7 @@ func (s *Sampler) sample() {
 				break
 			}
 			fs := strings.Fields(line)
-			var total, idle uint64
+			var total, idle, iowait uint64
 			for k, v := range fs[1:] {
 				n, _ := strconv.ParseUint(v, 10, 64)
 				if k < 8 { // exclude guest time (already in user)
@@ -188,6 +196,9 @@ func (s *Sampler) sample() {
 				}
 				if k == 3 || k == 4 {
 					idle += n
+				}
+				if k == 4 {
+					iowait = n
 				}
 			}
 			if i >= len(s.prevCPU) {
@@ -201,6 +212,10 @@ func (s *Sampler) sample() {
 			s.prevCPU[i] = [2]uint64{idle, total}
 			if i == 0 {
 				p.CPU = pct
+				if dtot := total - prev[1]; !first && dtot > 0 && iowait >= s.prevIOWait {
+					p.IOWait = 100 * float64(iowait-s.prevIOWait) / float64(dtot)
+				}
+				s.prevIOWait = iowait
 			} else {
 				cores = append(cores, pct)
 			}
@@ -240,6 +255,23 @@ func (s *Sampler) sample() {
 		if snap.MemTotal > 0 {
 			p.Mem = 100 * float64(snap.MemUsed) / float64(snap.MemTotal)
 		}
+	}
+	// Swap activity.
+	if f, err := os.Open("/proc/vmstat"); err == nil {
+		sc := bufio.NewScanner(f)
+		var pages uint64
+		for sc.Scan() {
+			k, v, _ := strings.Cut(sc.Text(), " ")
+			if k == "pswpin" || k == "pswpout" {
+				n, _ := strconv.ParseUint(v, 10, 64)
+				pages += n
+			}
+		}
+		f.Close()
+		if !first && dt > 0 && pages >= s.prevSwap {
+			p.SwapIO = float64(pages-s.prevSwap) * float64(os.Getpagesize()) / dt
+		}
+		s.prevSwap = pages
 	}
 	// Temperature: first thermal zone that looks like the CPU/SoC.
 	if b := readTrim("/sys/class/thermal/thermal_zone0/temp"); b != "" {

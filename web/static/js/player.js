@@ -180,6 +180,8 @@ class Player {
     this.stalls = { count: 0, secs: 0, since: 0 };
     this.lastJob = null;
     this.serverRate = 0;
+    this.diskWait = 0;
+    this.host = [];
     this.started = false;
     this.bufHist = [];
     this.closed = false;
@@ -765,7 +767,7 @@ class Player {
     const bandwidth = es?.bandwidth || (es?.fileRate ? es.fileRate * 8 : 0) || this.serverRate * 8;
     return bufferingCause({
       needKbps: this.plan.bitrate, bandwidth, remote: !!this.plan.remote, job: this.lastJob, rate: this.video.playbackRate || 1,
-      canTranscode: state.caps?.transcode !== false, isAdmin: !!state.me?.isAdmin, method: this.plan.method,
+      canTranscode: state.caps?.transcode !== false, isAdmin: !!state.me?.isAdmin, method: this.plan.method, diskWait: this.diskWait, host: this.host,
     });
   }
 
@@ -1594,6 +1596,8 @@ class Player {
       const r = await api('/api/playback/progress', { method: 'POST', body: { sessionId: this.sessionId, fileId: this.file?.id, method: this.plan.method, position: this.video.currentTime, paused: this.video.paused, stats: this.clientStats() } });
       this.lastJob = r.job || null;
       this.serverRate = r.serverRate || 0;
+      this.diskWait = r.diskWait || 0;
+      this.host = r.host || [];
     } catch (e) {
       if (e.status === 410) this.stopByServer(e.message);
     }
@@ -1707,7 +1711,7 @@ class Player {
     if (es?.fileBytes != null) r('File read', fmtBytes(es.fileBytes), `range requests${es.fileRate ? ` at ${fmtBitrate(es.fileRate * 8)}` : ''} · remuxer memory ${fmtBytes(es.remuxHeap)}`);
     r('Server rate', fmtBitrate(this.serverRate * 8));
     const cause = cs.bufferEvents || cs.buffering ? this.bufferCause() : null;
-    if (cause) r('Likely cause', cause.kind === 'network' ? 'data arrives too slowly' : 'server converts too slowly', cause.hint, 'warn', `${cause.text} ${cause.hint}`.trim());
+    if (cause) r('Likely cause', ({ network: 'data arrives too slowly', disk: 'server disk too slow', cpu: 'server CPU maxed out', memory: 'server short of memory', throttled: 'server throttled' })[cause.kind] || 'server converts too slowly', cause.hint, 'warn', `${cause.text} ${cause.hint}`.trim());
     r('Stalls', String(cs.bufferEvents), `${cs.bufferSeconds.toFixed(1)}s total${cs.buffering ? ' · buffering now' : ''}`, cs.buffering ? 'bad' : cs.bufferEvents ? 'warn' : '');
     r('Read from', this.cached ? 'SSD cache' : 'library disk');
     r('Source bitrate', fmtBitrate(info.bitrate || 0));

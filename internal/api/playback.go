@@ -201,7 +201,15 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, err.Error())
 		return
 	}
-	resp := map[string]any{"ok": true, "serverRate": sess.Rate}
+	rate, diskWait := s.Sess.Health(sess)
+	resp := map[string]any{"ok": true, "serverRate": rate, "diskWait": diskWait}
+	// What's overloading the host, if anything, so the player can say why
+	// it's buffering instead of blaming the viewer's connection.
+	if s.Stats != nil {
+		if strains := s.Stats.Snapshot().Strains(); len(strains) > 0 {
+			resp["host"] = strains
+		}
+	}
 	for _, snap := range s.Sess.Snapshot() {
 		if snap.ID == req.SessionID && snap.Job != nil {
 			resp["job"] = snap.Job
@@ -254,6 +262,15 @@ func (s *Server) playbackEvent(w http.ResponseWriter, r *http.Request) {
 		logf := s.Log.Infof
 		if warn {
 			logf = s.Log.Warnf
+		}
+		// Problems carry the server's side too: whether this stream was
+		// waiting on the disk, and the host's load right then.
+		if warn {
+			_, diskWait := s.Sess.Health(sess)
+			detail += fmt.Sprintf(" · server: file reads %.0f%% of serving time", diskWait*100)
+			if s.Stats != nil {
+				detail += ", " + s.Stats.Snapshot().Summary()
+			}
 		}
 		logf("player: %s — %s (%s, %s): %s %s", u.Name, sess.Title, sess.Method, sess.Client, req.Event, detail)
 	}
@@ -321,11 +338,16 @@ func (s *Server) sessionFor(r *http.Request, f *store.File, sid, method string) 
 
 type countingWriter struct {
 	http.ResponseWriter
+	w io.Writer // writes go here when set (e.g. a timed ResponseWriter)
 	n func(int)
 }
 
 func (c *countingWriter) Write(b []byte) (int, error) {
-	n, err := c.ResponseWriter.Write(b)
+	var w io.Writer = c.ResponseWriter
+	if c.w != nil {
+		w = c.w
+	}
+	n, err := w.Write(b)
 	c.n(n)
 	return n, err
 }
@@ -372,7 +394,9 @@ func (s *Server) direct(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", ct)
 	}
 	w.Header().Set("Cache-Control", "private, no-transform")
-	cw := &countingWriter{ResponseWriter: w, n: func(n int) { s.Sess.AddBytes(sess, n) }}
+	cw := &countingWriter{ResponseWriter: w, w: sess.NetWriter(w), n: func(n int) { s.Sess.AddBytes(sess, n) }}
+	// Timed, so the player can tell a slow disk from a slow connection.
+	src := sess.DiskReader(fh)
 	// An admin Stop ends the session: cut this response off too, so the
 	// browser can't keep playing from the open connection. The deadline
 	// fails a write blocked on a full socket; endedReader stops the copy.
@@ -392,10 +416,10 @@ func (s *Server) direct(w http.ResponseWriter, r *http.Request) {
 			case <-done:
 			}
 		}()
-		http.ServeContent(cw, r, "", st.ModTime(), &endedReader{ReadSeeker: fh, ended: ended})
+		http.ServeContent(cw, r, "", st.ModTime(), &endedReader{ReadSeeker: src, ended: ended})
 		return
 	}
-	http.ServeContent(cw, r, "", st.ModTime(), fh)
+	http.ServeContent(cw, r, "", st.ModTime(), src)
 }
 
 // endedReader fails reads once its session has ended.

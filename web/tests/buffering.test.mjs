@@ -35,3 +35,39 @@ test('a transcode below real time is the server, ahead of the network', () => {
   assert.equal(bufferingCause({ needKbps: 4000, bandwidth: 6e6, rate: 2 }).kind, 'network');
   assert.equal(bufferingCause({ needKbps: 4000, bandwidth: 6e6, rate: 1 }), null);
 });
+
+test('a server waiting on its own disk is named instead of the connection', () => {
+  // The case that prompted it: torrents writing to the same USB drive while
+  // a remote viewer watched; the file reads stalled, not the network.
+  const c = bufferingCause({ needKbps: 15000, bandwidth: 14e6, remote: true, isAdmin: true, method: 'remux', diskWait: 0.9 });
+  assert.equal(c.kind, 'disk');
+  assert.match(c.text, /server's disk is too slow/);
+  assert.doesNotMatch(c.text, /Your connection to the server is too slow/);
+  assert.match(c.hint, /downloads/);
+  assert.doesNotMatch(bufferingCause({ needKbps: 15000, bandwidth: 0, diskWait: 0.9 }).hint, /downloads/);
+  // Mostly waiting on the network: still the connection.
+  assert.equal(bufferingCause({ needKbps: 15000, bandwidth: 14e6, remote: true, diskWait: 0.2 }).kind, 'network');
+  // Data arrives fast enough: the disk isn't why it's buffering.
+  assert.equal(bufferingCause({ needKbps: 8000, bandwidth: 40e6, diskWait: 0.9 }), null);
+});
+
+test('an overloaded server is named instead of the connection', () => {
+  const cpu = [{ kind: 'cpu', text: "The server's processor is 99% busy." }];
+  const c = bufferingCause({ needKbps: 15000, bandwidth: 5e6, remote: true, isAdmin: true, host: cpu });
+  assert.equal(c.kind, 'cpu');
+  assert.match(c.text, /arriving at 5\.0 Mbps.*processor is 99% busy/);
+  assert.doesNotMatch(c.text, /Your connection/);
+  assert.match(c.hint, /transcodes/);
+  assert.equal(bufferingCause({ needKbps: 15000, bandwidth: 5e6, host: cpu }).hint, 'Playback picks up when the server catches up.');
+  // A slow conversion says why the server is slow.
+  const j = bufferingCause({ needKbps: 4000, job: { speed: 0.6 }, host: [{ kind: 'memory', text: 'The server is short of memory (40 MB free).' }], isAdmin: true });
+  assert.equal(j.kind, 'server');
+  assert.match(j.text, /0\.6x\)\. The server is short of memory/);
+  assert.match(j.hint, /memory/);
+  // Nothing measured yet, but the host is struggling.
+  assert.equal(bufferingCause({ host: [{ kind: 'throttled', text: 'x' }] }).kind, 'throttled');
+  // Data arrives fast enough: the load isn't why.
+  assert.equal(bufferingCause({ needKbps: 8000, bandwidth: 40e6, host: cpu }), null);
+  // The disk strain's own words are used for a stream waiting on disk.
+  assert.match(bufferingCause({ needKbps: 15000, bandwidth: 14e6, diskWait: 0.9, host: [{ kind: 'disk', text: 'Drives at 65%.' }] }).text, /^Drives at 65%\. It is waiting on the drive/);
+});
