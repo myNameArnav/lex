@@ -1,82 +1,33 @@
 # Contributing
 
-Use Go 1.26.11 or newer (the `go` line in `go.mod`) and format changes with
-`gofmt`. FFmpeg and FFprobe are needed to exercise actual playback. The UI
-consists of native JavaScript modules with no package installation or build
-step.
+## Setup
 
-Run these checks before opening a pull request:
+Use Go 1.26.11 or newer (the `go` line in `go.mod`) and FFmpeg/FFprobe for
+playback. The UI is native JavaScript modules: no package install, no build
+step. Format Go code with `gofmt`.
+
+## Before opening a pull request
 
 ```sh
 go test -race ./...
 go vet ./...
 node --experimental-vm-modules --test web/tests/*.test.mjs
 python3 scripts/check-publication.py
-go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --no-banner --log-opts="HEAD" .
-go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 ```
 
-Use synthetic usernames, media paths and fixtures. Keep data directories,
-credentials and logs out of Git. This repository uses neutral commit attribution
-to keep personal information out of public history. If the publication privacy
-check asks for it, set that identity locally for this checkout; do not change
-global Git identity settings.
+CI runs these plus secret and vulnerability scans on every pull request.
 
-Describe the problem, resulting behavior and checks in pull requests. Include
-regression tests for authentication, authorization, file handling and concurrency
-changes. Check the browser when changing UI or playback behavior.
+- Describe the problem, the new behavior and how you checked it.
+- Add regression tests for changes to authentication, authorization, file
+  handling or concurrency.
+- Try UI and playback changes in a browser.
 
-For manual playback stress testing, copy `web/tests/browser-stress.html` and
-`web/tests/browser-stress.js` to `web/static/stress.html` and `web/static/stress.js`
-in a temporary checkout, then rebuild the server. In a signed-in Firefox tab,
-open `/stress.html?items=<episode-id>,<movie-id>,<movie-id>&minutes=20`. The
-fixture checks seeks, pause/resume, network failures, buffer pressure, a real
-server restart and continuous playback. Restart the server when the page says
-`RESTART SERVER NOW`. It downloads a JSON result, restores preferences and
-suppresses watch progress. Use `restartOnly` to repeat the restart, movie and
-continuous checks, or `continuousOnly` for just the endurance check. Remove the
-temporary static files before building the normal release.
+## Privacy
 
-## Checks and publication
-
-CI runs on pull requests (merging doesn't run it again, and PRs that only change
-docs or the version number skip it) and checks formatting, module consistency, race tests, Go vet, JavaScript/shell
-syntax, Compose configuration, publication privacy, secrets and vulnerabilities.
-Pull requests that change the Dockerfile or its inputs also build the arm64 image. The privacy script checks working
-files and branch/tag history for private deployment addresses, home paths,
-runtime/configuration files and personal commit attribution; with
-`--since origin/main` it checks only your branch's commits, as CI does for a
-pull request (CI's test, lint and security checks run as parallel jobs). It complements
-manual review and secret scanning; it cannot detect every form of PII.
-
-Before a first GitHub publication, use a fresh repository, run the checks, and
-push only the cleaned `main` branch. For example, after choosing a repository
-name and signing in to GitHub CLI:
-
-```sh
-gh repo create REPOSITORY_NAME --public --source=. --remote=origin --push
-```
-
-Do not use `git push --mirror`: application checkpoint refs are local metadata.
-Commits use the neutral "Lex contributors" identity; pull requests merged on
-GitHub record the maintainer's GitHub no-reply address, which the check allows. Keep
-personal data, logs, media and credentials out of future commits, screenshots
-and issues. See the
-[publication audit](docs/PUBLISH_AUDIT.md) for validation and remaining limits.
-
-## Releases
-
-The version number lives in `internal/version/VERSION`; builds add the commit
-they came from (`lex -version` prints e.g. `lex 0.0.22 (9185cfe)`, and it's shown
-in Settings → About and the account menu). To release, bump that file, commit,
-and push a matching tag:
-
-```sh
-git tag -a v0.0.22 -m "Lex v0.0.22" && git push origin v0.0.22
-```
-
-The Container image workflow checks the tag against the file, publishes the
-arm64 image and creates a GitHub Release (notes only).
+Use synthetic usernames, media paths and fixtures, and keep data directories,
+credentials, logs and personal media out of commits, screenshots and issues.
+The publication check in CI catches common slips such as home paths, private
+addresses and personal commit emails.
 
 ## Code layout
 
@@ -107,5 +58,5 @@ scripts            release, WebAssembly builds and publication privacy checks
 
 ## License
 
-Lex is licensed under the [MIT License](LICENSE). By contributing, you agree
+lex is licensed under the [MIT License](LICENSE). By contributing, you agree
 that your contributions are licensed under the same terms.

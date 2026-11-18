@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Lex",
-  "short_name": "Lex",
-  "description": "Your movies and shows, streamed from your own Lex server.",
+  "name": "lex",
+  "short_name": "lex",
+  "description": "Your movies and shows, streamed from your own lex server.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

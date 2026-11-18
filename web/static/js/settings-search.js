@@ -81,6 +81,7 @@ const INDEX = {
   interface: [
     ['Appearance', 'look colours colors', [
       ['Theme', 'dark light mode system appearance night day colour color scheme'],
+      ['Font', 'typeface fredoka rounded system text headings'],
     ]],
     ['Keyboard', 'shortcuts hotkeys', [
       ['Single-key shortcuts', 'keyboard hotkeys keys speech'],
@@ -232,7 +233,7 @@ const INDEX = {
   ],
   about: [
     ['AI disclosure', 'llm ai', []],
-    ['Lex', 'version database data folder go', []],
+    ['lex', 'version database data folder go', []],
     ['ffmpeg', 'ffprobe encoders version', []],
     ['Caches', 'artwork subtitles clear cache images', []],
   ],

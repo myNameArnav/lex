@@ -51,7 +51,7 @@ var migrations = []func(*sql.Tx) error{
 
 // ErrSchemaTooNew means the database was migrated by a newer Lex than this
 // binary. Running against it could corrupt data this version doesn't know.
-var ErrSchemaTooNew = errors.New("database schema is newer than this version of Lex supports")
+var ErrSchemaTooNew = errors.New("database schema is newer than this version of lex supports")
 
 // dbtx is the query surface shared by *sql.DB and *sql.Tx.
 type dbtx interface {
@@ -95,7 +95,7 @@ func migrate(ctx context.Context, db *sql.DB) (err error) {
 		return err
 	}
 	if version > len(migrations) {
-		return fmt.Errorf("%w (database is at schema version %d, this binary knows up to %d); upgrade Lex or restore a backup", ErrSchemaTooNew, version, len(migrations))
+		return fmt.Errorf("%w (database is at schema version %d, this binary knows up to %d); upgrade lex or restore a backup", ErrSchemaTooNew, version, len(migrations))
 	}
 
 	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {

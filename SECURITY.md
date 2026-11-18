@@ -1,6 +1,6 @@
 # Security and privacy
 
-Lex is intended for a trusted, self-hosted media library. Administrators can
+lex is intended for a trusted, self-hosted media library. Administrators can
 browse the server filesystem, choose library/cache paths, manage every account,
 and see playback history and logs. By default every signed-in user can play
 every library; an admin can limit a regular user to some libraries.
@@ -30,7 +30,7 @@ every library; an admin can limit a regular user to some libraries.
   HTTP. Compose and the example Linux services bind to loopback by default.
 - Proxy-header trust is disabled for new installations. If enabled, set
   `trustedProxies` to the proxy peer's exact CIDRs. The proxy must replace incoming
-  forwarding headers, preserve the public `Host`, and block direct access to Lex.
+  forwarding headers, preserve the public `Host`, and block direct access to lex.
   Existing installations keep their saved toggle but receive a loopback allowlist.
 - Browser mutations use Go's cross-origin protection. API clients without browser
   origin headers can use cookies, `Authorization: Bearer`, or `X-Lex-Token`.
@@ -54,7 +54,7 @@ The data directory contains usernames, password hashes, API credentials,
 hashed session tokens, media paths, watch state, artwork and subtitle caches.
 Device records and playback history include client IP addresses and browser
 labels. Playback history is kept for 365 days by default (Settings → Server →
-Playback history; 0 keeps it forever) and older plays are deleted hourly. Admin logs can include usernames, IPs, titles and paths. Lex creates new
+Playback history; 0 keeps it forever) and older plays are deleted hourly. Admin logs can include usernames, IPs, titles and paths. lex creates new
 data directories with mode 0700 and databases with mode 0600. Protect existing
 folder permissions, backups and custom cache directories as well.
 
@@ -73,7 +73,8 @@ archive verification keys, not private signing keys.
 
 ## Reporting a vulnerability
 
-When this repository is hosted on GitHub, use its private vulnerability reporting
-feature if the maintainer has enabled it. Otherwise contact the maintainer through
-an available private channel before publishing exploit details. Include affected
-versions, impact and a minimal reproduction with synthetic data.
+Report vulnerabilities privately through GitHub: the repository's **Security**
+tab → **Report a vulnerability**
+([direct link](https://github.com/myNameArnav/lex/security/advisories/new)).
+Don't open a public issue. Include affected versions, impact and a minimal
+reproduction with synthetic data.

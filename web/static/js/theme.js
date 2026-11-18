@@ -19,4 +19,12 @@ export function applyTheme(theme = prefs.get('theme')) {
   }
 }
 
+// Font (Settings → Appearance → Font, per device): Fredoka for titles
+// and the logo (the default), Fredoka everywhere, or the system font.
+export function applyFont(font = prefs.get('font')) {
+  const root = document.documentElement;
+  if (font === 'system' || font === 'all') root.dataset.font = font; else delete root.dataset.font;
+}
+
 applyTheme();
+applyFont();

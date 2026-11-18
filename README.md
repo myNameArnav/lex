@@ -1,19 +1,21 @@
-# Lex
+<p align="center"><img src="docs/brand/banner.svg" alt="lex: no P, no pay. A self-hosted media server for small Linux hosts." width="640"></p>
+
+# lex
 
 A lightweight, self-hosted media server for small Linux hosts such as a
 Raspberry Pi: one Go binary with SQLite, FFmpeg for media work, and a web UI
 with no build step.
 
 > [!NOTE]
-> **Built by AI.** Lex was written by LLM coding agents under human direction.
+> **Built by AI.** lex was written by LLM coding agents under human direction.
 > See [AI disclosure](#ai-disclosure).
 
-![Lex home screen](docs/screenshots/home.webp)
+![lex home screen](docs/screenshots/home.webp)
 
-## Why Lex
+## Why lex
 
 Most media servers decide on their own to transcode, and you find out when the
-fan spins up. Lex is built around knowing **how each file will play in the
+fan spins up. lex is built around knowing **how each file will play in the
 browser you're using, and why**:
 
 - **It asks the browser.** The player reports exactly which containers and
@@ -73,7 +75,7 @@ and ffmpeg pauses when the browser's buffer is full. Browsers without MSE
   editions when a title has several versions. Sonarr/Radarr webhooks trigger
   instant rescans; admins get a list of unmatched titles and unreadable files.
 - **Metadata**: TMDB (free key), TVmaze for shows, or a local Radarr. Artwork
-  is cached and served by Lex. Collections, cast pages, genres, a per-user
+  is cached and served by lex. Collections, cast pages, genres, a per-user
   Watchlist and Favorites, and manual "Fix match".
 - **Player**: resume, Up next, Skip Intro / Skip Credits (detected with audio
   fingerprints; a title counts as watched once the credits start), chapters,
@@ -101,98 +103,21 @@ and ffmpeg pauses when the browser's buffer is full. Browsers without MSE
   play position, playback switches to it as soon as it's ahead, and it pauses
   while another stream waits on the drive.
 
-## Quick start
+## Documentation
 
-Build with Go **1.26.11 or newer** and install FFmpeg/FFprobe:
-
-```sh
-go build -trimpath -o lex ./cmd/lex
-./lex -addr 127.0.0.1:8420 -data ./data
-```
-
-Open <http://localhost:8420>, create the first administrator, and add a library
-(an absolute path) in Settings → Libraries. Lex listens on loopback by default;
-use `-addr :8420` for LAN access behind a firewall, and read
-[security and privacy](SECURITY.md) before exposing it further.
-
-| Flag | Environment | Default |
-| --- | --- | --- |
-| `-addr` | `LEX_ADDR` | `127.0.0.1:8420` |
-| `-data` | `LEX_DATA` | `./data` |
-| `-ffmpeg` / `-ffprobe` | `LEX_FFMPEG` / `LEX_FFPROBE` | from `PATH` |
-| `-debug` | `LEX_DEBUG=1` | off |
-| `-version`, `-healthcheck` | — | print version / probe the server and exit |
-| `-restore <file>` | — | replace the database with a backup and exit (stop Lex first) |
-
-## Docker
-
-A `linux/arm64` image is published to GitHub Container Registry
-(`:latest`, `:<major.minor>`, `:<version>`, and `:edge` for manual builds of
-`main`). On other platforms, `docker build -t lex .`.
-
-```sh
-docker run -d --name lex -p 127.0.0.1:8420:8420 --user 1000:1000 \
-  -v lex-data:/data -v /path/to/media:/media:ro ghcr.io/mynamearnav/lex:latest
-```
-
-Or edit the media path in `docker-compose.yml` and run `docker compose up -d`.
-Add `/media` as the library path in Lex. On a Raspberry Pi, add
-`-f docker-compose.rpi.yml` to pass the hardware codec devices through; for
-other arm64 boards build with `--build-arg RPI_FFMPEG=no`. HEVC hardware
-decoding also needs the media controllers (`/dev/media*`) and a read-only
-`/run/udev`; without them FFmpeg decodes in software and Settings → Transcoding
-says why.
-
-## Running as a service
-
-`deploy/` has a systemd unit for the binary, a Podman Quadlet unit that follows
-`:latest` with `podman auto-update`, `lex-hwcodec.service` for Raspberry Pi
-codec modules, and `deploy.sh` to install either over SSH. Review paths, users
-and device group IDs for your host first.
-
-For remote access, put Lex behind an HTTPS reverse proxy or a VPN. If you
-enable **Trust reverse-proxy headers**, list every proxy in **Trusted proxy
-peers**. Clients outside **Local networks** get the **Remote bitrate limit**.
-Settings → **Sonarr & Radarr** connects Lex's rescan webhook with one
-click (Lex adds it through their API, trying its addresses until the app's own
-Test passes). The webhook URL carries its own token; keep it private.
-
-## Backups
-
-Lex backs up its database (users, watch history, matches, collections and
-settings) daily and before every upgrade that changes it, into
-`<data>/backups` or the folder set in Settings → Backups, keeping the newest
-seven of each kind. Settings → Backups lists them and can back up now or
-download one. Artwork, subtitles and seek previews aren't backed up; Lex
-rebuilds them.
-
-To restore, stop Lex and run `lex -data <data> -restore <file>`; the current
-database is backed up first. With the container image:
-
-```sh
-docker run --rm -v lex-data:/data ghcr.io/mynamearnav/lex:latest \
-  -restore /data/backups/<file>
-```
-
-## Development
-
-```sh
-go test -race ./...
-go vet ./...
-python3 scripts/check-publication.py
-```
-
-See [contributing](CONTRIBUTING.md) for the full checks, the code layout and
-how releases are made, and the [publication audit](docs/PUBLISH_AUDIT.md) for
-the privacy checks.
+- [Installing lex](docs/install.md): build from source with Go **1.26.11 or newer**,
+  run the Docker image, or install it as a service.
+- [Backups](docs/backups.md): automatic database backups and restoring one.
+- [Contributing](CONTRIBUTING.md): development checks and code layout.
+- [Security and privacy](SECURITY.md): read before exposing lex beyond your LAN.
 
 ## AI disclosure
 
-Lex was built by large language models: LLM coding agents wrote the server,
+lex was built by large language models: LLM coding agents wrote the server,
 UI, tests, documentation and screenshots, while a human maintainer chose the
 features, reported bugs and tested on real hardware. Commits name the model in
 a `Co-Authored-By` trailer. The code and its checks have not had an independent
-security review, so review Lex before exposing it to the internet. Lex calls no
+security review, so review lex before exposing it to the internet. lex calls no
 AI service at runtime.
 
 ## License

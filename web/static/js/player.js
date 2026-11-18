@@ -1807,7 +1807,7 @@ class Player {
 
   async copyStats() {
     const m = this.statsModel(this.clientStats());
-    const lines = [`Lex playback stats · ${[...this.titleEl.children].map((c) => c.textContent).join(' · ')} · ${new Date().toISOString()}`, m.summary];
+    const lines = [`lex playback stats · ${[...this.titleEl.children].map((c) => c.textContent).join(' · ')} · ${new Date().toISOString()}`, m.summary];
     for (const s of m.sections) {
       lines.push('', `[${s.title}]`);
       for (const row of s.rows) lines.push(`${row.k}: ${row.full || row.v}${row.sub ? ` · ${row.sub}` : ''}`);
