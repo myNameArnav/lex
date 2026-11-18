@@ -651,7 +651,18 @@ func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) statsSystem(w http.ResponseWriter, r *http.Request) {
-	out := map[string]any{"snapshot": s.Stats.Snapshot()}
+	snap := s.Stats.Snapshot()
+	out := map[string]any{"snapshot": snap}
+	// What is overloading the host right now (the same checks the player's
+	// stats use), and how busy the drive under each storage path is.
+	out["strains"] = snap.Strains()
+	busy := map[string]float64{}
+	for _, d := range snap.Disks {
+		if v, ok := snap.DiskBusy[sysstats.Device(d.Path)]; ok {
+			busy[d.Path] = v
+		}
+	}
+	out["diskBusy"] = busy
 	if r.URL.Query().Get("history") == "1" {
 		out["history"] = s.Stats.History()
 	}

@@ -265,9 +265,9 @@ export function barList(items, fmt, colorFor, { wrap = false } = {}) {
   const max = Math.max(1, ...items.map((i) => i.value));
   return h('div', { class: 'bar-list' }, items.map((it, idx) => h(it.onClick ? 'button' : 'div', {
     class: `bar-item${it.onClick ? ' link' : ''}${wrap ? ' wrap' : ''}`, type: it.onClick ? 'button' : null,
-    title: `${it.label}: ${fmt(it.value)}`, onclick: it.onClick || null,
+    title: `${it.label}${it.note ? ` (${it.note})` : ''}: ${fmt(it.value)}`, onclick: it.onClick || null,
   },
-  h('span', { class: 'ellipsis' }, it.label),
+  h('span', { class: 'ellipsis' }, it.label, it.note ? h('span', { class: 'dim bar-note' }, ` · ${it.note}`) : null),
   h('span', { class: 'track' }, h('i', { style: { width: `${Math.max(1, (it.value / max) * 100)}%`, background: colorFor ? colorFor(it, idx) : SERIES[0] } })),
   h('span', { class: 'muted nowrap' }, fmt(it.value)),
   it.onClick ? h('span', { class: 'chev', 'aria-hidden': 'true', html: icons.chevR }) : null)));
