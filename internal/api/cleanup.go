@@ -31,6 +31,8 @@ func (s *Server) FileChanged(f *store.File) {
 	if s.Images != nil && f.ItemID > 0 {
 		s.Images.ForgetThumb(f.ItemID)
 		thumbFailed.Delete(f.ItemID)
+		s.Images.ForgetExtraThumb(f.ID)
+		thumbFailed.Delete(extraThumbKey(f.ID))
 	}
 }
 
@@ -71,6 +73,7 @@ func (s *Server) SweepDerived() {
 	}
 	if s.Images != nil {
 		n += s.Images.SweepThumbs(items, cutoff)
+		n += s.Images.SweepExtraThumbs(files, cutoff)
 	}
 	if n > 0 {
 		s.Log.Infof("cleanup: removed %d derived file(s) of removed or replaced media", n)

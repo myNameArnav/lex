@@ -10,7 +10,7 @@ import (
 )
 
 func (s *Store) extBuckets() ([]Bucket, error) {
-	rows, err := s.db.Query(`SELECT path,size FROM files`)
+	rows, err := s.db.Query(`SELECT path,size FROM files WHERE extra=''`)
 	if err != nil {
 		return nil, err
 	}
@@ -90,11 +90,11 @@ func (s *Store) LibraryStats() (*LibraryStats, error) {
 		(SELECT COUNT(*) FROM items WHERE kind='show'),
 		(SELECT COUNT(*) FROM items WHERE kind='season'),
 		(SELECT COUNT(*) FROM items WHERE kind='episode'),
-		(SELECT COUNT(*) FROM files),
-		(SELECT COALESCE(SUM(size),0) FROM files),
-		(SELECT COALESCE(SUM(duration),0) FROM files),
-		(SELECT COUNT(*) FROM files WHERE probed_at=0),
-		(SELECT COUNT(*) FROM files WHERE probe_error!=''),
+		(SELECT COUNT(*) FROM files WHERE extra=''),
+		(SELECT COALESCE(SUM(size),0) FROM files WHERE extra=''),
+		(SELECT COALESCE(SUM(duration),0) FROM files WHERE extra=''),
+		(SELECT COUNT(*) FROM files WHERE extra='' AND probed_at=0),
+		(SELECT COUNT(*) FROM files WHERE extra='' AND probe_error!=''),
 		(SELECT COUNT(*) FROM items WHERE kind IN ('movie','show') AND meta_status IN (1,3)),
 		(SELECT COUNT(*) FROM items WHERE kind IN ('movie','show') AND meta_status=2),
 		(SELECT COUNT(*) FROM items WHERE meta_status=0)`).Scan(
@@ -103,25 +103,25 @@ func (s *Store) LibraryStats() (*LibraryStats, error) {
 	if err != nil {
 		return nil, err
 	}
-	if st.VideoCodecs, err = s.buckets(`SELECT ` + videoOf + ` v, COUNT(*), SUM(size) FROM files f GROUP BY v ORDER BY 2 DESC`); err != nil {
+	if st.VideoCodecs, err = s.buckets(`SELECT ` + videoOf + ` v, COUNT(*), SUM(size) FROM files f WHERE f.extra='' GROUP BY v ORDER BY 2 DESC`); err != nil {
 		return nil, err
 	}
 	// Any audio track counts (a file with English AAC and a DTS track is in
 	// both), so these add up to more than the number of files.
 	if st.AudioCodecs, err = s.buckets(`SELECT a.codec, COUNT(*), SUM(f.size) FROM file_audio a JOIN files f ON f.id=a.file_id
-		GROUP BY a.codec ORDER BY 2 DESC`); err != nil {
+		WHERE f.extra='' GROUP BY a.codec ORDER BY 2 DESC`); err != nil {
 		return nil, err
 	}
 	if st.Containers, err = s.extBuckets(); err != nil {
 		return nil, err
 	}
-	if st.Resolutions, err = s.buckets(`SELECT ` + resolutionOf + ` r, COUNT(*), SUM(size) FROM files f GROUP BY r ORDER BY 2 DESC`); err != nil {
+	if st.Resolutions, err = s.buckets(`SELECT ` + resolutionOf + ` r, COUNT(*), SUM(size) FROM files f WHERE f.extra='' GROUP BY r ORDER BY 2 DESC`); err != nil {
 		return nil, err
 	}
-	if st.HDR, err = s.buckets(`SELECT CASE hdr WHEN '' THEN 'SDR' ELSE hdr END, COUNT(*), SUM(size) FROM files GROUP BY 1 ORDER BY 2 DESC`); err != nil {
+	if st.HDR, err = s.buckets(`SELECT CASE hdr WHEN '' THEN 'SDR' ELSE hdr END, COUNT(*), SUM(size) FROM files WHERE extra='' GROUP BY 1 ORDER BY 2 DESC`); err != nil {
 		return nil, err
 	}
-	if st.Libraries, err = s.buckets(`SELECT l.name, COUNT(f.id), COALESCE(SUM(f.size),0) FROM libraries l LEFT JOIN files f ON f.library_id=l.id GROUP BY l.id ORDER BY l.id`); err != nil {
+	if st.Libraries, err = s.buckets(`SELECT l.name, COUNT(f.id), COALESCE(SUM(f.size),0) FROM libraries l LEFT JOIN files f ON f.library_id=l.id AND f.extra='' GROUP BY l.id ORDER BY l.id`); err != nil {
 		return nil, err
 	}
 	return st, nil
@@ -183,7 +183,7 @@ func (s *Store) TitlesForFiles(ids []int64) ([]LibraryTitle, error) {
 func (s *Store) titlesWhere(cond string, args ...any) ([]LibraryTitle, error) {
 	rows, err := s.db.Query(`SELECT g.id, g.kind, g.title, g.year, x.n, x.b FROM (
 		SELECT CASE WHEN i.kind='episode' AND i.show_id>0 THEN i.show_id ELSE i.id END gid, COUNT(*) n, SUM(f.size) b
-		FROM files f JOIN items i ON i.id=f.item_id WHERE `+cond+` GROUP BY gid) x
+		FROM files f JOIN items i ON i.id=f.item_id WHERE f.extra='' AND (`+cond+`) GROUP BY gid) x
 		JOIN items g ON g.id=x.gid ORDER BY x.b DESC LIMIT 500`, args...)
 	if err != nil {
 		return nil, err

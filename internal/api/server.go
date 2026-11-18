@@ -149,6 +149,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("DELETE /api/files/{id}/subs/{idx}", u(s.subDelete))
 	mux.Handle("GET /api/files/{id}/fonts", u(s.fonts))
 	mux.Handle("GET /api/files/{id}/trickplay", u(s.trickMeta))
+	mux.Handle("GET /api/files/{id}/thumb", u(s.extraThumb))
 	mux.Handle("GET /api/files/{id}/hls/index.m3u8", s.hlsAuth(s.hlsPlaylist))
 	mux.Handle("GET /api/files/{id}/hls/init.mp4", s.hlsAuth(s.hlsSegment))
 	mux.Handle("GET /api/files/{id}/hls/seg/{n}", s.hlsAuth(s.hlsSegment))
