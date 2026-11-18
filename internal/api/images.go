@@ -25,7 +25,7 @@ import (
 	"lex/internal/store"
 )
 
-var thumbFailed sync.Map // item id -> time of failure
+var thumbFailed sync.Map // item id (or extraThumbKey) -> time of failure
 
 // imageRef picks the artwork reference for an item with sensible fallbacks.
 func (s *Server) imageRef(it *store.Item, kind string) string {
@@ -300,7 +300,42 @@ func (s *Server) generateThumb(ctx context.Context, it *store.Item) (string, err
 	if err != nil || len(files) == 0 {
 		return "", fmt.Errorf("no file")
 	}
-	f := files[0]
+	return s.grabFrame(ctx, files[0], dst, it.ID)
+}
+
+// extraThumbKey is a local extra's key in thumbFailed (item ids are
+// positive).
+func extraThumbKey(fileID int64) int64 { return -fileID }
+
+// extraThumb serves a frame of a local extra (GET /api/files/{id}/thumb).
+func (s *Server) extraThumb(w http.ResponseWriter, r *http.Request) {
+	f, ok := s.pathFile(w, r)
+	if !ok {
+		return
+	}
+	if f.Extra == "" {
+		writeErr(w, 404, "not an extra")
+		return
+	}
+	dst := s.Images.ExtraThumbPath(f.ID)
+	if _, err := os.Stat(dst); err != nil {
+		if t, ok := thumbFailed.Load(extraThumbKey(f.ID)); ok && time.Since(t.(time.Time)) < time.Hour {
+			w.Header().Set("Cache-Control", "private, max-age=300")
+			http.Error(w, "no image", 404)
+			return
+		}
+		if _, err := s.grabFrame(r.Context(), f, dst, extraThumbKey(f.ID)); err != nil {
+			w.Header().Set("Cache-Control", "private, max-age=300")
+			http.Error(w, "no image", 404)
+			return
+		}
+	}
+	s.serveImage(w, r, dst)
+}
+
+// grabFrame writes a frame from about a fifth into f to dst, recording a
+// failure under failKey in thumbFailed.
+func (s *Server) grabFrame(ctx context.Context, f *store.File, dst string, failKey int64) (string, error) {
 	select {
 	case s.thumbSem <- struct{}{}:
 	case <-ctx.Done():
@@ -325,7 +360,7 @@ func (s *Server) generateThumb(ctx context.Context, it *store.Item) (string, err
 	proc.Nice(cmd.Process.Pid, 10)
 	if err := cmd.Wait(); err != nil {
 		os.Remove(tmp)
-		thumbFailed.Store(it.ID, time.Now())
+		thumbFailed.Store(failKey, time.Now())
 		return "", err
 	}
 	if err := os.Rename(tmp, dst); err != nil {

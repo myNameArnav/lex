@@ -479,7 +479,7 @@ func udSelectCols(cols, where string) string {
 		CASE i.kind WHEN 'show' THEN (SELECT COUNT(*) FROM items e LEFT JOIN user_data u2 ON u2.item_id=e.id AND u2.user_id=:uid WHERE e.show_id=i.id AND e.kind='episode' AND COALESCE(u2.played,0)=0)
 		            WHEN 'season' THEN (SELECT COUNT(*) FROM items e LEFT JOIN user_data u2 ON u2.item_id=e.id AND u2.user_id=:uid WHERE e.parent_id=i.id AND e.kind='episode' AND COALESCE(u2.played,0)=0) ELSE 0 END,
 		COALESCE((SELECT s.title FROM items s WHERE s.id=i.show_id),''),
-		COALESCE((SELECT MAX(f.duration) FROM files f WHERE f.item_id=i.id),0)
+		COALESCE((SELECT MAX(f.duration) FROM files f WHERE f.item_id=i.id AND f.extra=''),0)
 		FROM items i LEFT JOIN user_data ud ON ud.item_id=i.id AND ud.user_id=:uid WHERE ` + libAccess + ` AND ` + cond
 }
 
@@ -796,7 +796,7 @@ var nextUpSQL = `WITH shows AS MATERIALIZED (
 func (s *Store) PruneEmpty(libID int64) (int64, error) {
 	var total int64
 	stmts := []string{
-		`DELETE FROM items WHERE library_id=? AND kind IN ('movie','episode') AND NOT EXISTS (SELECT 1 FROM files f WHERE f.item_id=items.id)`,
+		`DELETE FROM items WHERE library_id=? AND kind IN ('movie','episode') AND NOT EXISTS (SELECT 1 FROM files f WHERE f.item_id=items.id AND f.extra='')`,
 		`DELETE FROM items WHERE library_id=? AND kind='season' AND NOT EXISTS (SELECT 1 FROM items e WHERE e.parent_id=items.id)`,
 		`DELETE FROM items WHERE library_id=? AND kind='show' AND NOT EXISTS (SELECT 1 FROM items e WHERE e.parent_id=items.id)`,
 	}
@@ -954,7 +954,7 @@ type AirFilter struct {
 func (s *Store) Airables(f AirFilter) ([]Airable, error) {
 	// Genres are matched decoded: stored JSON escapes e.g. "&".
 	q := `SELECT id, library_id, show_id, season, dur FROM (SELECT i.id, i.library_id, i.show_id, i.season,
-			(SELECT f.duration FROM files f WHERE f.item_id=i.id ORDER BY f.height DESC, f.size DESC LIMIT 1) dur
+			(SELECT f.duration FROM files f WHERE f.item_id=i.id AND f.extra='' ORDER BY f.height DESC, f.size DESC LIMIT 1) dur
 		FROM items i LEFT JOIN items sh ON sh.id=i.show_id AND i.kind='episode'
 		WHERE i.kind IN ('movie','episode')
 		AND CASE :kind WHEN '' THEN 1 WHEN 'picked' THEN (CASE i.kind WHEN 'episode' THEN i.show_id ELSE i.id END) IN (SELECT value FROM json_each(:titles))

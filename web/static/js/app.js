@@ -550,6 +550,36 @@ export function play(itemId, start = null) {
   openPlayer({ itemId, start, onClose: () => { if (!isPlayerOpen()) refreshSoft(); } });
 }
 
+// playExtra plays one of a title's local extras (a trailer, a featurette…)
+// from the top. Watching one leaves the title's progress alone.
+function playExtra(it, x) {
+  openPlayer({ itemId: it.id, extra: x.id, start: 0, onClose: () => { if (!isPlayerOpen()) refreshSoft(); } });
+}
+
+const EXTRA_KINDS = { trailer: 'Trailer', featurette: 'Featurette', behindthescenes: 'Behind the scenes', deleted: 'Deleted scene', interview: 'Interview', scene: 'Scene', short: 'Short', other: 'Extra' };
+
+// trailerButton plays the title's first local trailer, if it has one.
+function trailerButton(it, extras) {
+  const t = extras?.find((x) => x.type === 'trailer');
+  return t ? h('button', { class: 'btn lg', dataset: { focusKey: `trailer-${it.id}` }, onclick: () => playExtra(it, t) }, h('span', { html: icons.play }), 'Trailer') : null;
+}
+
+// extrasRow lists a title's local extras, each with a frame from it.
+function extrasRow(it, extras) {
+  if (!extras?.length) return null;
+  return h('section', { class: 'shelf' },
+    h('div', { class: 'shelf-head' }, h('h2', { class: 'section-title' }, 'Extras')),
+    scroller(h('div', { class: 'shelf-track', tabindex: '-1', role: 'region', 'aria-label': 'Extras' }, extras.map((x) => {
+      const kind = EXTRA_KINDS[x.type] || 'Extra';
+      const sub = [x.title !== kind ? kind : '', x.duration ? fmtTime(x.duration) : ''].filter(Boolean).join(' · ');
+      return h('div', { class: 'card land', title: x.title },
+        h('button', { type: 'button', class: 'art', 'aria-label': `Play ${x.title}${sub ? `, ${sub}` : ''}`, dataset: { focusKey: `extra-${x.id}` }, onclick: () => playExtra(it, x) },
+          h('div', { class: 'ph' }, kind), lazyImg(`/api/files/${x.id}/thumb?w=480`, ''),
+          h('div', { class: 'play-hover', 'aria-hidden': 'true' }, h('span', { html: icons.play }))),
+        h('div', { class: 'meta' }, h('div', null, h('div', { class: 't' }, x.title), sub ? h('div', { class: 's' }, sub) : null)));
+    }))));
+}
+
 // playShuffle plays a show's (or a season's) episodes in random order.
 // The button stays busy while the order loads.
 async function playShuffle(it, btn) {
@@ -1170,6 +1200,7 @@ function mediaView(ctx, d) {
   if (!file) info.push(h('p', { class: 'bad' }, 'No media file found for this item.'));
   info.push(h('div', { class: 'actions' },
     file ? playButtons(it) : null,
+    trailerButton(it, d.extras),
     watchedButton(it),
     it.kind === 'movie' ? favButton(it) : null,
     it.kind === 'movie' ? watchlistButton(it) : null,
@@ -1192,7 +1223,7 @@ function mediaView(ctx, d) {
   const director = (it.cast || []).filter((p) => p.role === 'Director');
   if (director.length) info.push(h('p', { class: 'muted small' }, 'Directed by ', director.map((p, i) => [i ? ', ' : '', h('a', { class: 'plain-link', href: personHref(p.name) }, p.name)])));
   if (it.studios?.length) info.push(h('p', { class: 'muted small', style: { marginTop: '4px' } }, it.studios.slice(0, 4).join(' · ')));
-  return h('div', null, hero(it, poster, info, isEp && d.show ? d.show : it), castRow(it, true));
+  return h('div', null, hero(it, poster, info, isEp && d.show ? d.show : it), extrasRow(it, d.extras), castRow(it, true));
 }
 
 // versionPicker chooses which of a title's files Play plays: its versions
@@ -1341,7 +1372,7 @@ function heroActions(d) {
     btns.push(h('button', { class: 'btn primary lg', dataset: { focusKey: `show-play-${it.id}` }, onclick: () => play(next.id, done ? 0 : null) }, h('span', { html: icons.play }), lbl));
     if (it.childCount > 1) btns.push(h('button', { class: 'btn lg', title: 'Play episodes in random order', dataset: { focusKey: `show-shuffle-${it.id}` }, onclick: (e) => playShuffle(it, e.currentTarget) }, h('span', { html: icons.shuffle }), 'Shuffle'));
   }
-  btns.push(watchedButton(it), favButton(it), watchlistButton(it), moreButton(it, d));
+  btns.push(trailerButton(it, d.extras), watchedButton(it), favButton(it), watchlistButton(it), moreButton(it, d));
   // A placeholder title ("Episode 1") would only repeat the button.
   const upNext = !done && next?.title && !/^Episode \d+$/.test(next.title);
   return h('div', { class: 'hero-cta' }, h('div', { class: 'actions' }, btns), upNext ? h('p', { class: 'muted small' }, `Up next: ${next.title}`) : null);
@@ -1455,7 +1486,7 @@ async function showView(ctx, d) {
   }
   const page = h('div', null, hero(it, poster, info),
     h('div', { class: 'page', style: { paddingTop: 0 } }, h('h2', { class: 'sr-only' }, 'Episodes'), h('div', { class: 'season-bar' }, tabs, more), list),
-    castRow(it));
+    extrasRow(it, d.extras), castRow(it));
   if (active) await showSeason(active);
   // Many seasons: bring the selected tab into view once the page is laid out.
   requestAnimationFrame(() => {

@@ -174,8 +174,11 @@ async function retryApi(path, opts, { cancelled = () => false, retries = 6, onRe
 class Player {
   // shuffle: episodes to play in this order, from the first. channel: a Live
   // TV channel id to tune into, and channels the list to switch through.
-  constructor({ itemId, start = null, onClose, reuseHistory = false, shuffle = null, channel = null, channels = [] }) {
+  // extra: the file id of one of the item's local extras (a trailer...) to
+  // play instead of the item; it starts from the top and saves no progress.
+  constructor({ itemId, start = null, onClose, reuseHistory = false, shuffle = null, channel = null, channels = [], extra = null }) {
     this.onClose = onClose;
+    this.extra = extra;
     this.shuffle = shuffle?.length ? { items: shuffle, pos: 0 } : null;
     this.live = channel ? { channelId: channel, channels } : null;
     this.sessionId = null;
@@ -448,7 +451,7 @@ class Player {
     const gen = this.startGen = (this.startGen || 0) + 1;
     const stale = () => this.closed || gen !== this.startGen;
     try {
-      const d = await retryApi(`/api/items/${itemId}`, undefined, {
+      const d = await retryApi(`/api/items/${itemId}${this.extra ? `?extra=${this.extra}` : ''}`, undefined, {
         cancelled: stale,
         onRetry: (n) => this.setStatus(`Reconnecting to the server… (attempt ${n + 1})`),
       });
@@ -472,6 +475,7 @@ class Player {
       this.subOffset = tp.subOffset || 0;
       this.renderTitle();
       this.nextBtn.classList.toggle('hidden', !d.next && !(this.live?.channels.length > 1));
+      if (start == null && this.extra) start = 0;
       if (start == null) {
         const ud = this.item.userData;
         start = ud?.position > 0 ? ud.position : 0;
@@ -494,6 +498,8 @@ class Player {
       const { channel, next } = this.live;
       this.titleEl.append(h('b', null, fmtProgram(it)),
         h('span', null, [`${channel.number} · ${channel.name}`, next ? `Next at ${fmtClock(next.start)}: ${fmtProgram(next.item)}` : ''].filter(Boolean).join(' · ')));
+    } else if (this.detail.extra) {
+      this.titleEl.append(h('b', null, it.title), h('span', null, this.detail.extra.title));
     } else if (it.kind === 'episode') {
       this.titleEl.append(h('b', null, this.detail.show?.title || it.showTitle || ''), h('span', null, `${fmtEpisode(it)} — ${it.title}${this.shuffle ? ' · Shuffle' : ''}`));
     } else {
@@ -2290,7 +2296,7 @@ class Player {
     const it = this.item;
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
-        title: it.kind === 'episode' ? it.title : it.title,
+        title: this.detail.extra ? `${it.title}: ${this.detail.extra.title}` : it.title,
         artist: it.kind === 'episode' ? `${this.detail.show?.title || ''} · ${fmtEpisode(it)}` : String(it.year || ''),
         artwork: [{ src: img(it, it.kind === 'episode' ? 'thumb' : 'poster', 480), sizes: '480x480', type: 'image/jpeg' }],
       });

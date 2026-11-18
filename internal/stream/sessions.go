@@ -65,6 +65,9 @@ type Session struct {
 	// Set from the id (LivePrefix), so a session re-opened after a server
 	// restart stays live.
 	Live bool `json:"live"`
+	// Extra is a local extra (trailer, featurette, ...): watching one saves
+	// no resume position, watched mark or history for its title.
+	Extra bool `json:"extra"`
 	// CreditsAt is where the end credits start (detected, or a Credits
 	// chapter), or 0 when unknown. Reaching it marks the title watched.
 	CreditsAt float64 `json:"-"`
@@ -168,7 +171,7 @@ func (m *Manager) Open(s *Session) (*Session, error) {
 		// Plan changed mid-playback (quality/audio switch): keep counters.
 		old.Method, old.Reasons, old.VideoOut, old.AudioOut, old.OutBitrate = s.Method, s.Reasons, s.VideoOut, s.AudioOut, s.OutBitrate
 		old.FileID, old.VideoIn, old.AudioIn, old.Container, old.SrcBitrate = s.FileID, s.VideoIn, s.AudioIn, s.Container, s.SrcBitrate
-		old.Cached, old.HLS = s.Cached, s.HLS
+		old.Cached, old.HLS, old.Extra = s.Cached, s.HLS, s.Extra
 		if s.CreditsAt > 0 {
 			old.CreditsAt = s.CreditsAt
 		}
@@ -322,7 +325,7 @@ func (m *Manager) Heartbeat(id string, uid int64, pos float64, paused bool, cs C
 	stuck, resumed := s.watchProgress(now, pos, paused)
 	s.lastPos, s.lastBeat = pos, now
 	s.Position, s.Paused, s.Client_, s.LastSeen = pos, paused, cs, now.Unix()
-	itemID, dur, credits, playedSet, live, watched := s.ItemID, s.Duration, s.CreditsAt, s.playedSet, s.Live, s.Watched
+	itemID, dur, credits, playedSet, live, watched := s.ItemID, s.Duration, s.CreditsAt, s.playedSet, s.Live || s.Extra, s.Watched
 	user, title, method, client := s.UserName, s.Title, s.Method, s.Client
 	m.mu.Unlock()
 	if stuck != "" {
@@ -514,7 +517,7 @@ func (m *Manager) record(s *Session) {
 		m.log.Infof("playback ended: %s — %s (%s, %.0fs watched, %d MB, %s, %d stalls/%.0fs, %d stream restarts)",
 			s.UserName, s.Title, s.Method, s.Watched, bytes>>20, s.Client, s.Client_.BufferEvents, s.Client_.BufferSeconds, s.Restarts)
 	}
-	if s.Watched < 10 {
+	if s.Watched < 10 || s.Extra {
 		return
 	}
 	h := &store.HistoryEntry{

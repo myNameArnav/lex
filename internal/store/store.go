@@ -273,6 +273,8 @@ var lateColumns = []struct{ table, column, def string }{
 	{"user_data", "favorited_at", "INTEGER NOT NULL DEFAULT 0"},
 	// Bit depth of the first video stream, for Library stats (filefacts.go).
 	{"files", "vdepth", "INTEGER NOT NULL DEFAULT 0"},
+	// A local extra's type ("" for a title's own files); see File.Extra.
+	{"files", "extra", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func addLateColumns(db dbtx) error {
