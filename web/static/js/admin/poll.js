@@ -5,9 +5,9 @@
 // its view is no longer current (navigated away or re-rendered; a navigation
 // cancelled by the leave guard keeps them running), and all stop when the
 // session expires.
-export let pollers = [];
+let pollers = [];
 
-export function stopTimers() { pollers.forEach((p) => clearInterval(p.t)); pollers = []; }
+function stopTimers() { pollers.forEach((p) => clearInterval(p.t)); pollers = []; }
 
 // every polls fn every ms while ctx is current. Ticks are skipped while the
 // tab is hidden or a dialog is open (a re-render would pull the dialog's

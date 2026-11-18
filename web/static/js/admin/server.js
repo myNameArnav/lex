@@ -2,12 +2,12 @@
 
 import { h, toast, confirmDialog, run } from '../ui.js';
 import { api } from '../api.js';
-import { unmatchedModal } from '../admin.js';
+import { unmatchedModal } from './dashboard.js';
 import { heading, field, select, configForm } from './forms.js';
 
 // The webhook URL carries a secret token: offer a copy button, falling back
 // to selecting the text where the clipboard API is unavailable (plain http).
-export function copyableUrl(url) {
+function copyableUrl(url) {
   const code = h('code', { class: 'mono' }, url);
   const copy = async () => {
     try {
@@ -26,7 +26,7 @@ export function copyableUrl(url) {
 // until the app's own Test passes, so nobody has to copy URLs between apps.
 // urlKey/keyKey are the config fields holding the app's address and API key;
 // the unsaved form values are used, so Connect works before Save.
-export function arrRow(name, draft, urlKey, keyKey, missing) {
+function arrRow(name, draft, urlKey, keyKey, missing) {
   const app = name.toLowerCase();
   const status = h('span', { class: 'arr-status muted', role: 'status' });
   const btn = h('button', { class: 'btn sm', type: 'button' }, 'Connect');
@@ -71,7 +71,7 @@ export function arrRow(name, draft, urlKey, keyKey, missing) {
 
 // The by-hand fallback for apps Lex can't reach (or other tools): one URL
 // to copy, plus the LAN addresses for apps in containers.
-export function webhookManual(path, lanBases) {
+function webhookManual(path, lanBases) {
   const lan = (lanBases || []).filter((b) => b !== location.origin);
   return h('details', { class: 'arr-manual' },
     h('summary', null, 'Set it up by hand'),

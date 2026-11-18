@@ -10,7 +10,7 @@ import { state, setLeaveGuard, renderNav } from '../app.js';
 // page reads as a list of settings rather than paragraphs. The text stays in
 // the page (hidden until opened), so it is still the control's description
 // for screen readers and still found by the browser's find-in-page.
-export let infoId = 0;
+let infoId = 0;
 
 export function infoPair(name, help, tag = 'div') {
   const text = h(tag, { class: 'help info-text', id: `info-${++infoId}`, hidden: true }, help);
@@ -24,7 +24,7 @@ export function infoPair(name, help, tag = 'div') {
   return [btn, text];
 }
 
-export const nameOf = (label) => (typeof label === 'string' ? label : label?.textContent || 'this setting');
+const nameOf = (label) => (typeof label === 'string' ? label : label?.textContent || 'this setting');
 
 // heading is a section's title with its description behind an ⓘ button.
 export function heading(title, ...help) {
@@ -36,7 +36,7 @@ export function heading(title, ...help) {
 // control; the help describes it (so it isn't read as part of the name).
 // Text help goes behind an ⓘ button; help that is already an element (a
 // status or a warning) stays in view.
-export let fieldId = 0;
+let fieldId = 0;
 
 export function field(label, input, help) {
   const id = `field-${++fieldId}`;
@@ -57,7 +57,7 @@ export function field(label, input, help) {
   return h('label', { class: 'field', for: btn ? (isControl ? input.id : `${id}-none`) : null }, h('span', { id: `${id}-l` }, label, btn), input, helpEl);
 }
 
-export let toggleId = 0;
+let toggleId = 0;
 
 export function toggleRow(label, help, checked, onchange, { disabled = false } = {}) {
   const control = toggle(checked, onchange, label);

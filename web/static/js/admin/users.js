@@ -6,10 +6,10 @@ import { state, refreshSoft, setLeaveGuard, focusAfterRoute } from '../app.js';
 import { PW_RULE, PW_MSG, pwLength } from './account.js';
 import { field, toggleRow, formActions, formErrors, submitInline, actionsTh } from './forms.js';
 
-export const fmtDay = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '');
+const fmtDay = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '');
 
 // What a user may watch, in a few words.
-export function accessLabel(u, libs) {
+function accessLabel(u, libs) {
   if (u.isAdmin || u.allLibraries) return 'All libraries';
   const names = libs.filter((l) => (u.libraries || []).includes(l.id)).map((l) => l.name);
   return names.length ? names.join(', ') : 'None';
@@ -51,7 +51,7 @@ export async function usersSection() {
     addUserForm());
 }
 
-export function addUserForm() {
+function addUserForm() {
   const name = h('input', { type: 'text', name: 'new-user-name', dataset: { focusKey: 'user-new-name' }, autocomplete: 'off', autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false', required: true, maxlength: 64 });
   const pw = h('input', { type: 'password', name: 'new-user-password', dataset: { focusKey: 'user-new-password' }, autocomplete: 'new-password', required: true, ...PW_RULE });
   const errors = formErrors('add-user-err', [name, pw]);
@@ -74,7 +74,7 @@ export function addUserForm() {
 
 // Which libraries a regular user may see and play: all of them (including
 // ones added later), or the ones ticked. The server hides everything else.
-export function libraryAccessModal(u, libs) {
+function libraryAccessModal(u, libs) {
   const formId = `user-libs-form-${u.id}`;
   let all = u.allLibraries !== false;
   const picked = new Set(u.libraries || []);
@@ -107,7 +107,7 @@ export function libraryAccessModal(u, libs) {
 }
 
 // An admin sets a new password for someone else; it signs them out everywhere.
-export function resetPasswordModal(u) {
+function resetPasswordModal(u) {
   const formId = `reset-pw-${u.id}`;
   const pw = h('input', { type: 'password', name: 'new-password', autocomplete: 'new-password', required: true, ...PW_RULE });
   const errors = formErrors(`${formId}-err`, [pw]);

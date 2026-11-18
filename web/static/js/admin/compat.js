@@ -5,7 +5,7 @@ import { h, clear, icons } from '../ui.js';
 import { api } from '../api.js';
 import { QUALITIES } from '../prefs.js';
 import { compatRequest, TIERS, TIER_ORDER, causeLabel } from '../caps.js';
-import { titlesModal } from '../admin.js';
+import { titlesModal } from './dashboard.js';
 
 // compatPanel shows, on the Library dashboard, how the library plays in
 // this browser with this device's playback settings: how many files play as
@@ -22,15 +22,15 @@ export function compatPanel() {
   return h('div', { class: 'panel compat-panel' }, h('h2', { class: 'panel-title' }, 'How it plays in this browser'), body);
 }
 
-export const TIER_COLOR = { direct: 'var(--method-direct)', browser: 'var(--good-ink)', remux: 'var(--method-remux)', transcode: 'var(--method-transcode)', unplayable: 'var(--bad-strong)', unknown: 'var(--bg4)' };
+const TIER_COLOR = { direct: 'var(--method-direct)', browser: 'var(--good-ink)', remux: 'var(--method-remux)', transcode: 'var(--method-transcode)', unplayable: 'var(--bad-strong)', unknown: 'var(--bg4)' };
 
-export const plural = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
+const plural = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? '' : 's'}`;
 
 // Groups that make the server work, worst first. Plays as-is and browser
 // repackaging need nothing, so they only appear in the legend.
-export const WORK_TIERS = ['unplayable', 'transcode', 'remux', 'unknown'];
+const WORK_TIERS = ['unplayable', 'transcode', 'remux', 'unknown'];
 
-export function compatSummary(sum, req) {
+function compatSummary(sum, req) {
   if (!sum.files) return [h('p', { class: 'muted', style: { margin: 0 } }, 'No media files yet.')];
   const tiers = TIER_ORDER.filter((t) => sum.tiers[t]);
   const easy = (sum.tiers.direct || 0) + (sum.tiers.browser || 0) + (sum.tiers.remux || 0);

@@ -3,11 +3,11 @@
 import { h, clear, icons, toast, confirmDialog, fmtBytes, fmtDate, timeAgo, run, staleBanner } from '../ui.js';
 import { api } from '../api.js';
 import { refreshSoft } from '../app.js';
-import { meter } from '../admin.js';
+import { meter } from './dashboard.js';
 import { heading, field, configForm, actionsTh, keepFocus } from './forms.js';
 import { every } from './poll.js';
 
-export function taskRow(label, running, text) {
+function taskRow(label, running, text) {
   return h('div', { class: 'task' }, running ? h('div', { class: 'spinner sm' }) : h('span', { class: 'good', html: icons.check, style: { width: '16px' } }), h('b', null, label), text);
 }
 
@@ -69,7 +69,7 @@ export async function cacheSection(ctx) {
   return h('div', null, banner.el, page);
 }
 
-export const BACKUP_REASON = { daily: 'Daily', manual: 'Manual', 'pre-migration': 'Before upgrade', 'pre-restore': 'Before restore' };
+const BACKUP_REASON = { daily: 'Daily', manual: 'Manual', 'pre-migration': 'Before upgrade', 'pre-restore': 'Before restore' };
 
 export async function backupsSection() {
   const listBox = h('div', { class: 'form-section' });

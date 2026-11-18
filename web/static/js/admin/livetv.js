@@ -8,11 +8,11 @@ import { heading, field, select, configForm } from './forms.js';
 // titlePicker edits a list of movies and shows (item ids): chips for the
 // picked ones, and a search box that adds more. get() reads the list and
 // set(ids) replaces it; the picker tells the form itself.
-export const titleInfo = new Map(); // id -> item, from searches and lookups
+const titleInfo = new Map(); // id -> item, from searches and lookups
 
-export let pickerId = 0;
+let pickerId = 0;
 
-export function titlePicker(label, help, get, set) {
+function titlePicker(label, help, get, set) {
   const id = `picker-${++pickerId}`;
   const chips = h('div', { class: 'chips' });
   const results = h('ul', { class: 'title-results', 'aria-label': `${label}: search results` });
@@ -54,9 +54,9 @@ export function titlePicker(label, help, get, set) {
 // tvChannelsEditor edits draft.tvChannels, the admin's own Live TV channels.
 // Every edit replaces the array (and the edited channel), so the form sees
 // the draft change; adding or removing one also tells the form.
-export let checksId = 0;
+let checksId = 0;
 
-export function tvChannelsEditor(draft, genres) {
+function tvChannelsEditor(draft, genres) {
   const wrap = h('div', { class: 'tv-channels' });
   const changed = () => wrap.dispatchEvent(new Event('input', { bubbles: true }));
   const edit = (i, patch) => { draft.tvChannels = draft.tvChannels.map((c, j) => (j === i ? { ...c, ...patch } : c)); };
@@ -112,7 +112,7 @@ export function tvChannelsEditor(draft, genres) {
 // tvAutomaticEditor turns automatic Live TV channels on and off; ticked ones
 // air. draft.tvHidden keeps the ids of the ones turned off, including any the
 // library no longer fills, so they stay off if they come back.
-export function tvAutomaticEditor(draft, auto) {
+function tvAutomaticEditor(draft, auto) {
   if (!auto.length) return null;
   const id = `checks-${++checksId}`;
   return h('div', { class: 'field' }, h('span', { id }, 'Automatic channels'),

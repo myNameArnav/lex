@@ -8,7 +8,7 @@ import { every } from './poll.js';
 
 // Why a library shows less than its folders hold: files another library
 // already has (nested folders), or nothing found at all.
-export function libraryNote(l) {
+function libraryNote(l) {
   const els = l.elsewhere || [];
   if (els.length) {
     const n = els.reduce((a, e) => a + e.files, 0);
@@ -88,11 +88,11 @@ export async function librariesSection(ctx) {
   return h('div', null, banner.el, box);
 }
 
-export const within = (p, base) => p === base || base === '/' || p.startsWith(`${base}/`);
+const within = (p, base) => p === base || base === '/' || p.startsWith(`${base}/`);
 
-export let libModalId = 0;
+let libModalId = 0;
 
-export function libraryModal(lib) {
+function libraryModal(lib) {
   const uid = ++libModalId;
   const err = h('div', { class: 'err', role: 'alert', id: `lib-err-${uid}` });
   const name = h('input', { type: 'text', value: lib?.name || '', 'aria-describedby': err.id, oninput: () => name.removeAttribute('aria-invalid') });
@@ -191,7 +191,7 @@ export function libraryModal(lib) {
 // first of starts that exists (falling back to /). current() is the folder
 // last listed successfully; "Add this folder" adds that one, not whatever is
 // typed in the box.
-export function folderBrowser(onPick, starts) {
+function folderBrowser(onPick, starts) {
   const input = h('input', { type: 'text', 'aria-label': 'Folder path', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', style: { flex: '1 1 200px', minWidth: 0 } });
   const list = h('div', { class: 'fs-list' });
   let current = null;

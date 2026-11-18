@@ -11,7 +11,7 @@ import { infoPair, heading, field, toggleRow, select } from './forms.js';
 
 // Subtitle appearance (substyle.js), with a sample line that follows the
 // choices. Also changeable from the player's Subtitles & audio menu.
-export function subStyleSection(p, set) {
+function subStyleSection(p, set) {
   const sample = h('div', { class: 'p-subs' }, h('div', { class: 'cue' }, 'This is how your subtitles look.'), h('div', { class: 'cue' }, h('i', null, 'And a second line, in italics.')));
   const preview = h('div', { class: 'sub-preview', 'aria-hidden': 'true' }, sample);
   const paint = () => { for (const [k, v] of Object.entries(subStyleVars(prefs.all()))) preview.style.setProperty(k, v); };
@@ -44,7 +44,7 @@ export function subStyleSection(p, set) {
 // Choices made in the player (audio, subtitles, timing) are kept per show or
 // movie (track-memory.js); the languages above are the defaults for the rest.
 // A row like the others: name, a short status, and Forget when there's any.
-export function rememberedTracksRow() {
+function rememberedTracksRow() {
   const n = rememberedCount();
   const name = 'Per-title choices';
   const [btn, more] = infoPair(name, 'Audio and subtitle tracks you pick in the player are remembered for that show or movie on this device, and used instead of the languages above.', 'span');
@@ -63,16 +63,16 @@ export function rememberedTracksRow() {
 
 // Playback, Audio & subtitles and Interface are stored in this browser
 // (prefs.js), save as they change, and share one Reset.
-export const prefSetter = (k, conv = (x) => x) => (v) => { prefs.set(k, conv(v)); toast('Saved on this device', 'ok'); };
+const prefSetter = (k, conv = (x) => x) => (v) => { prefs.set(k, conv(v)); toast('Saved on this device', 'ok'); };
 
-export function devicePage(...sections) {
+function devicePage(...sections) {
   return h('div', { class: 'form' },
     h('p', { class: 'help', style: { margin: 0 } }, 'Saved in this browser, so each device can have its own.'),
     sections,
     h('div', null, h('button', { class: 'btn', dataset: { focusKey: 'prefs-reset' }, onclick: resetPrefs }, 'Reset this device’s settings')));
 }
 
-export let capsOpen = false; // stays open across re-renders
+let capsOpen = false; // stays open across re-renders
 
 export function playbackPrefsSection() {
   const p = prefs.all();
@@ -131,7 +131,7 @@ export function interfacePrefsSection() {
 
 // Volume and the stats panel's compact state aren't shown on this page, so a
 // reset leaves them as they are.
-export async function resetPrefs() {
+async function resetPrefs() {
   if (!(await confirmDialog('Reset playback, audio & subtitle and interface settings on this device to their defaults?', 'Reset', true, 'Reset this device’s settings?'))) return;
   const keep = ['volume', 'muted', 'statsCompact'].map((k) => [k, prefs.get(k)]);
   prefs.reset();

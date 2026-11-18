@@ -41,7 +41,7 @@ export async function accountSection() {
 
 // "Your devices" on the Account page: the user's own sessions, each with Sign
 // out, plus Sign out everywhere else. Admins also see everyone's on Devices.
-export function myDevices(devs) {
+function myDevices(devs) {
   const signOut = async (e, d) => {
     const btn = e.currentTarget;
     if (d.current) {
