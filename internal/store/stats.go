@@ -324,3 +324,72 @@ func (s *Store) reasonBuckets(since int64) ([]Bucket, error) {
 	}
 	return out, nil
 }
+
+// UnmatchedTitle is a movie or show with no metadata match: not found by any
+// provider, or shown only with local artwork.
+type UnmatchedTitle struct {
+	ItemID     int64  `json:"itemId"`
+	Kind       string `json:"kind"`
+	Title      string `json:"title"`
+	Year       int    `json:"year"`
+	Path       string `json:"path"` // the folder (or file) the title was parsed from
+	Library    string `json:"library"`
+	MetaStatus int    `json:"metaStatus"`
+}
+
+// UnmatchedTitles lists the movies and shows without a metadata match,
+// alphabetically: the ones Settings → Metadata's "Retry unmatched" retries.
+func (s *Store) UnmatchedTitles() ([]UnmatchedTitle, error) {
+	rows, err := s.db.Query(`SELECT i.id,i.kind,i.title,i.year,i.path,COALESCE(l.name,''),i.meta_status
+		FROM items i LEFT JOIN libraries l ON l.id=i.library_id
+		WHERE i.kind IN ('movie','show') AND i.meta_status IN (?,?) ORDER BY i.sort_title LIMIT 1000`, MetaNotFound, MetaLocal)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []UnmatchedTitle{}
+	for rows.Next() {
+		var t UnmatchedTitle
+		if err := rows.Scan(&t.ItemID, &t.Kind, &t.Title, &t.Year, &t.Path, &t.Library, &t.MetaStatus); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// UnreadableFile is a file ffprobe could not read, with its error.
+type UnreadableFile struct {
+	FileID   int64  `json:"fileId"`
+	ItemID   int64  `json:"itemId"`
+	Kind     string `json:"kind"`
+	Title    string `json:"title"`
+	Show     string `json:"show,omitempty"`
+	Season   int    `json:"season,omitempty"`
+	Episode  int    `json:"episode,omitempty"`
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	Error    string `json:"error"`
+	ProbedAt int64  `json:"probedAt"`
+	Attempts int    `json:"attempts"`
+}
+
+// UnreadableFiles lists the files whose last probe failed, most recent first.
+func (s *Store) UnreadableFiles() ([]UnreadableFile, error) {
+	rows, err := s.db.Query(`SELECT f.id,i.id,i.kind,i.title,COALESCE(sh.title,''),i.season,i.episode,f.path,f.size,f.probe_error,f.probed_at,f.probe_attempts
+		FROM files f JOIN items i ON i.id=f.item_id LEFT JOIN items sh ON sh.id=i.show_id AND i.show_id>0
+		WHERE f.probe_error<>'' ORDER BY f.probed_at DESC LIMIT 1000`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []UnreadableFile{}
+	for rows.Next() {
+		var u UnreadableFile
+		if err := rows.Scan(&u.FileID, &u.ItemID, &u.Kind, &u.Title, &u.Show, &u.Season, &u.Episode, &u.Path, &u.Size, &u.Error, &u.ProbedAt, &u.Attempts); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}

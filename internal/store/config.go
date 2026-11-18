@@ -29,6 +29,9 @@ type Config struct {
 	OpenSubtitlesKey  string `json:"openSubtitlesKey"`
 	OpenSubtitlesUser string `json:"openSubtitlesUser"`
 	OpenSubtitlesPass string `json:"openSubtitlesPass"`
+	// SubtitleDownloads is who may search and download: "everyone" or
+	// "admins". Downloads share one account's small daily allowance.
+	SubtitleDownloads string `json:"subtitleDownloads"`
 
 	// Seek-bar previews
 	TrickplayEnabled  bool `json:"trickplayEnabled"`
@@ -138,6 +141,7 @@ func DefaultConfig() Config {
 	return Config{
 		ServerName:         "Lex",
 		MetadataLanguage:   "en-US",
+		SubtitleDownloads:  "everyone",
 		EnableTMDB:         true,
 		EnableTVmaze:       true,
 		UseLocalMetadata:   true,
@@ -213,6 +217,9 @@ func (c *Config) normalize() {
 	}
 	if c.MetadataLanguage == "" {
 		c.MetadataLanguage = d.MetadataLanguage
+	}
+	if c.SubtitleDownloads != "admins" {
+		c.SubtitleDownloads = "everyone"
 	}
 	if c.ProbeWorkers < 1 {
 		c.ProbeWorkers = 1

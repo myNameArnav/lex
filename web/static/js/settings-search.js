@@ -65,6 +65,7 @@ const INDEX = {
       ['New password', 'change password reset'],
       ['Confirm new password', 'change password'],
     ]],
+    ['Your devices', 'sessions sign out logout devices lost phone tv everywhere', []],
   ],
   server: [
     ['General', '', [['Server name', 'title name branding']]],
@@ -131,6 +132,7 @@ const INDEX = {
       ['OpenSubtitles API key', 'opensubtitles api key'],
       ['OpenSubtitles username', 'opensubtitles account login'],
       ['OpenSubtitles password', 'opensubtitles account login'],
+      ['Who can download subtitles', 'opensubtitles admins only everyone users allowance quota permission'],
     ]],
     ['Seek previews', 'trickplay thumbnails scrubbing', [
       ['Generate seek previews', 'trickplay thumbnails scrubbing hover'],

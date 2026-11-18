@@ -298,3 +298,123 @@ func TestClientRemuxSettingRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+// The dashboard's drill-downs list unmatched titles (with the folder they
+// were parsed from) and unreadable files (with the probe error), admins only.
+func TestUnmatchedAndUnreadableLists(t *testing.T) {
+	s, h := securityServer(t)
+	admin, _ := s.St.CreateInitialAdmin("admin", "test-password-123")
+	user, _ := s.St.CreateUser("bob", "test-password-123", false)
+	for _, q := range []string{
+		`INSERT INTO libraries(id,name,kind,paths,created_at) VALUES(1,'Movies','movies','[]',0)`,
+		`INSERT INTO items(id,library_id,kind,title,sort_title,path,meta_status,added_at,updated_at) VALUES(1,1,'movie','Dune','dune','/m/Dune (2021)',1,0,0)`,
+		`INSERT INTO items(id,library_id,kind,title,sort_title,path,meta_status,added_at,updated_at) VALUES(2,1,'movie','Blde Runer','blde runer','/m/Blde Runer (1982)',2,0,0)`,
+		`INSERT INTO items(id,library_id,kind,title,sort_title,path,meta_status,added_at,updated_at) VALUES(3,1,'movie','Home Video','home video','/m/Home Video',3,0,0)`,
+		`INSERT INTO items(id,library_id,kind,title,sort_title,path,meta_status,added_at,updated_at) VALUES(4,1,'movie','Pending','pending','/m/Pending',0,0,0)`,
+		`INSERT INTO files(id,item_id,library_id,path,size,mtime,added_at) VALUES(1,1,1,'/m/Dune (2021)/dune.mkv',1,1,0)`,
+		`INSERT INTO files(id,item_id,library_id,path,size,mtime,added_at,probe_error,probed_at,probe_attempts) VALUES(2,2,1,'/m/Blde Runer (1982)/br.mkv',5,1,0,'Invalid data found when processing input',100,3)`,
+	} {
+		if _, err := s.St.DB().Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tok, _ := s.St.CreateToken(admin.ID, "Test", "127.0.0.1")
+	userTok, _ := s.St.CreateToken(user.ID, "Test", "127.0.0.1")
+
+	w := adminRequest(t, h, tok, "GET", "/api/admin/stats/library/unmatched", "")
+	var un []store.UnmatchedTitle
+	if err := json.Unmarshal(w.Body.Bytes(), &un); err != nil || w.Code != 200 {
+		t.Fatalf("unmatched: %d %s", w.Code, w.Body)
+	}
+	if len(un) != 2 || un[0].ItemID != 2 || un[0].Path != "Blde Runer (1982)" || un[0].Library != "Movies" || un[1].ItemID != 3 {
+		t.Fatalf("unmatched = %+v, want items 2 and 3 with their folder names", un)
+	}
+
+	w = adminRequest(t, h, tok, "GET", "/api/admin/stats/library/unreadable", "")
+	var bad []store.UnreadableFile
+	if err := json.Unmarshal(w.Body.Bytes(), &bad); err != nil || w.Code != 200 {
+		t.Fatalf("unreadable: %d %s", w.Code, w.Body)
+	}
+	if len(bad) != 1 || bad[0].FileID != 2 || bad[0].ItemID != 2 || bad[0].Attempts != 3 || !strings.Contains(bad[0].Error, "Invalid data") {
+		t.Fatalf("unreadable = %+v", bad)
+	}
+
+	for _, p := range []string{"/api/admin/stats/library/unmatched", "/api/admin/stats/library/unreadable"} {
+		if w := adminRequest(t, h, userTok, "GET", p, ""); w.Code != 403 {
+			t.Fatalf("%s as user: %d", p, w.Code)
+		}
+	}
+	if w := adminRequest(t, h, userTok, "POST", "/api/admin/files/2/probe", ""); w.Code != 403 {
+		t.Fatalf("probe as user: %d", w.Code)
+	}
+	if w := adminRequest(t, h, tok, "POST", "/api/admin/files/99/probe", ""); w.Code != 404 {
+		t.Fatalf("probe missing file: %d %s", w.Code, w.Body)
+	}
+}
+
+// A regular user sees and signs out only their own devices.
+func TestMyDevices(t *testing.T) {
+	s, h := securityServer(t)
+	admin, err := s.St.CreateInitialAdmin("admin", "test-password-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := s.St.CreateUser("bob", "test-password-123", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminTok, _ := s.St.CreateToken(admin.ID, "Firefox on macOS", "127.0.0.1")
+	mine, _ := s.St.CreateToken(bob.ID, "Chrome on Android", "127.0.0.2")
+	tv, _ := s.St.CreateToken(bob.ID, "Lex on TV", "127.0.0.3")
+	laptop, _ := s.St.CreateToken(bob.ID, "Safari on macOS", "127.0.0.4")
+
+	w := adminRequest(t, h, mine, "GET", "/api/me/devices", "")
+	if w.Code != 200 {
+		t.Fatalf("list: %d %s", w.Code, w.Body.String())
+	}
+	var devs []store.TokenInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &devs); err != nil {
+		t.Fatal(err)
+	}
+	if len(devs) != 3 {
+		t.Fatalf("got %d devices, want bob's 3", len(devs))
+	}
+	for _, d := range devs {
+		if d.UserID != bob.ID {
+			t.Fatalf("listed another user's device: %+v", d)
+		}
+		if want := d.Prefix == store.DeviceID(mine); d.Current != want {
+			t.Fatalf("%s: current=%v, want %v", d.Client, d.Current, want)
+		}
+	}
+	// The admin route stays admin-only.
+	if w := adminRequest(t, h, mine, "GET", "/api/admin/devices", ""); w.Code != 403 {
+		t.Fatalf("admin devices as user: %d", w.Code)
+	}
+	// Someone else's device is "not found", and stays signed in.
+	if w := adminRequest(t, h, mine, "DELETE", "/api/me/devices/"+store.DeviceID(adminTok), ""); w.Code != 404 {
+		t.Fatalf("delete other user's device: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := s.St.TokenUser(adminTok); err != nil {
+		t.Fatal("admin was signed out by another user")
+	}
+	if w := adminRequest(t, h, mine, "DELETE", "/api/me/devices/"+store.DeviceID(tv), ""); w.Code != 200 {
+		t.Fatalf("delete own device: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := s.St.TokenUser(tv); err == nil {
+		t.Fatal("TV still signed in")
+	}
+	// Sign out everywhere else keeps this session and the admin's.
+	if w := adminRequest(t, h, mine, "DELETE", "/api/me/devices", ""); w.Code != 200 {
+		t.Fatalf("sign out others: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := s.St.TokenUser(laptop); err == nil {
+		t.Fatal("laptop still signed in")
+	}
+	if _, err := s.St.TokenUser(mine); err != nil {
+		t.Fatal("this session was signed out")
+	}
+	if _, err := s.St.TokenUser(adminTok); err != nil {
+		t.Fatal("another user's session was signed out")
+	}
+}

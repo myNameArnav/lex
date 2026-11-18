@@ -37,7 +37,8 @@ func (s *Server) issueToken(w http.ResponseWriter, r *http.Request, u *store.Use
 }
 
 // caps tells the UI which optional features are usable, so it can hide
-// actions that would only fail: subtitle search needs an OpenSubtitles key,
+// actions that would only fail: subtitle search needs an OpenSubtitles key
+// (and, when admins limit it, an admin),
 // the SSD cache actions are admin-only and need the cache enabled, and Live
 // TV is off unless an admin turns it on. maxTranscodeHeight is the
 // server's cap on transcoded video, so the quality menu can say which
@@ -45,7 +46,7 @@ func (s *Server) issueToken(w http.ResponseWriter, r *http.Request, u *store.Use
 func (s *Server) caps(u *store.User) map[string]any {
 	c := s.St.Config()
 	return map[string]any{
-		"subtitleSearch":     strings.TrimSpace(c.OpenSubtitlesKey) != "",
+		"subtitleSearch":     strings.TrimSpace(c.OpenSubtitlesKey) != "" && subsAllowed(c, u),
 		"cacheEnabled":       u.IsAdmin && c.CacheEnabled,
 		"liveTv":             c.LiveTV,
 		"maxTranscodeHeight": c.MaxTranscodeHeight,

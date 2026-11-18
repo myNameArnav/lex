@@ -592,14 +592,54 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	if t == nil {
 		t = []store.TokenInfo{}
 	}
-	// Mark the caller's own session so the UI can say "This device".
+	s.markCurrent(r, t)
+	writeJSON(w, t)
+}
+
+// markCurrent marks the caller's own session so the UI can say "This device".
+func (s *Server) markCurrent(r *http.Request, t []store.TokenInfo) {
 	if tok := s.token(r); tok != "" {
 		id := store.DeviceID(tok)
 		for i := range t {
 			t[i].Current = t[i].Prefix == id
 		}
 	}
+}
+
+// myDevices lists the caller's own signed-in devices (any user).
+func (s *Server) myDevices(w http.ResponseWriter, r *http.Request) {
+	t, err := s.St.UserTokens(userOf(r).ID)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if t == nil {
+		t = []store.TokenInfo{}
+	}
+	s.markCurrent(r, t)
 	writeJSON(w, t)
+}
+
+// deleteMyDevice signs out one of the caller's own devices.
+func (s *Server) deleteMyDevice(w http.ResponseWriter, r *http.Request) {
+	switch err := s.St.DeleteUserToken(userOf(r).ID, r.PathValue("prefix")); {
+	case errors.Is(err, store.ErrNotFound):
+		writeErr(w, 404, "no such device")
+	case err != nil:
+		writeErr(w, 400, err.Error())
+	default:
+		writeJSON(w, map[string]bool{"ok": true})
+	}
+}
+
+// signOutOthers signs the caller out on every device but this one.
+func (s *Server) signOutOthers(w http.ResponseWriter, r *http.Request) {
+	n, err := s.St.DeleteOtherTokens(userOf(r).ID, s.token(r))
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, map[string]int64{"signedOut": n})
 }
 
 func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {
@@ -714,4 +754,63 @@ func (s *Server) clearCache(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// unmatchedTitles lists the movies and shows without a metadata match, with
+// the folder each was parsed from (often why it missed).
+func (s *Server) unmatchedTitles(w http.ResponseWriter, r *http.Request) {
+	list, err := s.St.UnmatchedTitles()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	for i := range list {
+		list[i].Path = filepath.Base(list[i].Path)
+	}
+	writeJSON(w, list)
+}
+
+// unreadableFiles lists the files ffprobe couldn't read, with the error.
+func (s *Server) unreadableFiles(w http.ResponseWriter, r *http.Request) {
+	list, err := s.St.UnreadableFiles()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, list)
+}
+
+// probeFile probes one file again now, rather than waiting for its retry
+// delay, and answers with the outcome: {ok} or {ok:false, error}.
+func (s *Server) probeFile(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		writeErr(w, 400, "bad id")
+		return
+	}
+	f, err := s.St.File(id)
+	if err != nil {
+		notFoundOr500(w, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	info, perr := s.Scanner.ProbeFile(ctx, f.Path)
+	if perr != nil {
+		if ctx.Err() == nil {
+			s.St.SaveProbe(f.ID, nil, perr.Error())
+		}
+		s.Log.Warnf("probe %s: %v", f.Path, perr)
+		writeJSON(w, map[string]any{"ok": false, "error": perr.Error()})
+		return
+	}
+	if err := s.St.SaveProbe(f.ID, info, ""); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if s.Scanner.OnProbed != nil {
+		s.Scanner.OnProbed(f, info)
+	}
+	s.Log.Infof("probe %s: readable now", filepath.Base(f.Path))
+	writeJSON(w, map[string]any{"ok": true})
 }

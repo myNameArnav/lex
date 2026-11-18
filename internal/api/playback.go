@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"lex/internal/intro"
 	"lex/internal/library"
 	"lex/internal/store"
 	"lex/internal/stream"
@@ -117,6 +118,7 @@ func (s *Server) plan(w http.ResponseWriter, r *http.Request) {
 		Method: plan.Method, Reasons: plan.Reasons, VideoIn: vin, AudioIn: ain, VideoOut: plan.VideoOut, AudioOut: plan.AudioOut,
 		Container: stream.ContainerKey(f.Path), SrcBitrate: int(f.Info.Bitrate / 1000), OutBitrate: plan.Bitrate,
 		Client: clientName(r.UserAgent()), IP: ip, Remote: remote, Duration: f.Info.Duration, Position: req.Start,
+		CreditsAt: intro.CreditsStart(s.St.DB(), it.ID, f),
 		AuthToken: s.token(r),
 	})
 	if err != nil {
@@ -287,7 +289,8 @@ func (s *Server) sessionFor(r *http.Request, f *store.File, sid, method string) 
 	}
 	ip := s.clientIP(r)
 	return s.Sess.Open(&stream.Session{ID: sid, UserID: u.ID, UserName: u.Name, ItemID: f.ItemID, FileID: f.ID, Title: title,
-		Method: method, Client: clientName(r.UserAgent()), IP: ip, Remote: s.isRemote(ip), Duration: f.Duration})
+		Method: method, Client: clientName(r.UserAgent()), IP: ip, Remote: s.isRemote(ip), Duration: f.Duration,
+		CreditsAt: intro.CreditsStart(s.St.DB(), f.ItemID, f)})
 }
 
 type countingWriter struct {
