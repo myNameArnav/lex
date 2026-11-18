@@ -724,9 +724,15 @@ body:has(.save-bar) > .toasts { bottom: calc(80px + var(--sab)); }
 .form-actions .err { min-height: 0; }
 .settings .save-bar { margin-top: 0; }
 /* A setting opened from search glows for a moment (no size change). */
-.setting-flash { animation: setting-flash 2s ease-out; border-radius: 8px; }
-@keyframes setting-flash { 0%, 35% { box-shadow: 0 0 0 3px rgba(242,179,61,.55); background-color: rgba(242,179,61,.10); } 100% { box-shadow: 0 0 0 3px rgba(242,179,61,0); background-color: rgba(242,179,61,0); } }
-@media (prefers-reduced-motion: reduce) { .setting-flash { animation-duration: 2s; animation-timing-function: steps(1, end); } }
+/* A setting picked in search flashes. The highlight is drawn on a layer that
+   reaches past the row's sides, so the text and the control's focus ring sit
+   inside it with room to spare, and nothing moves. A whole section flashes
+   on its own card edge. */
+.setting-flash { position: relative; }
+.setting-flash::after { content: ''; position: absolute; inset: -2px -12px; border-radius: 10px; pointer-events: none; animation: setting-flash 2s ease-out forwards; }
+.form-section.setting-flash::after { inset: 0; border-radius: inherit; }
+@keyframes setting-flash { 0%, 35% { box-shadow: 0 0 0 2px rgba(242,179,61,.55); background-color: rgba(242,179,61,.08); } 100% { box-shadow: 0 0 0 2px rgba(242,179,61,0); background-color: rgba(242,179,61,0); } }
+@media (prefers-reduced-motion: reduce) { .setting-flash::after { animation-duration: 2s; animation-timing-function: steps(1, end); } }
 /* Settings search: results float over the page instead of pushing it down. */
 .settings-search { position: relative; }
 .settings-search input.settings-search-input { width: 100%; padding-left: 34px !important; background: var(--bg2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b91a1' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E") no-repeat 11px center; }
