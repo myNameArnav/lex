@@ -40,6 +40,12 @@ export function fmtTime(sec) {
   return hh ? `${hh}:${p(mm)}:${p(ss)}` : `${mm}:${p(ss)}`;
 }
 
+// Time left as VLC shows it: −32:17. Whole seconds of each side, so the
+// current time plus this always adds up to the duration shown.
+export function fmtLeft(t, d) {
+  return `−${fmtTime(Math.max(0, Math.floor(d || 0) - Math.floor(t || 0)))}`;
+}
+
 export function fmtDuration(sec) {
   if (!sec) return '';
   const m = Math.round(sec / 60);

@@ -849,6 +849,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .dash-live { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; }
 .dash-live > * { min-width: 0; }
 .dash-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.dash-health { margin-left: auto; font-size: 13px; color: var(--text2); min-width: 0; text-align: right; }
+.dash-health.warn { color: var(--warn); font-weight: 600; }
+.bar-note { font-size: .9em; }
 .dcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
 .dcard { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .dcard-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
@@ -1056,6 +1059,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .p-controls { display: flex; align-items: center; gap: 4px; }
 .p-transport, .p-tools { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .p-time { font-variant-numeric: tabular-nums; font-size: 13.5px; margin: 0 10px; white-space: nowrap; color: rgba(255,255,255,.9); }
+.p-end { font: inherit; color: inherit; background: none; border: 0; padding: 2px 4px; margin: -2px -4px; border-radius: 4px; cursor: pointer; }
+@media (hover: hover) { .p-end:hover { background: rgba(255,255,255,.12); } }
 .p-ends { font-size: 12.5px; white-space: nowrap; color: rgba(255,255,255,.6); }
 .p-chap { font: inherit; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 28ch; margin-left: 8px; padding: 2px 6px; border: 0; border-radius: 4px; background: none; color: rgba(255,255,255,.85); cursor: pointer; text-shadow: 0 1px 2px rgba(0,0,0,.8); }
 .p-chap:empty { display: none; }
@@ -1179,8 +1184,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ps-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; background: none; border: none; color: #fff; font: inherit; text-align: left; padding: 4px; border-radius: 6px; cursor: pointer; }
 @media (hover: hover) { .ps-toggle:hover, .ps-btn:hover { background: rgba(255,255,255,.1); } }
 .ps-sum { min-width: 0; }
-.ps-dot { flex: none; align-self: flex-start; margin-top: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--good-ink); }
-.ps-dot.warn { background: var(--accent); } .ps-dot.bad { background: var(--bad-ink); }
+.ps-status { color: var(--good-ink); font-weight: 700; }
+.ps-status.warn { color: var(--accent); } .ps-status.bad { color: var(--bad-ink); }
 .ps-btn { flex: none; background: none; border: none; color: rgba(255,255,255,.75); font: inherit; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
 .ps-close { display: grid; place-items: center; padding: 4px; }
 .ps-close svg { width: 14px; height: 14px; }
@@ -1188,13 +1193,35 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ps-cap { color: rgba(255,255,255,.6); font-size: 10.5px; }
 .p-stats canvas { width: 100%; height: 40px; display: block; }
 .p-stats.compact .ps-body { display: none; }
+.p-stats:not(.compact) .ps-sum-more { display: none; }
 .p-stats table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .p-stats td { padding: 1px 0; vertical-align: top; overflow-wrap: anywhere; }
 .p-stats col.k { width: 112px; }
 .p-stats td:first-child { color: rgba(255,255,255,.6); padding-right: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.p-stats td.hd { color: var(--accent); font-weight: 700; padding-top: 10px; }
 .p-stats td .sub { display: inline-block; max-width: 100%; color: rgba(255,255,255,.55); }
 .p-stats td.warn { color: var(--accent); } .p-stats td.bad { color: var(--bad-ink); }
+.ps-issues { margin: 4px 0 2px; display: grid; gap: 2px; }
+.ps-issue { color: var(--accent); }
+.ps-issue.bad { color: var(--bad-ink); }
+.ps-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 8px 0 6px; }
+.ps-tile { min-width: 0; padding: 4px 7px 5px; border-radius: 6px; background: rgba(255,255,255,.07); display: flex; flex-direction: column; line-height: 1.3; }
+.ps-tile .k { color: rgba(255,255,255,.6); font-size: 10px; }
+.ps-tile b { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-tile .sub { color: rgba(255,255,255,.5); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-tile.warn b { color: var(--accent); } .ps-tile.bad b { color: var(--bad-ink); }
+.ps-method { margin: 2px 0 4px; }
+.ps-method .sub { color: rgba(255,255,255,.55); }
+.ps-secs { border-top: 1px solid rgba(255,255,255,.1); margin-top: 6px; padding-top: 2px; }
+.ps-sec-h { display: flex; align-items: center; gap: 6px; width: calc(100% + 8px); margin: 0 -4px; padding: 3px 4px; background: none; border: none; color: #fff; font: inherit; text-align: left; border-radius: 6px; cursor: pointer; }
+@media (hover: hover) { .ps-sec-h:hover { background: rgba(255,255,255,.08); } }
+.ps-sec-h .chev { flex: none; display: inline-flex; width: 12px; height: 12px; color: rgba(255,255,255,.5); transition: transform .12s; }
+.ps-sec-h .chev svg { width: 12px; height: 12px; }
+.ps-sec.open .ps-sec-h .chev { transform: rotate(90deg); }
+/* Plain white: yellow and red in the panel are kept for warnings and errors. */
+.ps-sec-h .t { flex: none; color: #fff; font-weight: 700; }
+.ps-sec-h .s.warn { color: var(--accent); } .ps-sec-h .s.bad { color: var(--bad-ink); }
+.ps-sec-h .s { flex: 1; min-width: 0; color: rgba(255,255,255,.55); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+.ps-sec-b table { margin: 2px 0 6px 18px; width: calc(100% - 18px); }
 .upnext { position: absolute; right: max(24px, var(--sar)); bottom: calc(110px + var(--sab)); width: 340px; background: rgba(20,21,26,.96); border: 1px solid rgba(255,255,255,.12); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); z-index: 4; }
 .upnext img { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #111; }
 .upnext .b { padding: 12px 14px; display: grid; gap: 8px; min-width: 0; }

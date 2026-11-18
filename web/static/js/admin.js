@@ -1560,7 +1560,10 @@ async function liveTab(ctx) {
     c.el = h('div', { class: 'dcard' }, h('div', { class: 'dcard-head' }, h('span', { class: 'l' }, label), c.v), c.sub, c.extra, c.chart);
     return c;
   };
-  const cards = { cpu: mkCard('CPU'), mem: mkCard('Memory'), temp: mkCard('Temperature'), net: mkCard('Network out') };
+  // Disk instead of a temperature chart: on a Pi a busy drive is what
+  // stalls playback, and the temperature is a number on the CPU card.
+  const cards = { cpu: mkCard('CPU'), mem: mkCard('Memory'), disk: mkCard('Disk'), net: mkCard('Network out') };
+  const health = h('div', { class: 'dash-health', role: 'status' });
   const storage = h('div', { class: 'panel' });
   const host = h('div', { class: 'dash-host' });
   // Element.append would print null and stringify arrays; flatten like h().
@@ -1583,26 +1586,29 @@ async function liveTab(ctx) {
     else { hist.push(n); if (hist.length > 1200) hist.shift(); }
     const memPct = s.memTotal ? (s.memUsed / s.memTotal) * 100 : 0;
     const flags = s.throttleFlags?.length ? s.throttleFlags.join(', ') : '';
+    // One line on whether the server is coping, in words.
+    const strains = r.strains || [];
+    health.className = `dash-health${strains.length ? ' warn' : ''}`;
+    setText(health, strains.length ? strains.map((x) => x.text).join(' ') : 'Running normally');
     card(cards.cpu, `${n.cpu.toFixed(0)}%`,
-      `load ${s.load.map((x) => x.toFixed(2)).join(' · ')}${s.freqMhz ? ` · ${Math.round(s.freqMhz)} MHz` : ''}`,
+      [[`${s.numCpu} cores`, s.freqMhz ? `${Math.round(s.freqMhz)} MHz` : '', n.temp ? `${n.temp.toFixed(0)}°C` : ''].filter(Boolean).join(' · '),
+        flags ? h('span', { class: 'warn' }, ` · ${flags}`) : ''],
       h('div', { class: 'cores' }, (s.cores || []).map((c, i) => h('div', { class: 'core', title: `Core ${i}: ${c.toFixed(0)}%` }, h('i', { style: { height: `${c}%` } }), h('span', null, `${c.toFixed(0)}`)))));
     card(cards.mem, `${memPct.toFixed(0)}%`,
       `${fmtBytes(s.memUsed)} of ${fmtBytes(s.memTotal)}${s.swapTotal ? ` · swap ${fmtBytes(s.swapUsed)}` : ''}`,
       h('div', { class: 'small dim' }, `lex uses ${fmtBytes(s.procRss)} (Go heap ${fmtBytes(s.goHeap)}) · ${s.procCpu.toFixed(1)}% CPU`));
-    // Hosts without a sensor (VMs, containers on a laptop) get no card.
-    const hasTemp = !!n.temp || hist.some((p) => p.temp);
-    cards.temp.el.hidden = !hasTemp;
-    if (hasTemp) {
-      card(cards.temp, n.temp ? `${n.temp.toFixed(0)}°C` : '—',
-        flags ? h('span', { class: 'warn' }, flags) : s.throttled ? 'No throttling' : '');
-    }
+    // The busiest storage drive when the kernel says (Linux), else I/O wait:
+    // time the CPU sat idle waiting for a disk.
+    const busy = Object.entries(r.diskBusy || {}).sort((a, b) => b[1] - a[1])[0];
+    card(cards.disk, `${(n.iowait || 0).toFixed(0)}%`, `I/O wait · read ${fmtBytes(n.dr)}/s · write ${fmtBytes(n.dw)}/s`,
+      busy ? h('div', { class: 'small dim ellipsis', title: busy[0] }, `Busiest: ${busy[0]} · ${busy[1].toFixed(0)}% busy`) : null);
     card(cards.net, bps(n.tx), `in ${bps(n.rx)} · streaming ${bps(n.stream)}`);
     const times = hist.map((p) => p.t);
     if (times.length > 1) {
       const pct = (v) => `${v.toFixed(0)}%`;
       lineChart(cards.cpu.chart, { title: 'CPU over the last hour', times, height: 96, max: 100, ticks: 2, fmt: pct, series: [{ name: 'Host', values: hist.map((p) => p.cpu) }, { name: 'lex', values: hist.map((p) => p.pcpu / Math.max(1, s.numCpu)) }] });
       lineChart(cards.mem.chart, { title: 'Memory over the last hour', times, height: 96, max: 100, ticks: 2, fmt: pct, series: [{ name: 'Used', values: hist.map((p) => p.mem) }] });
-      if (hasTemp) lineChart(cards.temp.chart, { title: 'Temperature over the last hour', times, height: 96, max: 90, fmt: (v) => `${v.toFixed(0)}°`, series: [{ name: 'SoC', values: hist.map((p) => p.temp) }] });
+      lineChart(cards.disk.chart, { title: 'I/O wait over the last hour', times, height: 96, max: 100, ticks: 2, fmt: pct, series: [{ name: 'I/O wait', values: hist.map((p) => p.iowait || 0) }] });
       // In bits per second so the gridlines land on round rates; an idle
       // server still gets a 0–1.5 Mbps scale.
       lineChart(cards.net.chart, { title: 'Network out over the last hour', times, height: 96, floor: 1.5e6, fmt: fmtBitrate, axisFmt: axisBitrate, series: [{ name: 'Out', values: hist.map((p) => p.tx * 8) }, { name: 'Streaming', values: hist.map((p) => p.stream * 8) }] });
@@ -1610,17 +1616,16 @@ async function liveTab(ctx) {
     // Storage: disks, SSD cache and current disk activity in one place. A
     // long path wraps its note underneath instead of widening the page.
     const row = (name, used, total, hot, note) => h('div', { class: 'srow' },
-      h('div', { class: 'row wrap small' }, name, h('span', { class: 'muted' }, note || `${fmtBytes(used)} of ${fmtBytes(total)} · ${fmtBytes(Math.max(0, total - used))} free`)),
+      h('div', { class: 'row wrap small' }, name, h('span', { class: 'muted' }, note || `${fmtBytes(Math.max(0, total - used))} free of ${fmtBytes(total)}`)),
       meter(total ? (used / total) * 100 : 0, hot));
     const c = r.cache;
     const pathSpan = (text, mono) => h('span', { class: `grow ellipsis${mono ? ' mono' : ''}`, title: text, style: { minWidth: 0, flex: '1 1 140px' } }, text);
     put(storage,
-      h('div', { class: 'row wrap', style: { marginBottom: '10px', rowGap: '2px' } }, h('h3', { class: 'grow', style: { margin: 0 } }, 'Storage'),
-        h('span', { class: 'small muted' }, `read ${fmtBytes(n.dr)}/s · write ${fmtBytes(n.dw)}/s`)),
+      h('h3', { style: { margin: '0 0 10px' } }, 'Storage'),
       (s.disks || []).map((d) => row(pathSpan(d.path, true), d.used, d.total, 92)),
       c?.enabled ? row(pathSpan('SSD cache'), c.usedBytes, c.maxBytes, 97,
         `${fmtBytes(c.usedBytes)} of ${fmtBytes(c.maxBytes)} · ${c.files} files${c.current ? ` · copying ${Math.round((c.current.done / c.current.size) * 100)}%` : ''}`) : null);
-    host.textContent = [s.model || s.os, s.arch, `${s.numCpu} cores`, `up ${fmtUptime(s.uptime)}`,
+    host.textContent = [s.model || s.os, s.arch, `up ${fmtUptime(s.uptime)}`, `load ${s.load.map((x) => x.toFixed(2)).join(' ')}`,
       `${r.remuxJobs} remux · ${r.transcodeJobs} transcode jobs`].filter(Boolean).join('  ·  ');
   };
 
@@ -1655,8 +1660,7 @@ async function liveTab(ctx) {
 
   // The first load failing leaves labelled placeholders, not empty boxes.
   const unavailable = () => {
-    for (const k of ['cpu', 'mem', 'net']) card(cards[k], '—', 'Unavailable');
-    cards.temp.el.hidden = true;
+    for (const k of ['cpu', 'mem', 'disk', 'net']) card(cards[k], '—', 'Unavailable');
     put(storage, h('h3', { style: { margin: 0 } }, 'Storage'), h('div', { class: 'dim small', style: { marginTop: '10px' } }, 'Unavailable'));
   };
   const [sysOk, sessOk] = await Promise.all([renderSystem(true).then(() => true, () => false), renderSessions().then(() => true, () => false)]);
@@ -1664,8 +1668,8 @@ async function liveTab(ctx) {
   if (!sessOk) put(sessionsBox, h('div', { class: 'panel dim' }, 'Unavailable'));
   const live = h('div', { class: 'dash-live' },
     h('section', null, h('div', { class: 'dash-head' }, nowTitle), sessionsBox),
-    h('section', null, h('div', { class: 'dash-head' }, h('h2', { class: 'section-title' }, 'Server'), h('span', { class: 'muted small' }, 'last hour')),
-      h('div', { class: 'dcards' }, cards.cpu.el, cards.mem.el, cards.temp.el, cards.net.el)),
+    h('section', null, h('div', { class: 'dash-head' }, h('h2', { class: 'section-title' }, 'Server'), h('span', { class: 'muted small' }, 'last hour'), health),
+      h('div', { class: 'dcards' }, cards.cpu.el, cards.mem.el, cards.disk.el, cards.net.el)),
     h('section', null, storage),
     host);
   const banner = staleBanner(live);
@@ -1881,7 +1885,7 @@ function methodsTable(st) {
 async function libraryTab() {
   const st = await api('/api/admin/stats/library');
   const bucketList = (dim, b, fmtKey = (k) => k) => barList([...(b || [])].sort((x, y) => y.value - x.value)
-    .map((x) => ({ label: `${fmtKey(x.key)} (${x.count})`, value: x.value, onClick: () => libraryTitles(dim, x.key, `${DIM_LABEL[dim]}: ${fmtKey(x.key)}`) })), (v) => fmtBytes(v));
+    .map((x) => ({ label: fmtKey(x.key), note: `${x.count.toLocaleString()} file${x.count === 1 ? '' : 's'}`, value: x.value, onClick: () => libraryTitles(dim, x.key, `${DIM_LABEL[dim]}: ${fmtKey(x.key)}`) })), (v) => fmtBytes(v));
   const panel = (title, list) => h('div', { class: 'panel' }, h('h2', { class: 'panel-title' }, title), list);
   return h('div', null,
     h('div', { class: 'stats-grid' },
@@ -1891,7 +1895,7 @@ async function libraryTab() {
         st.probeErrors ? [' · ', h('button', { class: 'link-btn', type: 'button', 'aria-haspopup': 'dialog', onclick: () => unreadableModal() }, `${st.probeErrors} unreadable`)] : null]),
       stat('Metadata', `${st.metaMatched} matched`, [st.metaMissing ? h('button', { class: 'link-btn', type: 'button', 'aria-haspopup': 'dialog', onclick: () => unmatchedModal() }, `${st.metaMissing} not found`) : '0 not found', ` · ${st.metaPending} pending`])),
     st.files ? compatPanel() : null,
-    st.files ? h('p', { class: 'small dim', style: { margin: '0 0 10px' } }, 'Bars show storage used; file counts are in brackets. Select a row to see its titles.') : null,
+    st.files ? h('p', { class: 'small dim', style: { margin: '0 0 10px' } }, 'Storage used by each kind of file. Select a row to see its titles.') : null,
     h('div', { class: 'dash-3' },
       panel('Libraries', bucketList('library', st.libraries)),
       panel('Resolution', bucketList('resolution', st.resolutions)),

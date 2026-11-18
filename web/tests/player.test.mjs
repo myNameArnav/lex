@@ -50,7 +50,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
     clearTimeout: id => timers.delete(id),
   });
   const deps = {
-    './ui.js': Object.fromEntries(['h', 'resLabel', 'fmtTime', 'fmtBitrate', 'fmtBytes', 'streamLabel', 'clear', 'langName', 'channelName', 'trackName', 'modal', 'containTab'].map(k => [k, () => {}])),
+    './ui.js': Object.fromEntries(['h', 'resLabel', 'fmtTime', 'fmtLeft', 'fmtBitrate', 'fmtBytes', 'streamLabel', 'clear', 'langName', 'channelName', 'trackName', 'modal', 'containTab'].map(k => [k, () => {}])),
     './api.js': {
       api: async (path, { body } = {}) => {
         if (path.startsWith('/api/items/')) return { item: { id: 1, userData: { position: 45 } }, files: [{ id: 2 }] };

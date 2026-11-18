@@ -42,10 +42,12 @@ export const DEFAULTS = {
   countdown: 10,
   showStats: false,
   statsCompact: false, // stats panel collapsed to its summary and graph
+  statsOpen: [],       // stats panel sections shown in full (by title)
   volume: 1,
   muted: false,
   nightMode: false,    // compress loud and quiet parts (audio-fx.js)
   voiceBoost: false,   // lift dialogue
+  timeLeft: false,     // the player's clock shows time left (−32:17) instead of the duration
   skipBack: 10,
   skipFwd: 30,
   heartbeat: 10,
