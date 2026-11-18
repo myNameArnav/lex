@@ -107,14 +107,31 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
   deps['./ui.js'].fmtEpisode = it => `S${it.season} E${it.episode}`;
   deps['./ui.js'].fmtProgram = it => it.title;
   deps['./ui.js'].fmtClock = ms => String(ms);
-  const source = await readFile(new URL('../static/js/player.js', import.meta.url), 'utf8');
-  const module = new vm.SourceTextModule(source + '\nexport { Player };', { context });
-  await module.link(specifier => {
-    const values = deps[specifier];
-    return new vm.SyntheticModule(Object.keys(values), function () {
-      for (const [name, value] of Object.entries(values)) this.setExport(name, value);
-    }, { context });
-  });
+  // Imports listed in deps are stubbed; the player's own pieces
+  // (static/js/player/) load for real, with their imports stubbed the same way.
+  const jsRoot = new URL('../static/js/', import.meta.url);
+  const loaded = new Map();
+  const link = async (specifier, referrer) => {
+    const url = new URL(specifier, referrer.identifier);
+    const key = './' + url.href.slice(jsRoot.href.length);
+    if (loaded.has(url.href)) return loaded.get(url.href);
+    let mod;
+    if (deps[key]) {
+      const values = deps[key];
+      mod = new vm.SyntheticModule(Object.keys(values), function () {
+        for (const [name, value] of Object.entries(values)) this.setExport(name, value);
+      }, { context, identifier: url.href });
+    } else {
+      assert.ok(key.startsWith('./player/'), `player.js imports ${key}: stub it in deps`);
+      mod = new vm.SourceTextModule(await readFile(url, 'utf8'), { context, identifier: url.href });
+    }
+    loaded.set(url.href, mod);
+    return mod;
+  };
+  const playerURL = new URL('player.js', jsRoot);
+  const source = await readFile(playerURL, 'utf8');
+  const module = new vm.SourceTextModule(source + '\nexport { Player };', { context, identifier: playerURL.href });
+  await module.link(link);
   await module.evaluate();
   const player = Object.assign(Object.create(module.namespace.Player.prototype), {
     video, plan: { method, hls, url: '/direct', sessionId: 'session', audio: 1 },
