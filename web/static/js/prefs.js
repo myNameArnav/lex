@@ -3,13 +3,25 @@
 
 const KEY = 'lex.prefs.v1';
 
+// Browser language codes (ISO 639-1, with region) to the ISO 639-2 codes
+// media files tag their tracks with.
+export const LANG1 = { en: 'eng', es: 'spa', fr: 'fre', de: 'ger', it: 'ita', pt: 'por', 'pt-pt': 'por', 'pt-br': 'por', hi: 'hin', ja: 'jpn', ko: 'kor', zh: 'chi', 'zh-cn': 'chi', 'zh-tw': 'chi', ar: 'ara', ru: 'rus', nl: 'dut', sv: 'swe', no: 'nor', nb: 'nor', nn: 'nor', da: 'dan', fi: 'fin', pl: 'pol', tr: 'tur', ta: 'tam', te: 'tel', uk: 'ukr', he: 'heb', el: 'gre', cs: 'cze', hu: 'hun', ro: 'rum', th: 'tha', vi: 'vie', id: 'ind', ms: 'may' };
+export const lang1to3 = (l) => { const k = (l || '').toLowerCase(); return LANG1[k] || LANG1[k.split('-')[0]] || l; };
+
+// The browser's language, for the default subtitle language; English when
+// it isn't one the settings list.
+function browserLang() {
+  try { return LANG1[(navigator.language || '').toLowerCase()] || LANG1[(navigator.language || '').toLowerCase().split('-')[0]] || 'eng'; }
+  catch { return 'eng'; }
+}
+
 export const DEFAULTS = {
   quality: 0,          // max kbps, 0 = original
   mode: 'auto',        // auto | direct | remux | transcode
   bufferAhead: 0,      // seconds to buffer ahead (remux/transcode); 0 = as much as the browser allows
   backBuffer: 30,      // seconds kept behind the playhead
   audioLang: '',       // preferred audio language (ISO 639-2), '' = file default
-  subLang: 'eng',      // preferred subtitle language
+  subLang: browserLang(), // preferred subtitle language: the browser's, else English
   subMode: 'auto',     // off | auto (forced / foreign audio) | always
   // Subtitle appearance; the choices are in substyle.js.
   subSize: 'medium',   // xsmall | small | medium | large | xlarge | huge
@@ -18,7 +30,7 @@ export const DEFAULTS = {
   subWeight: 'bold',   // normal | bold
   subColor: 'white',
   subOpacity: 1,
-  subBg: true,         // background box behind each line
+  subBg: false,        // background box behind each line (off: outlined text, as most players do)
   subBgColor: 'black',
   subBgOpacity: 0.6,
   subEdge: 'auto',     // auto | none | outline | shadow | raised | depressed

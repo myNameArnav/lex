@@ -7,11 +7,17 @@ test('subtitle style defaults match the stored preference defaults', () => {
   for (const [k, v] of Object.entries(SUB_STYLE_DEFAULTS)) assert.equal(DEFAULTS[k], v, k);
 });
 
-test('the default look is the old one: white semi-bold text on a 60% black box, no edge', () => {
+test('the default look is white semi-bold text outlined in black, with no box', () => {
   const v = subStyleVars({});
   assert.equal(v['--sub-scale'], '1');
   assert.equal(v['--sub-weight'], '600');
   assert.equal(v['--sub-color'], 'rgba(255, 255, 255, 1)');
+  assert.equal(v['--sub-bg'], 'transparent');
+  assert.notEqual(v['--sub-shadow'], 'none');
+});
+
+test('the box, when turned on, is 60% black with no edge', () => {
+  const v = subStyleVars({ subBg: true });
   assert.equal(v['--sub-bg'], 'rgba(0, 0, 0, 0.6)');
   assert.equal(v['--sub-shadow'], 'none');
 });
@@ -30,7 +36,7 @@ test('without a box, Automatic outlines the text; colours and opacity follow the
 
 test('unknown stored values fall back to defaults', () => {
   assert.equal(sizeScale('gigantic'), 1);
-  const v = subStyleVars({ subColor: 'chartreuse', subBgOpacity: 'x', subEdge: 'glow' });
+  const v = subStyleVars({ subColor: 'chartreuse', subBg: true, subBgOpacity: 'x', subEdge: 'glow' });
   assert.equal(v['--sub-color'], 'rgba(255, 255, 255, 1)');
   assert.equal(v['--sub-bg'], 'rgba(0, 0, 0, 0.6)');
   assert.equal(v['--sub-shadow'], 'none');
@@ -46,7 +52,7 @@ test('ASS dialogue keeps the release look at defaults, apart from the box', () =
   const fields = { fontsize: '20', marginv: '10', bold: '-1', primarycolour: '&H00FFFFFF' };
   const plain = assStyleOverrides({ ...SUB_STYLE_DEFAULTS, subBg: false }, fields, 288);
   assert.deepEqual(plain, { fontsize: 20, marginv: 10 });
-  const boxed = assStyleOverrides(SUB_STYLE_DEFAULTS, fields, 288);
+  const boxed = assStyleOverrides({ ...SUB_STYLE_DEFAULTS, subBg: true }, fields, 288);
   assert.equal(boxed.borderstyle, 3);
   assert.equal(boxed.outlinecolour, '&H66000000');
   assert.equal(boxed.primarycolour, undefined);

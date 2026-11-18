@@ -59,7 +59,7 @@ export const SUB_STYLE_DEFAULTS = {
   subWeight: 'bold',
   subColor: 'white',
   subOpacity: 1,
-  subBg: true,
+  subBg: false,
   subBgColor: 'black',
   subBgOpacity: 0.6,
   subEdge: 'auto',

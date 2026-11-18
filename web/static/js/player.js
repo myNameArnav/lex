@@ -5,7 +5,7 @@ import { h, icons, resLabel, fmtTime, fmtBitrate, fmtBytes, streamLabel, toast, 
 import { api, img } from './api.js';
 import { state } from './app.js';
 import { detectCaps } from './caps.js';
-import { prefs, QUALITIES, qualityOptions } from './prefs.js';
+import { prefs, QUALITIES, qualityOptions, lang1to3 } from './prefs.js';
 import { MseEngine, clock } from './mse.js';
 import { bufferingCause } from './buffering.js';
 import { AudioFX, audioFxSupported, fxLabel } from './audio-fx.js';
@@ -57,8 +57,6 @@ const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 const vendorURL = (p) => new URL(`../vendor/${p}`, import.meta.url).href;
 const LANG_CHOICES = ['eng', 'spa', 'fre', 'ger', 'ita', 'por', 'hin', 'jpn', 'kor', 'chi', 'ara', 'rus', 'dut', 'swe', 'nor', 'dan', 'fin', 'pol', 'tur', 'tam', 'tel', 'ukr', 'heb', 'gre', 'cze', 'hun', 'rum', 'tha', 'vie', 'ind', 'may']
   .map((k) => [k, langName(k)]).sort((a, b) => a[1].localeCompare(b[1]));
-const LANG1 = { en: 'eng', es: 'spa', fr: 'fre', de: 'ger', it: 'ita', pt: 'por', 'pt-pt': 'por', 'pt-br': 'por', hi: 'hin', ja: 'jpn', ko: 'kor', zh: 'chi', 'zh-cn': 'chi', 'zh-tw': 'chi', ar: 'ara', ru: 'rus', nl: 'dut', sv: 'swe', no: 'nor', da: 'dan', fi: 'fin', pl: 'pol', tr: 'tur', ta: 'tam', te: 'tel', uk: 'ukr', he: 'heb', el: 'gre', cs: 'cze', hu: 'hun', ro: 'rum', th: 'tha', vi: 'vie', id: 'ind', ms: 'may' };
-const lang1to3 = (l) => LANG1[(l || '').toLowerCase()] || l;
 
 // Back/forward icons carry the configured number of seconds.
 const skipIcon = (dir, n) => (n = Math.round(+n) || 0, `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${dir < 0 ? '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>' : '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>'}<text x="12" y="15.5" font-size="${n >= 100 ? 6 : 7.5}" text-anchor="middle" fill="currentColor" stroke="none" font-weight="700" font-family="system-ui">${n}</text></svg>`);
