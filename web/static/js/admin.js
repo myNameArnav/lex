@@ -216,7 +216,7 @@ function prefsSection() {
     h('div', { class: 'form-section' }, h('h2', null, 'Appearance'),
       h('div', { class: 'form-grid' },
         field('Theme', select(p.theme, [['system', 'Same as the system'], ['dark', 'Dark'], ['light', 'Light']], (v) => { set('theme')(v); applyTheme(v); }), 'For this device. The player is always dark.'),
-        field('Font', select(p.font, [['headings', 'Fredoka for headings'], ['all', 'Fredoka everywhere'], ['system', 'System font']], (v) => { set('font')(v); applyFont(v); }), 'For this device.'))),
+        field('Font', select(p.font, [['headings', 'Fredoka for titles'], ['all', 'Fredoka everywhere'], ['system', 'System font']], (v) => { set('font')(v); applyFont(v); }), 'For this device.'))),
     h('div', { class: 'form-section' }, h('h2', null, 'Player'),
       toggleRow('Autoplay next episode', 'Shows an "Up next" card near the end with a countdown.', p.autoplayNext, set('autoplayNext')),
       toggleRow('Skip intros automatically', 'Otherwise a "Skip Intro" button appears while an intro plays.', p.autoSkipIntro, set('autoSkipIntro')),

@@ -1,5 +1,5 @@
 /* Fredoka (OFL, see THIRD_PARTY_NOTICES.md): Latin subset, weights 400-700.
-   Headings and the logo use it by default; Settings → Appearance → Font
+   Titles and the logo use it by default; Settings → Appearance → Font
    switches to the system font or uses Fredoka everywhere (theme.js). */
 @font-face {
   font-family: "Fredoka";
@@ -206,7 +206,9 @@ body {
 }
 :root[data-font=system] { --font-display: var(--font-system); }
 :root[data-font=all] { --font-body: "Fredoka", var(--font-system); }
-h1, h2, h3, .logo { font-family: var(--font-display); }
+/* Display text only: the logo, page titles and shelf titles. Form and
+   settings headings stay in the body font so they don't fight their labels. */
+.logo, h1, .page-title, .section-title { font-family: var(--font-display); }
 a { color: inherit; text-decoration: none; }
 a, button, [role=button] { -webkit-tap-highlight-color: transparent; }
 button, input, select, textarea { font: inherit; color: inherit; }
