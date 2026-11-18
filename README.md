@@ -69,27 +69,37 @@ and ffmpeg pauses when the browser's buffer is full. Browsers without MSE
 ## Features
 
 - **Libraries**: Movies, TV Shows or Mixed. Parses release-style names,
-  `.plexmatch`/`.nfo` ids and local artwork; Sonarr/Radarr webhooks trigger
-  instant rescans.
+  `.plexmatch`/`.nfo` ids, local artwork and local trailers/extras, and labels
+  editions when a title has several versions. Sonarr/Radarr webhooks trigger
+  instant rescans; admins get a list of unmatched titles and unreadable files.
 - **Metadata**: TMDB (free key), TVmaze for shows, or a local Radarr. Artwork
   is cached and served by Lex. Collections, cast pages, genres, a per-user
   Watchlist and Favorites, and manual "Fix match".
 - **Player**: resume, Up next, Skip Intro / Skip Credits (detected with audio
-  fingerprints), chapters, seek-bar thumbnails, speed, PiP, keyboard and touch
-  controls, and **stats for nerds** (codecs in/out, reasons, buffer, bandwidth,
-  dropped frames, server ffmpeg speed).
-- **Subtitles**: embedded, external and OpenSubtitles.com downloads; styled
-  ASS/SSA rendered with libass in the browser; timing, size and position
-  controls.
+  fingerprints; a title counts as watched once the credits start), chapters,
+  seek-bar thumbnails, speed, PiP, night mode and voice boost, keyboard and
+  touch controls, audio and subtitle choices remembered per show, and **stats
+  for nerds** (codecs in/out, reasons, buffer, bandwidth, dropped frames,
+  server ffmpeg speed and disk wait). When playback buffers, the player says
+  whether the network or the server (disk, CPU, memory, throttling) is why.
+- **Subtitles**: embedded, external and OpenSubtitles.com downloads (optionally
+  admins only); styled ASS/SSA rendered with libass and PGS (Blu-ray) drawn in
+  the browser instead of burned in; timing, position, font, colour, edge and
+  size controls.
 - **Live TV**: optional channels that play your library at random on a fixed
   daily schedule, with a guide.
 - **Dashboard**: host CPU, memory, temperature, network and disk; every live
   stream with its method, reason, buffer and ffmpeg state; playback analytics
-  and history; a library breakdown by codec, resolution and HDR.
+  and history; a library breakdown by codec, resolution and HDR; a diagnostic
+  report for bug reports with names, titles, paths and addresses hidden.
 - **Users**: multiple accounts, per-user watch state and library access, admin
-  roles, bcrypt passwords, hashed session tokens.
+  roles, bcrypt passwords, hashed session tokens; everyone can see and sign out
+  their own devices. Light and dark themes, or follow the system.
 - **Raspberry Pi friendly**: hardware HEVC decoding and H.264 encoding when
-  available, an optional media cache, and transcode limits you control.
+  available, transcode limits you control, and an optional SSD cache that
+  copies what you're watching off a slow hard drive. The copy starts at the
+  play position, playback switches to it as soon as it's ahead, and it pauses
+  while another stream waits on the drive.
 
 ## Quick start
 
