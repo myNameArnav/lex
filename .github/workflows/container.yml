@@ -4,7 +4,8 @@ name: Container image
 #   manual run on main     -> :edge (an unreleased build, e.g. to try on a Pi)
 #   every pushed build     -> :sha-<commit>
 # Pull requests that touch the image's inputs build it without pushing; a
-# newer push to the PR cancels the older build.
+# newer push to the PR cancels the older build. Draft PRs skip it until
+# they're marked ready for review.
 # Compiling FFmpeg (cross-compiled natively, not under emulation) takes most
 # of a build, so layers are kept in :buildcache. Tags and manual runs write
 # it; pull requests only read it. The cache follows the debian:trixie and
@@ -14,6 +15,7 @@ on:
   push:
     tags: ['v*']
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - Dockerfile
       - .dockerignore
@@ -30,6 +32,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   image:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6

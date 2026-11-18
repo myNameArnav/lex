@@ -1,9 +1,11 @@
 name: CI
 # Pull requests only: a PR's run tests it merged into main, so the merge
 # itself needn't run again. PRs that only change docs or the version
-# number (releases) skip it.
+# number (releases) skip it, and so do draft PRs: CI runs once the PR is
+# marked ready for review.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore:
       - '**.md'
       - internal/version/VERSION
@@ -17,6 +19,7 @@ concurrency:
 # The checks run as parallel jobs; "check" passes only when all of them do.
 jobs:
   test:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -28,6 +31,7 @@ jobs:
           cache: true
       - run: go test -race ./...
   lint:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -53,6 +57,7 @@ jobs:
       - name: Vulnerability scanning
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
   security:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     env:
       # A pull request's history scans cover only its own commits: the base
@@ -75,7 +80,7 @@ jobs:
           go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --no-banner --log-opts="${BASE_REF:+origin/$BASE_REF..}HEAD" .
           go run github.com/zricethezav/gitleaks/v8@v8.30.1 dir --redact --no-banner .
   check:
-    if: always()
+    if: ${{ always() && !github.event.pull_request.draft }}
     needs: [test, lint, security]
     runs-on: ubuntu-latest
     steps:
