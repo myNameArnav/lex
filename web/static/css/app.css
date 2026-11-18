@@ -1186,7 +1186,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ps-sec-h .chev { flex: none; display: inline-flex; width: 12px; height: 12px; color: rgba(255,255,255,.5); transition: transform .12s; }
 .ps-sec-h .chev svg { width: 12px; height: 12px; }
 .ps-sec.open .ps-sec-h .chev { transform: rotate(90deg); }
-.ps-sec-h .t { flex: none; color: var(--accent); font-weight: 700; }
+/* Plain white: yellow and red in the panel are kept for warnings and errors. */
+.ps-sec-h .t { flex: none; color: #fff; font-weight: 700; }
 .ps-sec-h .s.warn { color: var(--accent); } .ps-sec-h .s.bad { color: var(--bad-ink); }
 .ps-sec-h .s { flex: 1; min-width: 0; color: rgba(255,255,255,.55); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; }
 .ps-sec-b table { margin: 2px 0 6px 18px; width: calc(100% - 18px); }

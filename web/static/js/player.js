@@ -1868,9 +1868,10 @@ class Player {
     if (hist.length > 1) {
       ctx.beginPath();
       hist.forEach((val, i) => (i ? ctx.lineTo(x(i), y(val)) : ctx.moveTo(x(i), y(val))));
-      ctx.strokeStyle = '#f2b33d'; ctx.lineWidth = 1.5; ctx.stroke();
+      // Blue like the dashboard's charts: yellow in this panel means a warning.
+      ctx.strokeStyle = '#3987e5'; ctx.lineWidth = 1.5; ctx.stroke();
       ctx.lineTo(x(hist.length - 1), ht); ctx.lineTo(x(0), ht); ctx.closePath();
-      ctx.fillStyle = 'rgba(242,179,61,.12)'; ctx.fill();
+      ctx.fillStyle = 'rgba(57,135,229,.16)'; ctx.fill();
     }
     ctx.font = '10px ui-monospace, Menlo, monospace'; ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.textAlign = 'right';
     ctx.fillText(target && target <= top ? `target ${secs(target)}` : `max ${secs(top)}`, w - 2, 10);
