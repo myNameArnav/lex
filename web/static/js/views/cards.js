@@ -10,7 +10,7 @@ import { focusAfterRoute, play, refreshSoft } from '../app.js';
 // showTitle and updatedAt (store.cardCols). /api/items/:id/children adds
 // overview and premiere for episode rows and season tabs. Anything else
 // (overview, cast, genres, studios, ratings…) comes from /api/items/:id.
-export function subtitleFor(it) {
+function subtitleFor(it) {
   if (it.kind === 'show') return it.childCount ? `${it.childCount} episode${it.childCount === 1 ? '' : 's'}` : (it.year || '');
   if (it.kind === 'episode') return fmtEpisode(it);
   if (it.kind === 'season') return it.childCount ? `${it.childCount} episodes` : '';
@@ -43,14 +43,14 @@ export function posterCard(it, { sub } = {}) {
 
 // setWatchlist adds a movie or show to the watchlist or takes it off, and
 // says so (the toast is the undo hint). Resolves to whether it worked.
-export async function setWatchlist(it, on) {
+async function setWatchlist(it, on) {
   const ok = await run(null, () => api(`/api/items/${it.id}/watchlist`, { method: 'POST', body: { watchlist: on } }), on ? 'Added to Watchlist' : 'Removed from Watchlist');
   if (ok) (it.userData ||= {}).watchlist = on;
   return !!ok;
 }
 
 // setFavorite marks a title as a favorite or not, like setWatchlist.
-export async function setFavorite(it, on) {
+async function setFavorite(it, on) {
   const ok = await run(null, () => api(`/api/items/${it.id}/favorite`, { method: 'POST', body: { favorite: on } }), on ? 'Added to Favorites' : 'Removed from Favorites');
   if (ok) (it.userData ||= {}).favorite = on;
   return !!ok;
@@ -59,7 +59,7 @@ export async function setFavorite(it, on) {
 // The ⋯ on a movie or show poster: Watchlist, Favorites and watched
 // toggles. The view re-renders in place afterwards (Watchlist and Favorites
 // rows and filters change).
-export function posterMenuButton(it) {
+function posterMenuButton(it) {
   const ud = it.userData || {};
   const items = [ud.watchlist
     ? { label: 'Remove from Watchlist', icon: 'bookmarkFill', onClick: async () => { if (await setWatchlist(it, false)) refreshSoft(); } }
@@ -98,7 +98,7 @@ export function landCard(it, { playOnClick = true } = {}) {
 
 // The ⋯ on a Continue Watching / Next Up card. Removing a title from
 // Continue Watching clears its resume point and leaves its watched state be.
-export function landMenuButton(it, title, card) {
+function landMenuButton(it, title, card) {
   const ud = it.userData || {};
   const act = async (req, msg) => {
     // The card goes away: keep focus in the row on its neighbour.

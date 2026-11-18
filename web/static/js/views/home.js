@@ -32,4 +32,4 @@ export async function homeView(ctx) {
 }
 
 // The Home rows with a page of their own behind "See all".
-export const HOME_ROW_PAGES = { watchlist: '#/watchlist', favorites: '#/favorites' };
+const HOME_ROW_PAGES = { watchlist: '#/watchlist', favorites: '#/favorites' };

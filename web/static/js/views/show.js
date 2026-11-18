@@ -10,7 +10,7 @@ import { trailerButton, extrasRow, hero, heroPoster, facts, watchedButton, favBu
 
 // playShuffle plays a show's (or a season's) episodes in random order.
 // The button stays busy while the order loads.
-export async function playShuffle(it, btn) {
+async function playShuffle(it, btn) {
   let eps = null;
   if (!(await run(btn, async () => { eps = await api(`/api/items/${it.id}/shuffle`); }))) return;
   if (!eps.length) { toast('Nothing to shuffle yet'); return; }
@@ -19,7 +19,7 @@ export async function playShuffle(it, btn) {
 
 // heroActions: the show's play button, watched/favorite/more and the
 // "Up next" line, rebuilt in place when an episode is toggled in the list.
-export function heroActions(d) {
+function heroActions(d) {
   const it = d.item, next = d.nextEpisode;
   const btns = [];
   // A fully watched show starts over from its first episode.
@@ -35,7 +35,7 @@ export function heroActions(d) {
   return h('div', { class: 'hero-cta' }, h('div', { class: 'actions' }, btns), upNext ? h('p', { class: 'muted small' }, `Up next: ${next.title}`) : null);
 }
 
-export function seasonTabLabel(tab, s) {
+function seasonTabLabel(tab, s) {
   const n = s.unplayedCount || 0;
   tab.setAttribute('aria-label', `${s.title}${n ? `, ${n} unwatched episode${n === 1 ? '' : 's'}` : ''}`);
   tab.replaceChildren(s.title, n ? h('span', { class: 'dim', 'aria-hidden': 'true', style: { marginLeft: '6px', fontWeight: 600 } }, n) : '');
@@ -154,7 +154,7 @@ export async function showView(ctx, d) {
 }
 
 // episodeRow: onChange(played) runs after the watched toggle succeeds.
-export function episodeRow(e, onChange) {
+function episodeRow(e, onChange) {
   const ud = e.userData || {};
   let busy = false;
   // Unplaced daily-show episodes go by air date, which the line below the title shows.
