@@ -231,6 +231,26 @@ func main() {
 		}
 	}()
 
+	// Log when the host gets overloaded (slow disk, CPU, memory, a throttled
+	// Pi) and when it recovers, so stalls in the log line up with a cause.
+	go func() {
+		var w sysstats.StrainWatch
+		t := time.NewTicker(3 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if line, warn := w.Update(sampler.Snapshot()); warn {
+					log.Warnf("%s", line)
+				} else if line != "" {
+					log.Infof("%s", line)
+				}
+			}
+		}
+	}()
+
 	// The daily database backup: checked shortly after startup and then
 	// hourly, and made when the newest one is about a day old.
 	go func() {

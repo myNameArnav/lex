@@ -180,6 +180,9 @@ class Player {
     this.stalls = { count: 0, secs: 0, since: 0 };
     this.lastJob = null;
     this.serverRate = 0;
+    this.diskWait = 0;
+    this.host = [];
+    this.load = null;
     this.started = false;
     this.bufHist = [];
     this.closed = false;
@@ -765,7 +768,7 @@ class Player {
     const bandwidth = es?.bandwidth || (es?.fileRate ? es.fileRate * 8 : 0) || this.serverRate * 8;
     return bufferingCause({
       needKbps: this.plan.bitrate, bandwidth, remote: !!this.plan.remote, job: this.lastJob, rate: this.video.playbackRate || 1,
-      canTranscode: state.caps?.transcode !== false, isAdmin: !!state.me?.isAdmin, method: this.plan.method,
+      canTranscode: state.caps?.transcode !== false, isAdmin: !!state.me?.isAdmin, method: this.plan.method, diskWait: this.diskWait, host: this.host,
     });
   }
 
@@ -1594,6 +1597,9 @@ class Player {
       const r = await api('/api/playback/progress', { method: 'POST', body: { sessionId: this.sessionId, fileId: this.file?.id, method: this.plan.method, position: this.video.currentTime, paused: this.video.paused, stats: this.clientStats() } });
       this.lastJob = r.job || null;
       this.serverRate = r.serverRate || 0;
+      this.diskWait = r.diskWait || 0;
+      this.host = r.host || [];
+      this.load = r.load || null;
     } catch (e) {
       if (e.status === 410) this.stopByServer(e.message);
     }
@@ -1675,7 +1681,11 @@ class Player {
     // client's full buffer blocks it; what the browser holds was produced too.
     const done = j ? Math.max(j.outTime || 0, es ? es.ranges.reduce((m, [s, e]) => (s <= t + 1 ? Math.max(m, e) : m), 0) : 0) : 0;
     const jobLvl = !j ? '' : j.error ? 'bad' : !j.exited && !j.throttled && j.speed && j.speed < v.playbackRate && done - t < 30 ? 'warn' : '';
-    const lvls = [bufLvl, dropLvl, jobLvl];
+    // The file route measures how much of its time goes to disk reads.
+    const fileRoute = p.method === 'direct' || es?.fileBytes != null;
+    const diskLvl = fileRoute && this.diskWait >= 0.6 ? 'bad' : fileRoute && this.diskWait >= 0.3 ? 'warn' : '';
+    const hostLvl = this.host.length ? 'warn' : '';
+    const lvls = [bufLvl, dropLvl, jobLvl, diskLvl, hostLvl];
     const lvl = lvls.includes('bad') ? 'bad' : lvls.includes('warn') ? 'warn' : '';
     const status = cs.buffering ? 'Buffering' : lvl === 'bad' ? 'Error' : lvl === 'warn' ? 'Degraded' : 'Healthy';
     const summary = `${status} · ${secs(cs.bufferAhead)} buffered · ${plural(cs.bufferEvents, 'stall')} · ${cs.droppedFrames} dropped`;
@@ -1707,9 +1717,13 @@ class Player {
     if (es?.fileBytes != null) r('File read', fmtBytes(es.fileBytes), `range requests${es.fileRate ? ` at ${fmtBitrate(es.fileRate * 8)}` : ''} · remuxer memory ${fmtBytes(es.remuxHeap)}`);
     r('Server rate', fmtBitrate(this.serverRate * 8));
     const cause = cs.bufferEvents || cs.buffering ? this.bufferCause() : null;
-    if (cause) r('Likely cause', cause.kind === 'network' ? 'data arrives too slowly' : 'server converts too slowly', cause.hint, 'warn', `${cause.text} ${cause.hint}`.trim());
+    if (cause) r('Likely cause', ({ network: 'data arrives too slowly', disk: 'server disk too slow', cpu: 'server CPU maxed out', memory: 'server short of memory', throttled: 'server throttled' })[cause.kind] || 'server converts too slowly', cause.hint, 'warn', `${cause.text} ${cause.hint}`.trim());
     r('Stalls', String(cs.bufferEvents), `${cs.bufferSeconds.toFixed(1)}s total${cs.buffering ? ' · buffering now' : ''}`, cs.buffering ? 'bad' : cs.bufferEvents ? 'warn' : '');
     r('Read from', this.cached ? 'SSD cache' : 'library disk');
+    if (fileRoute) r('Disk wait', `${Math.round(this.diskWait * 100)}%`, 'of serving time spent reading the file', diskLvl);
+    const ld = this.load;
+    const loadTxt = ld ? `CPU ${Math.round(ld.cpu)}% · I/O wait ${Math.round(ld.iowait)}% · ${fmtBytes(ld.memAvail)} free${ld.swapIO >= 1e5 ? ` · swapping ${fmtBytes(ld.swapIO)}/s` : ''}` : '';
+    if (this.host.length || ld) r('Server', this.host.length ? this.host.map((x) => x.text).join(' ') : 'OK', loadTxt, hostLvl, this.host.map((x) => x.text).join(' '));
     r('Source bitrate', fmtBitrate(info.bitrate || 0));
     if (p.method === 'transcode') r('Target bitrate', fmtBitrate(p.bitrate * 1000));
     if (p.limitKbps) r('Bitrate limit', fmtBitrate(p.limitKbps * 1000));

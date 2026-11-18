@@ -28,38 +28,43 @@ type ClientStats struct {
 }
 
 type Session struct {
-	ID         string      `json:"id"`
-	UserID     int64       `json:"userId"`
-	UserName   string      `json:"userName"`
-	ItemID     int64       `json:"itemId"`
-	FileID     int64       `json:"fileId"`
-	Title      string      `json:"title"`
-	Subtitle   string      `json:"subtitle"`
-	Method     string      `json:"method"`
-	Reasons    []string    `json:"reasons"`
-	VideoIn    string      `json:"videoIn"`
-	AudioIn    string      `json:"audioIn"`
-	VideoOut   string      `json:"videoOut"`
-	AudioOut   string      `json:"audioOut"`
-	Container  string      `json:"container"`
-	SrcBitrate int         `json:"srcBitrate"`
-	OutBitrate int         `json:"outBitrate"`
-	Client     string      `json:"client"`
-	IP         string      `json:"ip"`
-	Remote     bool        `json:"remote"`
-	StartedAt  int64       `json:"startedAt"`
-	LastSeen   int64       `json:"lastSeen"`
-	Position   float64     `json:"position"`
-	Duration   float64     `json:"duration"`
-	Paused     bool        `json:"paused"`
-	Bytes      int64       `json:"bytes"`
-	Rate       float64     `json:"rate"` // bytes/s delivered by the server, smoothed
-	Watched    float64     `json:"watched"`
-	Client_    ClientStats `json:"clientStats"`
-	Job        *Progress   `json:"job,omitempty"`
-	Restarts   int         `json:"restarts"`
-	Cached     bool        `json:"cached"`
-	HLS        bool        `json:"hls"`
+	ID         string   `json:"id"`
+	UserID     int64    `json:"userId"`
+	UserName   string   `json:"userName"`
+	ItemID     int64    `json:"itemId"`
+	FileID     int64    `json:"fileId"`
+	Title      string   `json:"title"`
+	Subtitle   string   `json:"subtitle"`
+	Method     string   `json:"method"`
+	Reasons    []string `json:"reasons"`
+	VideoIn    string   `json:"videoIn"`
+	AudioIn    string   `json:"audioIn"`
+	VideoOut   string   `json:"videoOut"`
+	AudioOut   string   `json:"audioOut"`
+	Container  string   `json:"container"`
+	SrcBitrate int      `json:"srcBitrate"`
+	OutBitrate int      `json:"outBitrate"`
+	Client     string   `json:"client"`
+	IP         string   `json:"ip"`
+	Remote     bool     `json:"remote"`
+	StartedAt  int64    `json:"startedAt"`
+	LastSeen   int64    `json:"lastSeen"`
+	Position   float64  `json:"position"`
+	Duration   float64  `json:"duration"`
+	Paused     bool     `json:"paused"`
+	Bytes      int64    `json:"bytes"`
+	Rate       float64  `json:"rate"` // bytes/s delivered by the server, smoothed
+	// DiskWait is the share (0-1, smoothed) of the time spent serving the
+	// file that went into reading it from disk rather than sending it to
+	// the player (ioclock.go). Near 1, the server's disk is the bottleneck,
+	// not the viewer's connection. Only the file route measures it.
+	DiskWait float64     `json:"diskWait"`
+	Watched  float64     `json:"watched"`
+	Client_  ClientStats `json:"clientStats"`
+	Job      *Progress   `json:"job,omitempty"`
+	Restarts int         `json:"restarts"`
+	Cached   bool        `json:"cached"`
+	HLS      bool        `json:"hls"`
 	// Live is Live TV: tuning in mid-program says nothing about what the
 	// viewer has watched, so it saves no resume position or watched mark.
 	// Set from the id (LivePrefix), so a session re-opened after a server
@@ -78,6 +83,9 @@ type Session struct {
 
 	bytes     int64
 	lastBytes int64
+	io        *sessionIO // disk and network timing (ioclock.go)
+	lastDisk  int64
+	lastNet   int64
 	lastTick  time.Time
 	job       *Job
 	playedSet bool
@@ -186,6 +194,7 @@ func (m *Manager) Open(s *Session) (*Session, error) {
 	s.lastTick, s.lastBeat, s.movedAt = now, now, now
 	s.jobMu = &sync.Mutex{}
 	s.ended = make(chan struct{})
+	s.io = &sessionIO{}
 	m.m[s.ID] = s
 	return s, nil
 }
@@ -284,6 +293,18 @@ func (m *Manager) AddBytes(s *Session, n int) {
 	m.mu.Lock()
 	s.bytes += int64(n)
 	m.mu.Unlock()
+}
+
+// Health is how fast the server is sending the session's stream (bytes/s)
+// and its DiskWait.
+// s may be a copy (Get), so this reads the live session.
+func (m *Manager) Health(s *Session) (rate, diskWait float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if live := m.m[s.ID]; live != nil {
+		s = live
+	}
+	return s.Rate, s.DiskWait
 }
 
 func (m *Manager) Touch(s *Session, delta int) {
@@ -542,7 +563,7 @@ func (m *Manager) Snapshot() []Session {
 			Method: s.Method, Reasons: s.Reasons, VideoIn: s.VideoIn, AudioIn: s.AudioIn, VideoOut: s.VideoOut, AudioOut: s.AudioOut,
 			Container: s.Container, SrcBitrate: s.SrcBitrate, OutBitrate: s.OutBitrate, Client: s.Client, IP: s.IP, Remote: s.Remote,
 			StartedAt: s.StartedAt, LastSeen: s.LastSeen, Position: s.Position, Duration: s.Duration, Paused: s.Paused,
-			Bytes: s.bytes, Rate: s.Rate, Watched: s.Watched, Client_: s.Client_, Restarts: s.Restarts, Cached: s.Cached, HLS: s.HLS, Live: s.Live,
+			Bytes: s.bytes, Rate: s.Rate, DiskWait: s.DiskWait, Watched: s.Watched, Client_: s.Client_, Restarts: s.Restarts, Cached: s.Cached, HLS: s.HLS, Live: s.Live,
 		}
 		if s.job != nil {
 			p := s.job.Progress()
@@ -652,6 +673,7 @@ func (m *Manager) loop() {
 				s.Rate = s.Rate*0.6 + inst*0.4
 			}
 			s.lastBytes, s.lastTick = b, now
+			s.sampleIO(now)
 			if s.job != nil {
 				s.job.SampleCPU()
 			}
