@@ -59,6 +59,7 @@ const INDEX = {
     ]],
     ['Appearance', 'look colours colors', [
       ['Theme', 'dark light mode system appearance night day colour color scheme'],
+      ['Font', 'typeface fredoka rounded system text headings'],
     ]],
     ['Player', '', [
       ['Autoplay next episode', 'up next binge continue'],

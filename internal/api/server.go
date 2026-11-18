@@ -619,6 +619,9 @@ func (s *Server) preloadModules() {
 func newAsset(p string, b []byte) *asset {
 	sum := sha1.Sum(b)
 	a := &asset{body: b, etag: `"` + hex.EncodeToString(sum[:8]) + `"`, ctype: mime.TypeByExtension(path.Ext(p))}
+	if path.Ext(p) == ".woff2" { // not in Go's built-in table; system mime.types may lack it
+		a.ctype = "font/woff2"
+	}
 	if a.ctype == "" {
 		a.ctype = "application/octet-stream"
 	}

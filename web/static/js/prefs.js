@@ -39,6 +39,7 @@ export const DEFAULTS = {
   heartbeat: 10,
   shortcuts: true,     // single-key app shortcuts (p, /, ?, g then a key)
   theme: 'system',     // system | dark | light (theme.js)
+  font: 'headings',    // headings (Fredoka) | all (Fredoka) | system (theme.js)
 };
 
 let cache = null;

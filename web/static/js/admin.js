@@ -5,7 +5,7 @@ import { prefs, DEFAULTS, QUALITIES, qualityOptions } from './prefs.js';
 import { SUB_SIZES, SUB_POSITIONS, SUB_FONTS, SUB_COLORS, SUB_OPACITIES, SUB_BG_OPACITIES, SUB_EDGES, SUB_WEIGHTS, subStyleVars } from './substyle.js';
 import { capsSummary, compatRequest, TIERS, TIER_ORDER, causeLabel } from './caps.js';
 import { PAGES, searchBox, reveal } from './settings-search.js';
-import { applyTheme } from './theme.js';
+import { applyTheme, applyFont } from './theme.js';
 import { rememberedCount, forgetTracks } from './track-memory.js';
 import { lineChart, columnChart, barList, axisHours, axisBitrate } from './charts.js';
 
@@ -215,7 +215,8 @@ function prefsSection() {
     subStyleSection(p, set),
     h('div', { class: 'form-section' }, h('h2', null, 'Appearance'),
       h('div', { class: 'form-grid' },
-        field('Theme', select(p.theme, [['system', 'Same as the system'], ['dark', 'Dark'], ['light', 'Light']], (v) => { set('theme')(v); applyTheme(v); }), 'For this device. The player is always dark.'))),
+        field('Theme', select(p.theme, [['system', 'Same as the system'], ['dark', 'Dark'], ['light', 'Light']], (v) => { set('theme')(v); applyTheme(v); }), 'For this device. The player is always dark.'),
+        field('Font', select(p.font, [['headings', 'Fredoka for headings'], ['all', 'Fredoka everywhere'], ['system', 'System font']], (v) => { set('font')(v); applyFont(v); }), 'For this device.'))),
     h('div', { class: 'form-section' }, h('h2', null, 'Player'),
       toggleRow('Autoplay next episode', 'Shows an "Up next" card near the end with a countdown.', p.autoplayNext, set('autoplayNext')),
       toggleRow('Skip intros automatically', 'Otherwise a "Skip Intro" button appears while an intro plays.', p.autoSkipIntro, set('autoSkipIntro')),

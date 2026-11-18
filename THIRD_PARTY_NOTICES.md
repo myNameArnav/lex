@@ -47,10 +47,11 @@ The FriBidi source and the build scripts that produce the WebAssembly files
 are available from the JASSUB repository at the matching tag. The WebAssembly
 files can be replaced with your own build of the same version.
 
+`web/static/css/fredoka.woff2` is a Latin subset of **Fredoka**
+(Copyright 2016 The Fredoka Project Authors), licensed under the
+[SIL Open Font License 1.1](https://github.com/google/fonts/blob/main/ofl/fredoka/OFL.txt).
 The lex wordmark, banner and icons (`docs/brand/`, `web/static/favicon.svg`,
-`web/static/icons/`) are drawn from glyph outlines of **Fredoka**, licensed
-under the [SIL Open Font License 1.1](https://github.com/google/fonts/blob/main/ofl/fredoka/OFL.txt).
-The font itself isn't bundled.
+`web/static/icons/`) are drawn from its glyph outlines.
 
 `default.woff2` is **Liberation Sans**, licensed under the
 [SIL Open Font License 1.1](https://github.com/liberationfonts/liberation-fonts/blob/main/LICENSE).
