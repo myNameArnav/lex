@@ -1,7 +1,8 @@
 // Full-screen player: picks a playback plan from the server, plays it via
 // direct <video src> or the MSE engine, and renders controls + stats.
-// Self-contained pieces live in player/: tracks.js (choosing and fetching
-// audio and subtitle tracks) and format.js (display helpers).
+// Self-contained pieces live in player/: features installed as Player
+// methods (live-tv.js, up-next.js, skip-segments.js, chapters.js,
+// trickplay.js) and plain helpers (tracks.js, format.js, retry.js).
 
 import { h, icons, resLabel, fmtTime, fmtLeft, fmtBitrate, fmtBytes, streamLabel, toast, releaseToasts, clear, langName, channelName, trackName, modal, containTab, confirmDialog, run, METHOD_LABEL, reasonLabel, fmtEpisode, fmtProgram, fmtClock } from './ui.js';
 import { api, img } from './api.js';
@@ -17,6 +18,12 @@ import { trackKey, trackPrefs, rememberTracks, subtitleChoice } from './track-me
 import { versionLabel, orderFiles, chosenFile, rememberFile } from './versions.js';
 import { END_FMT, SPEEDS, LANG_CHOICES, skipIcon, secs, plural, copied } from './player/format.js';
 import { pickAudio, pickSubtitle, styleASS, canRemoveSub, fetchSub, fetchSubBytes } from './player/tracks.js';
+import { retryApi } from './player/retry.js';
+import { liveTv } from './player/live-tv.js';
+import { upNext } from './player/up-next.js';
+import { skipSegments } from './player/skip-segments.js';
+import { chapters } from './player/chapters.js';
+import { trickplay } from './player/trickplay.js';
 
 let current = null;
 
@@ -57,21 +64,6 @@ const remuxFault = (reason, err) => REMUX_FAULT.test(`${reason} ${err?.message |
 // Relative to this module, so they come from the same build prefix (and
 // long-lived cache) as the code; see buildPrefix in internal/api/server.go.
 const vendorURL = (p) => new URL(`../vendor/${p}`, import.meta.url).href;
-
-// A server restart briefly makes the proxy unavailable: retry with backoff.
-// Permission and media errors stay terminal; cancelled() stops the retries.
-async function retryApi(path, opts, { cancelled = () => false, retries = 6, onRetry } = {}) {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await api(path, opts);
-    } catch (e) {
-      if (cancelled() || ![0, 502, 503, 504].includes(e.status) || attempt >= retries) throw e;
-      onRetry?.(attempt + 1);
-      await new Promise((resolve) => setTimeout(resolve, Math.min(8000, 1000 * (attempt + 1))));
-      if (cancelled()) throw e;
-    }
-  }
-}
 
 class Player {
   // shuffle: episodes to play in this order, from the first. channel: a Live
@@ -1293,34 +1285,6 @@ class Player {
 
   osdVolume() { this.osd(this.video.muted ? 'Muted' : `Volume ${this.volumeText()}`); }
 
-  // ---------- chapters ----------
-  // The file's chapters in order, each with a title to show ('Chapter 3'
-  // when untitled) and named: false when that title is only a number.
-  chapters() {
-    const d = this.duration();
-    return (this.file?.info?.chapters || [])
-      .filter((c) => !d || c.start < d)
-      .sort((a, b) => a.start - b.start)
-      .map((c, i) => ({ ...c, label: c.title || `Chapter ${i + 1}`, named: !!c.title && !/^chapter \d+$/i.test(c.title) }));
-  }
-
-  // The index of the chapter playing at t, or -1 before the first one.
-  chapterAt(t, list = this.chapters()) {
-    return list.findLastIndex((c) => c.start <= t + 0.25);
-  }
-
-  // dir 1: the next chapter. dir -1: back to the start of this one, or to
-  // the one before when already near its start (like a CD player).
-  jumpChapter(dir) {
-    const list = this.chapters();
-    if (list.length < 2) { this.osd('No chapters'); return; }
-    const t = this.video.currentTime, i = this.chapterAt(t, list);
-    const to = dir > 0 ? list[i + 1] : i >= 0 && t - list[i].start > 3 ? list[i] : list[i - 1];
-    if (!to) { this.osd(dir > 0 ? 'Last chapter' : 'First chapter'); return; }
-    this.seekTo(to.start);
-    this.osd(to.label);
-  }
-
   showSpinner(on) {
     if (on && !this.spin) { this.spin = h('div', { class: 'spinner' }); this.center.appendChild(this.spin); }
     if (!on && this.spin) { this.spin.remove(); this.spin = null; }
@@ -1403,38 +1367,6 @@ class Player {
     };
     if (/^[0-9]$/.test(k)) { this.seekTo((this.duration() * +k) / 10); e.preventDefault(); return; }
     if (map[k]) { e.preventDefault(); map[k](); this.poke(); }
-  }
-
-  // ---------- trickplay (seek previews) ----------
-  async loadTrickplay() {
-    const fileId = this.file?.id;
-    this.trickTried = Date.now();
-    this.trick = null;
-    try {
-      const m = await api(`/api/files/${fileId}/trickplay`);
-      if (this.file?.id !== fileId || !m || !m.count) return;
-      this.trick = { ...m, fileId };
-      // Warm the first sheet so the first hover is instant.
-      new Image().src = `/api/files/${fileId}/trickplay/1`;
-    } catch {}
-  }
-
-  // Draws the preview for time t; returns its displayed width (0 if none).
-  renderThumb(t) {
-    const m = this.trick, el = this.tipThumb;
-    if (!m || m.fileId !== this.file?.id) { el.style.display = 'none'; return 0; }
-    const per = m.cols * m.rows;
-    const i = Math.max(0, Math.min(m.count - 1, Math.floor(t / m.interval)));
-    const sheet = Math.floor(i / per) + 1, k = i % per;
-    const scale = Math.min(1, (window.innerWidth < 600 ? 160 : 240) / m.width);
-    const w = Math.round(m.width * scale), ht = Math.round(m.height * scale);
-    Object.assign(el.style, {
-      display: 'block', width: `${w}px`, height: `${ht}px`,
-      backgroundImage: `url(/api/files/${m.fileId}/trickplay/${sheet})`,
-      backgroundSize: `${m.cols * w}px auto`,
-      backgroundPosition: `-${(k % m.cols) * w}px -${Math.floor(k / m.cols) * ht}px`,
-    });
-    return w;
   }
 
   // ---------- time / seek bar ----------
@@ -2108,180 +2040,6 @@ class Player {
     m.append(row('Advanced', this.statsEl ? 'Stats on' : this.mode === 'auto' ? '' : (modes.find(([k]) => k === this.mode) || modes[0])[1], 'advanced'));
   }
 
-  // ---------- intro & credits skipping ----------
-  intro() { return (this.segments || []).find((s) => s.kind === 'intro'); }
-
-  // The end credits: detected by the server, else a chapter named like
-  // credits in the last 30%, else null (Up next then starts a fixed time
-  // before the end).
-  credits() {
-    const seg = (this.segments || []).find((s) => s.kind === 'credits');
-    if (seg) return seg;
-    const d = this.duration(), chaps = this.file?.info?.chapters || [];
-    const i = chaps.findIndex((c) => /credit|outro|ending|ed\b/i.test(c.title || '') && d && c.start > d * 0.7);
-    if (i < 0) return null;
-    const c = chaps[i];
-    return { kind: 'credits', start: c.start, end: c.end > c.start ? c.end : chaps[i + 1]?.start || d, source: 'chapter' };
-  }
-
-  // What the Skip button skips at t: the intro, or the credits when no
-  // episode follows (with one, the Up next card is the way on).
-  skippable(t) {
-    if (!this.started || this.live) return null;
-    const inside = (seg) => !!seg && t >= seg.start - 0.5 && t < seg.end - 1.5;
-    const intro = this.intro();
-    if (inside(intro)) return { kind: 'intro', seg: intro };
-    const credits = this.credits();
-    if (inside(credits) && (!this.detail?.next || this.upNextDismissed)) return { kind: 'credits', seg: credits };
-    return null;
-  }
-
-  skipSegment({ kind, seg }) {
-    if (kind === 'intro') {
-      this.introSkipped = true;
-      this.seekTo(seg.end);
-      return;
-    }
-    this.creditsSkipped = true;
-    // Credits that run to the end go straight to the end card (seekTo stops
-    // just short of the end, so 'ended' fires); otherwise on to what follows
-    // them, like a post-credits scene.
-    const d = this.duration();
-    this.seekTo(d && seg.end >= d - 5 ? d : seg.end);
-  }
-
-  checkSkip() {
-    const s = this.skippable(this.video.currentTime);
-    const auto = s && (s.kind === 'intro' ? prefs.get('autoSkipIntro') && !this.introSkipped : prefs.get('autoSkipCredits') && !this.creditsSkipped);
-    if (auto) {
-      this.skipSegment(s);
-      toast(s.kind === 'intro' ? 'Skipped intro' : 'Skipped credits');
-      return;
-    }
-    if (this.skipBtn && this.skipKind !== s?.kind) {
-      const hadFocus = this.skipBtn.contains(document.activeElement);
-      this.skipBtn.remove();
-      this.skipBtn = null;
-      this.skipKind = null;
-      if (hadFocus) this.root.focus();
-    }
-    if (s && !this.skipBtn) {
-      const label = s.kind === 'intro' ? 'Skip Intro' : 'Skip Credits';
-      this.skipKind = s.kind;
-      this.skipBtn = h('button', { class: 'btn skip-intro', 'aria-keyshortcuts': 's', title: `${label} (s)`, onclick: (e) => {
-        e.stopPropagation();
-        // The segment as it is now, not when the button appeared.
-        const cur = this.skippable(this.video.currentTime);
-        if (cur) this.skipSegment(cur);
-      } }, label, h('span', { html: icons.next }));
-      // Early in Tab order, right after Close (it's positioned, so it doesn't move).
-      this.root.insertBefore(this.skipBtn, this.root.querySelector(':scope > .p-bot'));
-    }
-  }
-
-  // ---------- next episode ----------
-  checkUpNext() {
-    const next = this.detail?.next;
-    const d = this.duration(), t = this.video.currentTime;
-    if (this.live || !next || !d || this.upNextShown || this.upNextDismissed || this.video.paused || this.errEl) return;
-    const credits = this.credits();
-    const at = credits ? credits.start : d - Math.max(20, prefs.get('countdown') + 5);
-    if (t < at) return;
-    this.upNextShown = true;
-    this.upNextAt = at;
-    let n = prefs.get('countdown');
-    const autoplay = prefs.get('autoplayNext');
-    // Skipping credits with autoplay on: no countdown, the next episode starts now.
-    if (credits && autoplay && prefs.get('autoSkipCredits') && !this.creditsSkipped) {
-      this.creditsSkipped = true;
-      toast('Skipped credits');
-      this.playNext();
-      return;
-    }
-    // One text node: the button's flex gap would split 'Play in 9 s'.
-    const label = h('span', null, autoplay ? `Play in ${n}s` : 'Play now');
-    // Announced once, not on every tick of the countdown.
-    const live = h('span', { class: 'sr-only', 'aria-live': 'polite' });
-    const card = h('div', { class: 'upnext', role: 'region', 'aria-label': 'Up next', onclick: (e) => e.stopPropagation() },
-      h('img', { src: img(next, 'thumb', 480), alt: '' }),
-      h('div', { class: 'b' },
-        h('div', { class: 'small muted' }, 'Up next'),
-        h('b', null, `${fmtEpisode(next)} — ${next.title}`),
-        h('div', { class: 'row' },
-          h('button', { class: 'btn primary sm', onclick: () => this.playNext() }, h('span', { html: icons.play, style: { width: '16px', display: 'inline-flex' } }), label),
-          h('button', { class: 'btn sm', onclick: () => { this.cancelUpNext(true); this.playBtn.focus(); } }, 'Cancel'))),
-      live);
-    // Never cover an open menu.
-    this.closeMenu();
-    this.root.appendChild(card);
-    this.upNextEl = card;
-    setTimeout(() => { live.textContent = `Up next: ${fmtEpisode(next)} ${next.title}${autoplay ? `, playing in ${n} seconds` : ''}`; }, 100);
-    if (autoplay) {
-      this.cdTimer = setInterval(() => {
-        if (this.video.paused) return;
-        n--;
-        label.textContent = `Play in ${n}s`;
-        if (n <= 0) { clearInterval(this.cdTimer); this.playNext(); }
-      }, 1000);
-    }
-  }
-
-  // dismiss: the viewer cancelled Up next, so this episode just ends.
-  cancelUpNext(dismiss) {
-    clearInterval(this.cdTimer);
-    this.cdTimer = null;
-    this.upNextEl?.remove();
-    this.upNextEl = null;
-    if (dismiss) this.upNextDismissed = true;
-  }
-
-  onEnded() {
-    if (this.live) return this.nextProgram();
-    if (this.detail?.next && prefs.get('autoplayNext') && !this.upNextDismissed) this.playNext();
-    else this.onMovieEnd();
-  }
-
-  // Nothing plays next: offer the way out, or watching again. No auto-close.
-  onMovieEnd() {
-    this.cancelUpNext(false);
-    this.removeEndCard();
-    this.showUI(true);
-    if (!this.item || this.errEl) return;
-    const it = this.item;
-    const card = h('div', { class: 'upnext end-card', role: 'region', 'aria-label': 'Finished', onclick: (e) => e.stopPropagation() },
-      h('div', { class: 'b' },
-        h('div', { class: 'small muted' }, 'Finished'),
-        h('b', null, it.kind === 'episode' ? `${fmtEpisode(it)} — ${it.title}` : it.title),
-        h('div', { class: 'row' },
-          h('button', { class: 'btn primary sm', onclick: () => this.close() }, 'Back to details'),
-          h('button', { class: 'btn sm', onclick: () => { this.removeEndCard(); this.seekTo(0); this.video.play().catch(() => {}); } }, 'Play from start'),
-          // Autoplay off or Up next cancelled: the next episode is still a click away.
-          this.detail?.next ? h('button', { class: 'btn sm', onclick: () => this.playNext() }, `Play ${fmtEpisode(this.detail.next)}`) : null)));
-    this.closeMenu(false);
-    this.root.appendChild(card);
-    this.endCard = card;
-    card.querySelector('button').focus();
-  }
-
-  removeEndCard() {
-    if (!this.endCard) return;
-    const hadFocus = this.endCard.contains(document.activeElement);
-    this.endCard.remove();
-    this.endCard = null;
-    if (hadFocus) this.root.focus();
-  }
-
-  async playNext() {
-    if (this.live) return this.switchChannel(1);
-    const next = this.detail?.next;
-    if (!next || this.stopped) return;
-    if (this.shuffle) this.shuffle.pos++;
-    this.resetForNext();
-    const ud = next.userData;
-    await this.start(next.id, ud?.position > 0 ? ud.position : 0);
-    if (this.onClose) this.onChanged = true;
-  }
-
   // resetForNext ends the current title's session and clears what belonged
   // to it, before another title starts in the same player.
   resetForNext() {
@@ -2309,89 +2067,6 @@ class Player {
     this.stalls = { count: 0, secs: 0, since: 0 };
     this.causeToasted = false;
     this.teardown();
-  }
-
-  // ---------- Live TV ----------
-  // tune joins a channel at the program airing now (or at at, server Unix
-  // ms: the end of the program that just finished), as far into it as the
-  // server's clock says.
-  async tune(channelId, at = 0) {
-    const live = this.live;
-    live.channelId = channelId;
-    const token = live.token = (live.token || 0) + 1;
-    // Nothing of the next program has played: checkLive waits for it.
-    this.started = false;
-    this.showSpinner(true);
-    this.setStatus('');
-    try {
-      const r = await retryApi(`/api/tv/${encodeURIComponent(channelId)}${at ? `?at=${at}` : ''}`, undefined, {
-        cancelled: () => this.closed || token !== live.token,
-        onRetry: (n) => this.setStatus(`Reconnecting to the server… (attempt ${n + 1})`),
-      });
-      if (this.closed || token !== live.token) return;
-      // skew: how far this device's clock is ahead of the server's.
-      Object.assign(live, { channel: r.channel, now: r.now, next: r.next || null, skew: Date.now() - r.serverTime });
-      if (!live.channels.some((c) => c.id === r.channel.id)) live.channels = [r.channel];
-      await this.start(r.now.item.id, Math.max(0, this.livePosition()));
-    } catch (e) {
-      if (this.closed || token !== live.token) return;
-      // Live TV turned off, or nothing left to air: no point retrying.
-      if (e.status === 404) this.showError(e.message, { title: 'Live TV isn’t available', retry: false });
-      else this.planFailed(e);
-    }
-  }
-
-  // livePosition: where in the current program the broadcast is now (s).
-  livePosition() {
-    const { now, skew } = this.live;
-    return (Date.now() - skew - now.start) / 1000;
-  }
-
-  // The schedule moves on when the program's slot ends (a program running
-  // past midnight is cut there), or when its file ends.
-  checkLive() {
-    const live = this.live;
-    if (!live?.now || !this.started || this.stopped || this.errEl || live.switching) return;
-    const slot = (live.now.end - live.now.start) / 1000;
-    if (this.video.currentTime >= slot - 0.5) { this.nextProgram(); return; }
-    const behind = this.livePosition() - this.video.currentTime > 15;
-    if (this.liveBtn.classList.contains('behind') !== behind) {
-      this.liveBtn.classList.toggle('behind', behind);
-      this.liveBtn.textContent = behind ? 'Go live' : 'LIVE';
-      this.liveBtn.title = behind ? 'Jump to what’s on now' : 'Playing live';
-    }
-  }
-
-  async nextProgram() {
-    const live = this.live;
-    if (live.switching || this.stopped) return;
-    live.switching = true;
-    try {
-      this.resetForNext();
-      await this.tune(live.channelId, live.now?.end || 0);
-    } finally { live.switching = false; }
-  }
-
-  // Back to the live point: a seek within this program, or tuning in again
-  // once it has finished airing.
-  goLive() {
-    const live = this.live;
-    if (!live?.now) return;
-    const pos = this.livePosition();
-    if (pos < (live.now.end - live.now.start) / 1000 - 5) {
-      this.seekTo(pos);
-      this.video.play().catch(() => {});
-    } else this.nextProgram();
-  }
-
-  async switchChannel(dir) {
-    const { channels, channelId } = this.live;
-    if (channels.length < 2 || this.stopped) return;
-    const i = channels.findIndex((c) => c.id === channelId);
-    const ch = channels[(i + dir + channels.length) % channels.length];
-    toast(`${ch.number} · ${ch.name}`);
-    this.resetForNext();
-    await this.tune(ch.id);
   }
 
   setupMediaSession() {
@@ -2453,5 +2128,14 @@ class Player {
     document.body.style.overflow = '';
     if (current === this) current = null;
     if (this.onClose) this.onClose();
+  }
+}
+
+// Features kept in player/*.js, installed as Player methods (non-enumerable,
+// like the class's own), so they share the player's state through this.
+for (const part of [liveTv, upNext, skipSegments, chapters, trickplay]) {
+  for (const [name, desc] of Object.entries(Object.getOwnPropertyDescriptors(part))) {
+    if (Object.hasOwn(Player.prototype, name)) throw new Error(`Player.${name} is defined twice`);
+    Object.defineProperty(Player.prototype, name, { ...desc, enumerable: false });
   }
 }

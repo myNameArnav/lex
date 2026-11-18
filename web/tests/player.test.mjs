@@ -891,3 +891,15 @@ test('discarded video with transcoding off explains what happened instead of the
   await g.player.onStreamError('media error 3', 0, true, false);
   assert.match(g.errors[0], /transcoding is disabled/);
 });
+
+test('feature modules in player/ are installed as Player methods, like its own', async () => {
+  const { player } = await fixture();
+  const proto = Object.getPrototypeOf(player);
+  for (const name of ['tune', 'goLive', 'switchChannel', 'checkUpNext', 'playNext', 'onMovieEnd', 'checkSkip', 'credits', 'chapters', 'jumpChapter', 'loadTrickplay', 'renderThumb']) {
+    const desc = Object.getOwnPropertyDescriptor(proto, name);
+    assert.equal(typeof desc?.value, 'function', name);
+    assert.equal(desc.enumerable, false, name);
+  }
+  // Own methods stay where they were.
+  assert.equal(Object.getOwnPropertyDescriptor(proto, 'seekTo').enumerable, false);
+});
