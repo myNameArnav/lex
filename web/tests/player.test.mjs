@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import vm from 'node:vm';
+import * as substyle from '../static/js/substyle.js';
 import { subtitleChoice } from '../static/js/track-memory.js';
 
 // Run the actual Player methods with a native video whose play() stays
@@ -72,6 +73,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
     './caps.js': { detectCaps: () => ({ mse: true }) },
     './buffering.js': { bufferingCause: () => null },
     './audio-fx.js': { AudioFX: class {}, audioFxSupported: () => false, fxLabel: () => '' },
+    './substyle.js': { ...substyle },
     './pgs.js': { PgsRenderer: class { setTrack() {} setOffset() {} destroy() {} } },
     './track-memory.js': { trackKey: () => 'show', trackPrefs: (key, get) => ({ audioLang: get('audioLang'), subLang: get('subLang'), subMode: get('subMode'), subOffset: 0 }),
       rememberTracks: (key, patch) => remembered.push([key, patch]), subtitleChoice },
