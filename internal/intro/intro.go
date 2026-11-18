@@ -217,6 +217,22 @@ func chapterIntro(f *store.File) *Segment {
 	return chapterSegment(f, "intro", reIntroChapter, 5, 240)
 }
 
+// CreditsStart is where an item's end credits start for file f: the
+// detected (or stored chapter) segment, else a Credits chapter of f, else 0.
+func CreditsStart(db *sql.DB, itemID int64, f *store.File) float64 {
+	for _, s := range Segments(db, itemID) {
+		if s.Kind == "credits" && s.Start > 0 {
+			return s.Start
+		}
+	}
+	if f != nil {
+		if seg := chapterCredits(f); seg != nil {
+			return seg.Start
+		}
+	}
+	return 0
+}
+
 // chapterCredits only accepts a chapter in the last third, so a chapter
 // named "Ending" in the middle of a film isn't taken for the credits.
 func chapterCredits(f *store.File) *Segment {
