@@ -34,8 +34,8 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 The publication script checks working files and branch/tag history for private
 deployment addresses, home paths, runtime/configuration files and personal
 commit attribution; `--since origin/main` checks only the branch's commits, as
-CI does. Pull requests merged on GitHub record the maintainer's GitHub no-reply
-address, which the check allows. It complements manual review and cannot
+CI does. Commit emails must be a GitHub no-reply address (or the old neutral
+`Lex contributors` one); any name is fine. It complements manual review and cannot
 detect every form of PII.
 
 Never `git push --mirror`: application checkpoint refs are local metadata.

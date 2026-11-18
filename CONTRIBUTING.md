@@ -26,10 +26,7 @@ CI runs these plus secret and vulnerability scans on every pull request.
 
 Use synthetic usernames, media paths and fixtures, and keep data directories,
 credentials, logs and personal media out of commits, screenshots and issues.
-Commits use the neutral `Lex contributors` identity; if the publication check
-flags yours, set it for this checkout only (`git config user.name` /
-`user.email`), not globally. See the [publication audit](docs/PUBLISH_AUDIT.md)
-for what the check covers.
+See the [publication audit](docs/PUBLISH_AUDIT.md) for what the check covers.
 
 ## Code layout
 

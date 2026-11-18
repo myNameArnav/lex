@@ -137,15 +137,16 @@ for record in log.split(b"\0"):
             labels_of_blob[blob] = content_labels(objects.read(blob))
         for label in labels_of_path[path] + labels_of_blob[blob]:
             violations.append((commit[:12], path, label))
-    neutral = identities == ["Lex contributors", "contributors@example.invalid", "Lex contributors", "contributors@example.invalid"]
-    # Pull requests merged on GitHub are committed by GitHub for the
-    # maintainer's account. Allowed as long as only GitHub's no-reply
-    # address is recorded, never a personal email.
+    # Any name is fine (e.g. a GitHub username), but the recorded emails must
+    # not be personal: the neutral project address, a GitHub no-reply
+    # address, or GitHub itself as committer of a web merge.
     # (Addresses are split so this file doesn't trip its own email scan.)
-    github_merge = (identities[1].endswith("@" "users.noreply.github.com")
-                    and identities[2:] == ["GitHub", "noreply" "@" "github.com"])
-    if not (neutral or github_merge):
-        violations.append((commit[:12], "commit metadata", "non-neutral author/committer identity"))
+    def public_email(email):
+        return (email == "contributors" "@example.invalid"
+                or email == "noreply" "@" "github.com"
+                or email.endswith("@" "users.noreply.github.com"))
+    if not (public_email(identities[1]) and public_email(identities[3])):
+        violations.append((commit[:12], "commit metadata", "author/committer email isn't a GitHub no-reply address"))
 
 # The Go version named in the docs and the Dockerfile must match go.mod,
 # which a local toolchain has to satisfy (GOTOOLCHAIN=local fails otherwise).
