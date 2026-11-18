@@ -15,6 +15,7 @@ import (
 	"lex/internal/library"
 	"lex/internal/store"
 	"lex/internal/stream"
+	"lex/internal/sysstats"
 )
 
 type planReq struct {
@@ -207,7 +208,14 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 	// it's buffering instead of blaming the viewer's connection.
 	if s.Stats != nil {
 		snap := s.Stats.Snapshot()
-		if strains := snap.Strains(); len(strains) > 0 {
+		// High I/O wait may be another drive's: judge the disk by the one
+		// this stream reads from (the SSD cache copy or the original).
+		dev := ""
+		if f, ferr := s.St.File(sess.FileID); ferr == nil {
+			dev = sysstats.Device(s.Cache.Peek(f))
+		}
+		strains := snap.StrainsReading(dev)
+		if len(strains) > 0 {
 			resp["host"] = strains
 		}
 		// Admins see the server's load in stats for nerds.
