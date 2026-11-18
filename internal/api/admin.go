@@ -592,14 +592,54 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 	if t == nil {
 		t = []store.TokenInfo{}
 	}
-	// Mark the caller's own session so the UI can say "This device".
+	s.markCurrent(r, t)
+	writeJSON(w, t)
+}
+
+// markCurrent marks the caller's own session so the UI can say "This device".
+func (s *Server) markCurrent(r *http.Request, t []store.TokenInfo) {
 	if tok := s.token(r); tok != "" {
 		id := store.DeviceID(tok)
 		for i := range t {
 			t[i].Current = t[i].Prefix == id
 		}
 	}
+}
+
+// myDevices lists the caller's own signed-in devices (any user).
+func (s *Server) myDevices(w http.ResponseWriter, r *http.Request) {
+	t, err := s.St.UserTokens(userOf(r).ID)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if t == nil {
+		t = []store.TokenInfo{}
+	}
+	s.markCurrent(r, t)
 	writeJSON(w, t)
+}
+
+// deleteMyDevice signs out one of the caller's own devices.
+func (s *Server) deleteMyDevice(w http.ResponseWriter, r *http.Request) {
+	switch err := s.St.DeleteUserToken(userOf(r).ID, r.PathValue("prefix")); {
+	case errors.Is(err, store.ErrNotFound):
+		writeErr(w, 404, "no such device")
+	case err != nil:
+		writeErr(w, 400, err.Error())
+	default:
+		writeJSON(w, map[string]bool{"ok": true})
+	}
+}
+
+// signOutOthers signs the caller out on every device but this one.
+func (s *Server) signOutOthers(w http.ResponseWriter, r *http.Request) {
+	n, err := s.St.DeleteOtherTokens(userOf(r).ID, s.token(r))
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, map[string]int64{"signedOut": n})
 }
 
 func (s *Server) deleteDevice(w http.ResponseWriter, r *http.Request) {

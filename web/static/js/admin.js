@@ -299,7 +299,8 @@ const PW_RULE = { minlength: 12, maxlength: 72 };
 const PW_MSG = 'Use 12–72 bytes (at least 12 characters).';
 const pwLength = (v) => { const n = new TextEncoder().encode(v).length; return n >= 12 && n <= 72; };
 
-function accountSection() {
+async function accountSection() {
+  const devs = await api('/api/me/devices');
   const cur = h('input', { type: 'password', name: 'current-password', autocomplete: 'current-password', required: true });
   const n1 = h('input', { type: 'password', name: 'new-password', autocomplete: 'new-password', required: true, ...PW_RULE });
   const n2 = h('input', { type: 'password', name: 'confirm-password', autocomplete: 'new-password', required: true, ...PW_RULE });
@@ -323,7 +324,38 @@ function accountSection() {
     // Lets password managers file the new password under this account.
     h('input', { type: 'text', name: 'username', autocomplete: 'username', value: state.me.name, hidden: true, readonly: true, tabindex: -1 }),
     field('Current password', cur), field('New password', n1, 'Use 12–72 bytes.'), field('Confirm new password', n2),
-    formActions(btn, errors.err)));
+    formActions(btn, errors.err)), myDevices(devs));
+}
+
+// "Your devices" on the Account page: the user's own sessions, each with Sign
+// out, plus Sign out everywhere else. Admins also see everyone's on Devices.
+function myDevices(devs) {
+  const signOut = async (e, d) => {
+    const btn = e.currentTarget;
+    if (d.current) {
+      if (await run(btn, () => api('/api/auth/logout', { method: 'POST' }))) { setLeaveGuard(null); location.hash = ''; location.reload(); }
+      return;
+    }
+    if (!(await confirmDialog(`Sign out ${d.client} (${d.ip})? It will need to sign in again.`, 'Sign out', true, 'Sign out device?'))) return;
+    if (!(await run(btn, () => api(`/api/me/devices/${d.prefix}`, { method: 'DELETE' }), `Signed out ${d.client}`))) return;
+    const i = devs.indexOf(d), next = devs[i + 1] || devs[i - 1];
+    if (next) focusAfterRoute(`my-device-${next.prefix}`);
+    refreshSoft();
+  };
+  const others = devs.filter((d) => !d.current).length;
+  const signOutOthers = async (e) => {
+    if (!(await confirmDialog(`Sign out ${others === 1 ? 'your other device' : `your ${others} other devices`}? You stay signed in here.`, 'Sign out', true, 'Sign out everywhere else?'))) return;
+    if (await run(e.currentTarget, () => api('/api/me/devices', { method: 'DELETE' }), 'Signed out everywhere else')) refreshSoft();
+  };
+  return h('div', { class: 'form-section' }, h('h2', null, 'Your devices'),
+    h('p', { class: 'muted', style: { margin: 0 } }, 'Where you’re signed in. Sign out a lost or shared device here; changing your password also signs out every other device.'),
+    h('div', { class: 'table-wrap' }, h('table', { class: 'tbl stack' }, h('tr', null, h('th', null, 'Client'), h('th', null, 'IP'), h('th', null, 'Signed in'), h('th', null, 'Last seen'), actionsTh()),
+      devs.map((d) => h('tr', null,
+        h('td', null, h('b', null, d.client), d.current ? [' ', h('span', { class: 'chip this-device' }, 'This device')] : null),
+        h('td', { class: 'mono' }, d.ip), h('td', { 'data-label': 'Signed in' }, fmtDate(d.created)), h('td', { 'data-label': 'Last seen' }, timeAgo(d.lastSeen)),
+        h('td', null, h('div', { class: 'row wrap tbl-actions' }, h('button', { class: 'btn sm danger', dataset: { focusKey: `my-device-${d.prefix}` },
+          'aria-label': d.current ? 'Sign out here (this device)' : `Sign out ${d.client} (${d.ip})`, onclick: (e) => signOut(e, d) }, d.current ? 'Sign out here' : 'Sign out'))))))),
+    others ? h('div', { class: 'row wrap' }, h('button', { class: 'btn danger', type: 'button', onclick: signOutOthers }, 'Sign out everywhere else')) : null);
 }
 
 // ---------- server config (shared by several sections) ----------
@@ -718,7 +750,9 @@ async function metadataSection() {
       field('OpenSubtitles API key', text('openSubtitlesKey', { type: 'password', autocomplete: 'off' })),
       h('div', { class: 'form-grid' },
         field('OpenSubtitles username', text('openSubtitlesUser', { autocomplete: 'off' })),
-        field('OpenSubtitles password', text('openSubtitlesPass', { type: 'password', autocomplete: 'new-password' })))),
+        field('OpenSubtitles password', text('openSubtitlesPass', { type: 'password', autocomplete: 'new-password' }))),
+      field('Who can download subtitles', select(draft.subtitleDownloads, [['everyone', 'Everyone'], ['admins', 'Admins only']], (v) => { draft.subtitleDownloads = v; }),
+        'Downloads use this server’s one OpenSubtitles account and its daily allowance, and are added to the file for everyone. Users can still remove subtitles they downloaded.')),
     h('div', { class: 'form-section' }, h('h2', null, 'Seek previews'),
       h('p', { class: 'help', style: { margin: 0 } }, 'Thumbnails shown while hovering or dragging the seek bar. Generated in the background from keyframes only, at the lowest priority, and paused during playback (except for files in the SSD cache). About 1–3 MB per movie.'),
       tg('trickplayEnabled', 'Generate seek previews'),

@@ -10,6 +10,7 @@ import { MseEngine, clock } from './mse.js';
 import { bufferingCause } from './buffering.js';
 import { AudioFX, audioFxSupported, fxLabel } from './audio-fx.js';
 import { PgsRenderer } from './pgs.js';
+import { versionLabel, orderFiles, chosenFile, rememberFile } from './versions.js';
 
 let current = null;
 
@@ -456,8 +457,8 @@ class Player {
       this.detail = d;
       this.item = d.item;
       this.segments = d.segments || [];
-      this.files = d.files || [];
-      this.file = this.files[0];
+      this.files = orderFiles(d.files || []);
+      this.file = chosenFile(this.item.id, this.files);
       if (!this.file) throw new Error('No playable file for this item');
       const aud = pickAudio(this.file, prefs.get('audioLang'));
       this.audio = aud === -1 ? -1 : aud.index;
@@ -1109,6 +1110,10 @@ class Player {
     };
     const failed = (e) => {
       status.textContent = '';
+      if (e.code === 'not_allowed') {
+        list.append(h('div', { class: 'sub-err', role: 'alert' }, 'Only admins can download subtitles on this server.'));
+        return;
+      }
       if (e.code === 'no_key') {
         list.append(h('div', { class: 'sub-err', role: 'alert' }, state.me?.isAdmin
           ? ['Subtitle search isn’t set up yet. Add an OpenSubtitles API key in ', h('a', { href: '#/settings/metadata', onclick: (ev) => { ev.preventDefault(); this.goTo('#/settings/metadata'); } }, 'Settings › Metadata'), '.']
@@ -1135,12 +1140,21 @@ class Player {
             btn.disabled = true; btn.textContent = 'Downloading…';
             try {
               const st = await api(`/api/files/${this.file.id}/subsearch`, { method: 'POST', body: { fileId: r.fileId, language: r.language, release: r.release || r.fileName, hearingImpaired: r.hearingImpaired } });
-              this.file.subtitles = [...(this.file.subtitles || []), st];
+              const { remaining, ...track } = st;
+              if (remaining != null) state.subsRemaining = remaining;
+              this.file.subtitles = [...(this.file.subtitles || []), track];
               this.syncFileSubs();
               m.close();
-              await this.chooseSubtitle(st.index);
-              toast('Subtitles added');
+              await this.chooseSubtitle(track.index);
+              toast(remaining != null ? `Subtitles added · ${remaining} download${remaining === 1 ? '' : 's'} left today` : 'Subtitles added');
             } catch (e) {
+              if (e.code === 'quota') {
+                state.subsRemaining = 0;
+                allowance.textContent = allowanceText();
+                list.prepend(h('div', { class: 'sub-err', role: 'alert' }, 'Today’s OpenSubtitles download allowance has run out. It renews within 24 hours; subtitles already downloaded still work.'));
+                btn.textContent = 'Use';
+                return;
+              }
               toast(e.message, 'error');
               btn.disabled = false; btn.textContent = 'Use';
             }
@@ -1155,13 +1169,18 @@ class Player {
         failed(e);
       }
     };
+    // The allowance is shared by the server, known only from the last
+    // download (this session): shown so nobody spends the last few blindly.
+    const allowanceText = () => (state.subsRemaining == null ? '' : state.subsRemaining > 0
+      ? `${state.subsRemaining} download${state.subsRemaining === 1 ? '' : 's'} left today on this server` : 'No downloads left today on this server');
+    const allowance = h('div', { class: 'small muted' }, allowanceText());
     // A filter for this search, not the preferred subtitle language.
     langSel.onchange = search;
     if (wasPlaying) this.video.pause();
     const m = modal({
       title: 'Search subtitles', wide: true, parent: this.root,
       body: [h('div', { class: 'row wrap', style: { gap: '10px', alignItems: 'center' } },
-        h('label', { class: 'row', style: { gap: '10px' } }, h('span', { class: 'muted' }, 'Language'), langSel), h('div', { class: 'spacer' }), status), downloaded, list],
+        h('label', { class: 'row', style: { gap: '10px' } }, h('span', { class: 'muted' }, 'Language'), langSel), h('div', { class: 'spacer' }), status), allowance, downloaded, list],
       onClose: () => {
         if (this.closed) return;
         // The menu item that opened this is gone: back to the CC button.
@@ -1953,7 +1972,7 @@ class Player {
         return page('Chapters', list.map((c, i) => ({ label: c.label, right: fmtTime(c.start), active: i === cur, on: () => { this.seekTo(c.start); this.closeMenu(); } })));
       }
       case 'version':
-        return page('Version', this.files.map((f) => ({ label: `${resLabel(f.width, f.height)} ${(f.vcodec || '').toUpperCase()}`, right: fmtBytes(f.size), active: this.file.id === f.id, on: () => { this.file = { ...f, subtitles: f.subtitles }; this.chaptersDrawn = false; this.closeMenu(); this.replan(); } })));
+        return page('Version', this.files.map((f) => ({ label: versionLabel(f, this.files, { size: false }), right: fmtBytes(f.size), active: this.file.id === f.id, on: () => { this.file = { ...f, subtitles: f.subtitles }; rememberFile(this.item.id, f.id, this.files); this.chaptersDrawn = false; this.closeMenu(); this.replan(); } })));
     }
     m.append(h('div', { class: 'pm-title' }, 'Settings'));
     m.append(row('Quality', this.qualityLabel(this.quality), 'quality'));
@@ -1961,7 +1980,7 @@ class Player {
     m.append(row('Speed', this.video.playbackRate === 1 ? 'Normal' : `${this.video.playbackRate}x`, 'speed'));
     const chaps = this.chapters();
     if (chaps.length > 1) m.append(row('Chapters', chaps[this.chapterAt(this.video.currentTime, chaps)]?.label || chaps[0].label, 'chapters'));
-    if (this.files.length > 1) m.append(row('Version', `${resLabel(this.file.width, this.file.height)} ${(this.file.vcodec || '').toUpperCase()}`, 'version'));
+    if (this.files.length > 1) m.append(row('Version', versionLabel(this.files.find((f) => f.id === this.file.id) || this.file, this.files, { size: false }), 'version'));
     m.append(h('div', { class: 'pm-sep' }));
     m.append(sw('Stats for nerds', !!this.statsEl, () => this.toggleStats(), 'Shortcut: I'));
     m.append(sw('Autoplay next episode', prefs.get('autoplayNext'), (v) => { prefs.set('autoplayNext', v); if (!v) this.cancelUpNext(false); }));

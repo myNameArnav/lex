@@ -379,6 +379,8 @@ a.az:focus-visible { outline-offset: 0; }
 .collection-link a, .plain-link, .compat p a { color: var(--accent); }
 .collection-link a:hover, .plain-link:hover, .compat p a:hover { text-decoration: underline; }
 .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0 10px; }
+.version-pick { gap: 10px; align-items: center; margin: 0 0 10px; max-width: 100%; }
+.version-pick select { min-width: 0; max-width: min(100%, 420px); text-overflow: ellipsis; }
 .people { display: flex; gap: 14px; overflow-x: auto; padding: 4px 34px 14px; scrollbar-width: none; }
 .people::-webkit-scrollbar { display: none; }
 .people:focus-visible { outline-offset: -2px; border-radius: 8px; }

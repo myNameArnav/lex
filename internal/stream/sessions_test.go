@@ -360,3 +360,34 @@ func TestShutdownRecordsOpenSessions(t *testing.T) {
 		t.Fatalf("open after shutdown: %v", err)
 	}
 }
+
+func TestNearEnd(t *testing.T) {
+	for _, c := range []struct {
+		name              string
+		pos, dur, credits float64
+		want              bool
+	}{
+		// 2h30 film, no credits known: 12 minutes before the end isn't the end.
+		{"long film 12 min left", 9000 - 720, 9000, 0, false},
+		{"long film 5 min left", 9000 - 300, 9000, 0, true},
+		// 92% still applies when it's under five minutes.
+		{"40 min episode at 93%", 2232, 2400, 0, true},
+		{"40 min episode at 90%", 2160, 2400, 0, false},
+		// Over 20 minutes, the last two minutes always count.
+		{"21 min episode, 110 s left", 1150, 1260, 0, true},
+		{"short clip at 95%", 95, 100, 0, true},
+		// Known credits: reaching them is the end, earlier isn't.
+		{"film at credits", 8400, 9000, 8400, true},
+		{"film just before credits", 8300, 9000, 8400, false},
+		// Long credits on a short episode: stopping when they roll finishes it.
+		{"episode with long credits", 1200, 1500, 1200, true},
+		// A "credits" mark in the first half is ignored (fallback rule).
+		{"early credits ignored", 1000, 9000, 1000, false},
+		{"no duration", 100, 0, 0, false},
+		{"start", 0, 100, 0, false},
+	} {
+		if got := nearEnd(c.pos, c.dur, c.credits); got != c.want {
+			t.Errorf("%s: nearEnd(%v, %v, %v) = %v, want %v", c.name, c.pos, c.dur, c.credits, got, c.want)
+		}
+	}
+}
