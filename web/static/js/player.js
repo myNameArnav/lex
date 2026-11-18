@@ -1642,20 +1642,25 @@ class Player {
     if (!this.plan) return;
     prefs.set('showStats', true);
     const stop = (on) => (e) => { e.stopPropagation(); on(e); };
-    this.statsDot = h('span', { class: 'ps-dot' });
     this.statsSum = h('span', { class: 'ps-sum' });
     this.statsCanvas = h('canvas');
-    this.statsBody = h('div', { class: 'ps-body' });
+    this.statsIssues = h('div', { class: 'ps-issues', role: 'status' });
+    this.statsTiles = h('div', { class: 'ps-tiles' });
+    this.statsMethod = h('div', { class: 'ps-method' });
+    this.statsSecs = new Map();
+    this.statsSecBox = h('div', { class: 'ps-secs' });
+    this.statsBody = h('div', { class: 'ps-body' }, this.statsTiles, this.statsMethod, this.statsSecBox);
     const compact = !!prefs.get('statsCompact');
     const toggle = h('button', { class: 'ps-toggle', title: 'Collapse / expand', 'aria-expanded': String(!compact), onclick: stop(() => {
       const c = this.statsEl.classList.toggle('compact');
       toggle.setAttribute('aria-expanded', String(!c));
       prefs.set('statsCompact', c);
-    }) }, this.statsDot, this.statsSum);
+    }) }, this.statsSum);
     this.statsEl = h('div', { class: `p-stats${compact ? ' compact' : ''}`, onclick: (e) => e.stopPropagation() },
       h('div', { class: 'ps-head' }, toggle,
         h('button', { class: 'ps-btn', title: 'Copy stats as text', onclick: stop(() => this.copyStats()) }, 'Copy'),
         h('button', { class: 'ps-btn ps-close', title: 'Close (I)', 'aria-label': 'Close stats (I)', html: icons.close, onclick: stop(() => this.toggleStats()) })),
+      this.statsIssues,
       h('div', { class: 'ps-graph' }, h('div', { class: 'ps-cap' }, 'Buffer · last 90s'), this.statsCanvas),
       this.statsBody);
     this.root.appendChild(this.statsEl);
@@ -1681,7 +1686,8 @@ class Player {
     const t = v.currentTime, d = this.duration(), method = METHOD_LABEL[p.method];
     const sections = [];
     let rows;
-    const sec = (title) => { rows = []; sections.push({ title, rows }); };
+    const sec = (title) => { rows = []; sections.push({ title, rows, sum: '' }); };
+    const sum = (text) => { sections[sections.length - 1].sum = text; };
     const r = (k, val, sub = '', lvl = '', full = '') => rows.push({ k, v: val, sub, lvl, full });
 
     // Health. A short buffer is fine once the rest of the file is in it.
@@ -1703,6 +1709,7 @@ class Player {
     const summary = `${status} · ${secs(cs.bufferAhead)} buffered · ${plural(cs.bufferEvents, 'stall')} · ${cs.droppedFrames} dropped`;
 
     sec('Playback');
+    sum(`${method} · ${fmtTime(t)} / ${fmtTime(d)}`);
     r('Method', method, p.remote ? 'remote' : 'local');
     if (p.reasons?.length) { const why = p.reasons.map(reasonLabel).join('; '); r('Why', why, '', '', why); }
     r('Position', `${fmtTime(t)} / ${fmtTime(d)}`, v.playbackRate !== 1 ? `${v.playbackRate}x` : '');
@@ -1723,7 +1730,9 @@ class Player {
         `${es.throttled ? 'buffer full · ' : ''}${idle && es.bandwidth ? `last ${fmtBitrate(es.bandwidth)} · ` : ''}${fmtBytes(es.bytes)} total`);
       const ranges = es.ranges.map(([s, e]) => `${fmtTime(s)}–${fmtTime(e)}`).join(', ') || '—';
       r('Ranges', ranges, '', '', ranges);
+      sum(`${secs(cs.bufferAhead)} ahead · ${es.throttled ? 'download paused' : es.fetching ? fmtBitrate(es.bandwidth) : 'idle'}`);
     } else {
+      sum(`${secs(cs.bufferAhead)} ahead`);
       r('Ahead', secs(cs.bufferAhead), 'browser managed', bufLvl);
     }
     if (es?.fileBytes != null) r('File read', fmtBytes(es.fileBytes), `range requests${es.fileRate ? ` at ${fmtBitrate(es.fileRate * 8)}` : ''} · remuxer memory ${fmtBytes(es.remuxHeap)}`);
@@ -1741,6 +1750,7 @@ class Player {
     if (p.limitKbps) r('Bitrate limit', fmtBitrate(p.limitKbps * 1000));
 
     sec('Video');
+    if (vs) sum(`${vs.codec.toUpperCase()} ${vs.height}p → ${p.videoOut && / \(copy\)$/.test(p.videoOut) ? 'copied' : (p.videoOut || '?')}`);
     if (vs) r('Source', `${vs.codec.toUpperCase()} ${vs.profile || ''} ${vs.width}x${vs.height}`.replace(/\s+/g, ' '),
       `${vs.frameRate ? vs.frameRate.toFixed(3).replace(/\.?0+$/, '') + 'fps · ' : ''}${vs.bitDepth || 8}-bit ${vs.hdr || 'SDR'}`);
     r('Output', copied(p.videoOut));
@@ -1753,37 +1763,100 @@ class Player {
     r('Dropped', plural(cs.droppedFrames, 'frame'), `${cs.totalFrames} decoded · ${dropPct.toFixed(2)}%`, dropLvl);
 
     sec('Audio');
+    if (as) sum(`${as.codec.toUpperCase()} ${channelName(as.channels)} → ${p.audioOut && / \(copy\)$/.test(p.audioOut) ? 'copied' : (p.audioOut || 'none')}`);
     if (as) r('Source', `${as.codec.toUpperCase()} ${channelName(as.channels)}`, [as.sampleRate ? as.sampleRate / 1000 + 'kHz' : '', langName(as.language)].filter(Boolean).join(' · '));
     r('Output', copied(p.audioOut) || 'none');
     if (this.fx.active) r('Effects', fxLabel(this.fx.state), 'in the browser');
 
     if (j) {
       sec('Server (ffmpeg)');
+      sum(j.exited ? (j.error ? 'failed' : 'finished') : j.throttled ? 'waiting for the player' : `${(j.speed || 0).toFixed(1)}x · ${secs(Math.max(0, done - t))} ready ahead`);
       r('State', j.exited ? (j.error ? `exited: ${j.error}` : 'finished') : j.throttled ? 'throttled' : 'running', j.throttled ? 'waiting for client' : '', j.error ? 'bad' : '', j.error || '');
       r('Speed', `${(j.speed || 0).toFixed(j.speed >= 10 ? 0 : 1)}x`, `${Math.round(j.fps || 0)} fps · CPU ${Math.round(j.cpu || 0)}%`, jobLvl);
       r('Ready to', fmtTime(done), `${secs(Math.max(0, done - t))} ahead`);
     }
 
     sec('Session');
+    sum(p.sessionId.slice(0, 8));
     r('ID', p.sessionId.slice(0, 8), es ? plural(es.restarts, 'restart') : '', '', p.sessionId);
-    return { lvl, summary, sections, es };
+    // The few numbers worth watching, as tiles above the sections.
+    const tiles = [
+      { k: 'Buffer', v: secs(cs.bufferAhead), sub: es ? `of ${secs(es.target)}` : 'ahead', lvl: bufLvl },
+      es ? { k: 'Download', v: es.throttled ? 'paused' : es.fetching ? fmtBitrate(es.bandwidth) : 'idle', sub: es.throttled ? 'buffer full' : fmtBytes(es.bytes) }
+        : { k: 'Server rate', v: fmtBitrate(this.serverRate * 8), sub: 'to this player' },
+      { k: 'Stalls', v: String(cs.bufferEvents), sub: `${cs.bufferSeconds.toFixed(1)}s total`, lvl: cs.buffering ? 'bad' : cs.bufferEvents ? 'warn' : '' },
+      { k: 'Dropped', v: `${dropPct.toFixed(dropPct && dropPct < 1 ? 2 : 0)}%`, sub: plural(cs.droppedFrames, 'frame'), lvl: dropLvl },
+    ];
+    // Whatever is wrong, in words, so nobody has to scan the rows for color.
+    const issues = [];
+    const hostDisk = this.host.some((x) => x.kind === 'disk');
+    if (cause) issues.push({ lvl: cs.buffering ? 'bad' : 'warn', text: `${cs.buffering ? 'Buffering' : 'Stalled'}: ${cause.text}${cause.hint ? ` ${cause.hint}` : ''}` });
+    else if (cs.buffering) issues.push({ lvl: 'bad', text: 'Buffering: waiting for data.' });
+    else if (bufLvl) issues.push({ lvl: bufLvl, text: 'The buffer is running low.' });
+    if (dropLvl) issues.push({ lvl: dropLvl, text: `This device drops ${dropPct.toFixed(1)}% of frames: it is struggling to decode or draw the video.` });
+    if (jobLvl === 'bad') issues.push({ lvl: 'bad', text: `The server's conversion failed: ${j.error}` });
+    else if (jobLvl) issues.push({ lvl: 'warn', text: `The server converts slower than playback (${(j.speed || 0).toFixed(1)}x).` });
+    for (const x of this.host) issues.push({ lvl: 'warn', text: x.text });
+    if (diskLvl && !hostDisk) issues.push({ lvl: diskLvl, text: `The server spends ${Math.round(this.diskWait * 100)}% of its time on this stream waiting for the disk.` });
+    const why = p.reasons?.length ? p.reasons.map(reasonLabel).join('; ') : '';
+    return { lvl, status, summary, sections, es, tiles, issues, method: `${method} · ${p.remote ? 'remote' : 'local'}`, why };
   }
 
+  // The panel opens on a summary: what's wrong (if anything), the buffer
+  // graph, four headline numbers and how it plays. Each section of detail
+  // is one line until opened; which ones are open is remembered.
   renderStats(cs) {
     if (!this.plan) return;
     const m = this.statsModel(cs);
-    this.statsDot.className = `ps-dot ${m.lvl}`;
-    this.statsSum.textContent = m.summary;
-    const rows = [];
-    for (const s of m.sections) {
-      rows.push(h('tr', null, h('td', { class: 'hd', colspan: 2 }, s.title)));
-      for (const row of s.rows) {
-        const text = row.sub ? `${row.v} · ${row.sub}` : row.v;
-        rows.push(h('tr', null, h('td', null, row.k),
-          h('td', { class: row.lvl || null, title: row.full || text }, row.v, row.sub ? ' ' : null, row.sub ? h('span', { class: 'sub' }, row.sub) : null)));
-      }
+    // Expanded, the tiles carry the numbers; collapsed, the header does.
+    if (this.statsSum.dataset.v !== m.summary) {
+      this.statsSum.dataset.v = m.summary;
+      // The status word carries the level in its color.
+      clear(this.statsSum).append(h('span', { class: `ps-status ${m.lvl}` }, m.status), h('span', { class: 'ps-sum-more' }, m.summary.slice(m.status.length)));
     }
-    clear(this.statsBody).appendChild(h('table', null, h('colgroup', null, h('col', { class: 'k' }), h('col')), rows));
+    const put = (el, ...kids) => clear(el).append(...kids.flat().filter(Boolean));
+    this.statsIssues.hidden = !m.issues.length;
+    put(this.statsIssues, m.issues.map((x) => h('div', { class: `ps-issue ${x.lvl}` }, x.text)));
+    put(this.statsTiles, m.tiles.map((x) => h('div', { class: `ps-tile ${x.lvl || ''}` },
+      h('span', { class: 'k' }, x.k), h('b', null, x.v), h('span', { class: 'sub' }, x.sub))));
+    put(this.statsMethod, m.method, m.why ? h('span', { class: 'sub' }, ` · ${m.why}`) : null);
+    // Sections update in place, so a focused header keeps focus between ticks.
+    const open = new Set(prefs.get('statsOpen') || []);
+    const want = m.sections.map((sec) => {
+      let el = this.statsSecs.get(sec.title);
+      if (!el) {
+        const id = `ps-sec-${this.statsSecs.size}`;
+        const btn = h('button', { class: 'ps-sec-h', 'aria-controls': id, onclick: (e) => {
+          e.stopPropagation();
+          const now = new Set(prefs.get('statsOpen') || []);
+          if (now.has(sec.title)) now.delete(sec.title); else now.add(sec.title);
+          prefs.set('statsOpen', [...now]);
+          this.renderStats(this.clientStats());
+        } }, h('span', { class: 'chev', html: icons.chevR }), h('span', { class: 't' }, sec.title), h('span', { class: 's' }));
+        el = { box: h('div', { class: 'ps-sec' }, btn, h('div', { id, class: 'ps-sec-b' })), btn };
+        this.statsSecs.set(sec.title, el);
+      }
+      const isOpen = open.has(sec.title);
+      const lvl = sec.rows.some((r) => r.lvl === 'bad') ? 'bad' : sec.rows.some((r) => r.lvl === 'warn') ? 'warn' : '';
+      el.box.classList.toggle('open', isOpen);
+      el.btn.setAttribute('aria-expanded', String(isOpen));
+      const sumEl = el.btn.querySelector('.s');
+      // Something off inside shows as the summary's color.
+      sumEl.className = `s ${lvl}`;
+      if (sumEl.textContent !== sec.sum) sumEl.textContent = sec.sum;
+      const body = el.box.lastChild;
+      if (isOpen) {
+        put(body, h('table', null, h('colgroup', null, h('col', { class: 'k' }), h('col')), sec.rows.map((row) => {
+          const text = row.sub ? `${row.v} · ${row.sub}` : row.v;
+          return h('tr', null, h('td', null, row.k),
+            h('td', { class: row.lvl || null, title: row.full || text }, row.v, row.sub ? ' ' : null, row.sub ? h('span', { class: 'sub' }, row.sub) : null));
+        })));
+      } else if (body.firstChild) clear(body);
+      return el.box;
+    });
+    const box = this.statsSecBox;
+    for (const el of [...box.children]) if (!want.includes(el)) el.remove();
+    want.forEach((el, i) => { if (box.children[i] !== el) box.insertBefore(el, box.children[i] || null); });
     this.drawBufGraph(m.es);
   }
 
@@ -1809,9 +1882,10 @@ class Player {
     if (hist.length > 1) {
       ctx.beginPath();
       hist.forEach((val, i) => (i ? ctx.lineTo(x(i), y(val)) : ctx.moveTo(x(i), y(val))));
-      ctx.strokeStyle = '#f2b33d'; ctx.lineWidth = 1.5; ctx.stroke();
+      // Blue like the dashboard's charts: yellow in this panel means a warning.
+      ctx.strokeStyle = '#3987e5'; ctx.lineWidth = 1.5; ctx.stroke();
       ctx.lineTo(x(hist.length - 1), ht); ctx.lineTo(x(0), ht); ctx.closePath();
-      ctx.fillStyle = 'rgba(242,179,61,.12)'; ctx.fill();
+      ctx.fillStyle = 'rgba(57,135,229,.16)'; ctx.fill();
     }
     ctx.font = '10px ui-monospace, Menlo, monospace'; ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.textAlign = 'right';
     ctx.fillText(target && target <= top ? `target ${secs(target)}` : `max ${secs(top)}`, w - 2, 10);
