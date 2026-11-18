@@ -127,7 +127,7 @@ export function channelName(ch) {
 
 // Language plus the track title, or just the title when it already names
 // the language ("English SDH") or the track has no language tag.
-function trackName(s, sep) {
+export function trackName(s, sep = ' · ') {
   const lang = langName(s.language);
   const t = s.title && s.title !== lang ? s.title : '';
   if (!t) return lang;
