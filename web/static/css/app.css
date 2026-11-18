@@ -1132,6 +1132,32 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .p-menu .pm-step { min-width: 34px; height: 30px; padding: 0 6px; border-radius: 7px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.05); color: #fff; font: 12px/1 inherit; font-variant-numeric: tabular-nums; cursor: pointer; }
 @media (hover: hover) { .p-menu .pm-step:hover { background: rgba(255,255,255,.14); } }
 .p-menu .pm-zero { min-width: 52px; color: var(--accent); font-weight: 700; }
+/* Subtitles & audio: the two track lists side by side (stacked when narrow). */
+.p-menu.pm-wide { width: 560px; }
+.p-menu .pm-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.p-menu .pm-col { min-width: 0; }
+.p-menu .pm-col .pm-list { max-height: min(40vh, 330px); overflow: auto; }
+.p-menu .pm-opt small { color: rgba(255,255,255,.55); font-size: 11.5px; font-weight: 400; }
+.p-menu .pm-action { color: rgba(255,255,255,.75); }
+.p-menu .pm-action .ck { color: rgba(255,255,255,.5); }
+.p-menu .pm-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 4px; }
+.p-menu .pm-chip { display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 11px 0 8px; border-radius: 15px; border: 1px solid rgba(255,255,255,.16); background: none; color: rgba(255,255,255,.85); font: 13px/1 inherit; cursor: pointer; }
+.p-menu .pm-chip .ck { display: inline-flex; width: 0; overflow: hidden; transition: width .12s; }
+.p-menu .pm-chip .ck svg { width: 15px; height: 15px; }
+.p-menu .pm-chip.on { border-color: var(--accent); color: #fff; background: rgba(242,179,61,.14); }
+.p-menu .pm-chip.on .ck { width: 15px; color: var(--accent); }
+@media (hover: hover) { .p-menu .pm-chip:hover { background: rgba(255,255,255,.1); } }
+.p-menu .pm-subtitle { padding-top: 10px; }
+/* Size steps and position choices: compact controls instead of sub-pages. */
+.p-menu .pm-stepper:not(.pm-timing) { flex-wrap: nowrap; }
+.p-menu .pm-stepper:not(.pm-timing) .pm-label { flex-basis: auto; }
+.p-menu .pm-seg { display: flex; gap: 4px; align-items: center; }
+.p-menu .pm-seg .pm-step { min-width: 58px; }
+.p-menu .pm-seg .pm-step.on { border-color: var(--accent); color: var(--accent); font-weight: 700; background: rgba(242,179,61,.12); }
+.p-menu .pm-seg-step .pm-step { min-width: 34px; font-size: 16px; }
+.p-menu .pm-seg-step .pm-step:disabled { opacity: .35; cursor: default; }
+.p-menu .pm-seg-val { min-width: 82px; text-align: center; font-variant-numeric: tabular-nums; }
+@media (max-width: 640px) { .p-menu.pm-wide { width: min(380px, calc(100% - 20px)); } .p-menu .pm-cols { grid-template-columns: 1fr; } .p-menu .pm-col .pm-list { max-height: none; } }
 .seek .tip .thumb { display: none; margin: -1px -5px 5px; border-radius: 4px; background-color: #000; background-repeat: no-repeat; box-shadow: 0 0 0 1px rgba(255,255,255,.18); }
 .seek .tip { text-align: center; }
 .player canvas.JASSUB { z-index: 2; }
