@@ -206,8 +206,13 @@ func (s *Server) progress(w http.ResponseWriter, r *http.Request) {
 	// What's overloading the host, if anything, so the player can say why
 	// it's buffering instead of blaming the viewer's connection.
 	if s.Stats != nil {
-		if strains := s.Stats.Snapshot().Strains(); len(strains) > 0 {
+		snap := s.Stats.Snapshot()
+		if strains := snap.Strains(); len(strains) > 0 {
 			resp["host"] = strains
+		}
+		// Admins see the server's load in stats for nerds.
+		if userOf(r).IsAdmin {
+			resp["load"] = map[string]any{"cpu": snap.Now.CPU, "iowait": snap.Now.IOWait, "memAvail": snap.MemAvail, "swapIO": snap.Now.SwapIO}
 		}
 	}
 	for _, snap := range s.Sess.Snapshot() {
