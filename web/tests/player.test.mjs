@@ -4,6 +4,7 @@ import test from 'node:test';
 import vm from 'node:vm';
 import * as substyle from '../static/js/substyle.js';
 import { subtitleChoice } from '../static/js/track-memory.js';
+import { diskLevel } from '../static/js/buffering.js';
 
 // Run the actual Player methods with a native video whose play() stays
 // pending and never emits an error, as in the Firefox MKV startup hang.
@@ -71,7 +72,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
       }, img() {},
     },
     './caps.js': { detectCaps: () => ({ mse: true }) },
-    './buffering.js': { bufferingCause: () => null },
+    './buffering.js': { bufferingCause: () => null, diskLevel },
     './audio-fx.js': { AudioFX: class {}, audioFxSupported: () => false, fxLabel: () => '' },
     './substyle.js': { ...substyle },
     './pgs.js': { PgsRenderer: class { setTrack() {} setOffset() {} destroy() {} } },

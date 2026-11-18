@@ -21,11 +21,27 @@ const VIEWER_HINT = 'Should recover once the server catches up.';
 // diskWait: the share of its time the server spent reading the file from
 // disk rather than sending it (0-1, heartbeats; only for file reads).
 // host: what is overloading the server ([{ kind, text }], worst first).
+// Whether data arrives comfortably faster than the stream plays.
+function keepsUp(needKbps, bandwidth, rate) {
+  const need = needKbps * 1000 * rate;
+  return bandwidth > 0 && need > 0 && bandwidth >= need * 1.1;
+}
+
+// How worrying a stream's disk wait is, for the stats panel: '' | 'warn' |
+// 'bad'. diskWait is a share of serving time (disk vs. network), so a fast
+// connection pushes it up even when the disk has plenty to spare. It only
+// counts while playback is short of data (struggling: buffering or a low
+// buffer) and data doesn't already arrive faster than the video plays.
+export function diskLevel({ diskWait = 0, needKbps = 0, bandwidth = 0, rate = 1, struggling = false } = {}) {
+  if (!struggling || keepsUp(needKbps, bandwidth, rate)) return '';
+  return diskWait >= 0.6 ? 'bad' : diskWait >= 0.3 ? 'warn' : '';
+}
+
 export function bufferingCause({ needKbps = 0, bandwidth = 0, remote = false, job = null, rate = 1, canTranscode = true, isAdmin = false, method = '', diskWait = 0, host = [] } = {}) {
   const strain = (host || [])[0] || null;
   const serverHint = (kind) => (isAdmin ? ADMIN_HINTS[kind] || '' : VIEWER_HINT);
   const need = needKbps * 1000 * rate;
-  const fastEnough = bandwidth > 0 && need > 0 && bandwidth >= need * 1.1;
+  const fastEnough = keepsUp(needKbps, bandwidth, rate);
 
   // This stream is mostly waiting on the server's drive.
   if (diskWait >= 0.6 && !fastEnough) {
