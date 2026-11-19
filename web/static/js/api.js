@@ -15,10 +15,18 @@ export class ApiError extends Error {
  * @property {boolean} [keepalive]
  */
 
-/** @param {string} path @param {ApiOptions} [options] @returns {Promise<any>} */
-export async function api(path, { method = 'GET', body, signal, keepalive } = {}) {
+/**
+ * api calls the JSON API. Its response (and the body it takes) are typed from
+ * the route table generated from the Go handlers (web/types/api.gen.d.ts).
+ * @template {string} P
+ * @template {string} [M='GET']
+ * @param {P} path
+ * @param {ApiOptions & { method?: M, body?: import('../../types/api').ApiBody<M, P> }} [options]
+ * @returns {Promise<import('../../types/api').ApiResponse<M, P>>}
+ */
+export async function api(path, { method, body, signal, keepalive } = {}) {
   /** @type {RequestInit & { headers: Record<string, string> }} */
-  const opts = { method, signal, keepalive, credentials: 'same-origin', headers: {} };
+  const opts = { method: method ?? 'GET', signal, keepalive, credentials: 'same-origin', headers: {} };
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);

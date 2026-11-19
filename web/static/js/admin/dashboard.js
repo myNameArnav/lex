@@ -512,8 +512,8 @@ export async function titlesModal(label, load, intro = null) {
 // statistics' empty state covers it.
 async function historySection(ctx, days) {
   const offset = Math.max(0, +ctx.query.get('offset') || 0);
-  const [rows, cfg] = await Promise.all([api(`/api/admin/history?limit=100&offset=${offset}`), api('/api/admin/config').catch(() => ({}))]);
-  const keep = cfg.historyRetentionDays;
+  const [rows, cfg] = await Promise.all([api(`/api/admin/history?limit=100&offset=${offset}`), api('/api/admin/config').catch(() => null)]);
+  const keep = cfg?.historyRetentionDays;
   if (!rows.length && !offset) return null;
   const page = (o) => `#/dashboard/playback?days=${days}&offset=${o}`;
   const pager = (label, o) => h('a', { class: 'btn sm', href: page(o), onclick: (e) => { if (!e.ctrlKey && !e.metaKey && !e.shiftKey) focusAfterRoute('history'); } }, label);
