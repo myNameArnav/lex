@@ -25,7 +25,10 @@ type Channel struct {
 	Name   string `json:"name"`
 
 	// Off: turned off by the admin (only Lineup lists these).
-	Off    bool `json:"-"`
+	Off bool `json:"-"`
+	// Stream is set for a live channel from the internet: it has no
+	// schedule of library titles, only its guide's programs.
+	Stream *store.TVStream `json:"-"`
 	filter store.AirFilter
 }
 
@@ -35,6 +38,15 @@ func Filter(c store.TVChannel) store.AirFilter {
 		return store.AirFilter{Kind: c.Kind, Titles: c.Titles}
 	}
 	return store.AirFilter{Libraries: c.Libraries, Genres: c.Genres, Kind: c.Kind, Exclude: c.Exclude}
+}
+
+// StreamPrograms returns a live channel's guide programs in [from, to):
+// none until its source's guide has been read, or without a guide id.
+func (g *Guide) StreamPrograms(ch Channel, from, to time.Time) []GuideProgram {
+	if ch.Stream == nil {
+		return nil
+	}
+	return g.guideFor(ch.Stream, from, to)
 }
 
 // Program is one slot in a schedule. A program that would run past midnight
@@ -60,6 +72,8 @@ type Guide struct {
 	lineupAt  time.Time
 	lineupFor string // the lineup settings the list was made from
 	pools     map[string]poolInfo
+	playlists map[string]playlist
+	epg       epg
 }
 
 // poolInfo sums up what a channel can air.
@@ -70,7 +84,7 @@ type poolInfo struct {
 }
 
 func New(st *store.Store) *Guide {
-	return &Guide{St: st, days: map[string][]Program{}, pools: map[string]poolInfo{}}
+	return &Guide{St: st, days: map[string][]Program{}, pools: map[string]poolInfo{}, playlists: map[string]playlist{}}
 }
 
 // Channels lists the channels on air, in lineup order. A channel with
@@ -90,7 +104,7 @@ func (g *Guide) Channels() ([]Channel, error) {
 // until the lineup settings change: the guide and every tune ask.
 func (g *Guide) Lineup() ([]Channel, error) {
 	cfg := g.St.Config()
-	sig := fmt.Sprint(cfg.TVChannels, cfg.TVOrder, cfg.TVHidden)
+	sig := fmt.Sprint(cfg.TVChannels, cfg.TVStreams, cfg.TVOrder, cfg.TVHidden)
 	g.mu.Lock()
 	if time.Since(g.lineupAt) < time.Minute && g.lineupFor == sig {
 		defer g.mu.Unlock()
@@ -100,6 +114,9 @@ func (g *Guide) Lineup() ([]Channel, error) {
 	var rest []Channel
 	for _, c := range cfg.TVChannels {
 		rest = append(rest, Channel{ID: "custom-" + c.ID, Name: c.Name, filter: Filter(c)})
+	}
+	for _, st := range cfg.TVStreams {
+		rest = append(rest, Channel{ID: "stream-" + st.ID, Name: st.Name, Stream: &st})
 	}
 	auto, err := g.Automatic()
 	if err != nil {
@@ -167,12 +184,18 @@ func (g *Guide) Channel(id string) (Channel, bool, error) {
 // can be hidden from users who can't see all of them (every viewer sees the
 // same schedule, so it can't leave out what they can't see).
 func (g *Guide) Libraries(ch Channel) ([]int64, error) {
+	if ch.Stream != nil {
+		return []int64{}, nil
+	}
 	p, err := g.pool(ch.ID, ch.filter)
 	return p.libs, err
 }
 
 // Titles counts the movies and shows a channel can air.
 func (g *Guide) Titles(ch Channel) (int, error) {
+	if ch.Stream != nil {
+		return 0, nil
+	}
 	p, err := g.pool(ch.ID, ch.filter)
 	return p.titles, err
 }
@@ -242,6 +265,9 @@ func (g *Guide) Preview(id string, f store.AirFilter, t time.Time, n int) (int, 
 // Programs returns the programs airing at some point in [from, to), in
 // order; empty if the channel has nothing to air.
 func (g *Guide) Programs(ch Channel, from, to time.Time) ([]Program, error) {
+	if ch.Stream != nil {
+		return nil, nil
+	}
 	var out []Program
 	for day := midnight(from); day.Before(to); day = nextMidnight(day) {
 		progs, err := g.day(ch, day)
@@ -261,6 +287,9 @@ func (g *Guide) Programs(ch Channel, from, to time.Time) ([]Program, error) {
 // further than the day after t's (so tomorrow's schedule is only made once
 // it is needed).
 func (g *Guide) Next(ch Channel, t time.Time, n int) ([]Program, error) {
+	if ch.Stream != nil {
+		return nil, nil
+	}
 	var out []Program
 	for day, i := midnight(t), 0; i < 2 && len(out) < n; day, i = nextMidnight(day), i+1 {
 		progs, err := g.day(ch, day)

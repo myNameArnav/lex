@@ -1006,7 +1006,22 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   .tv-row-edit-gap { display: none; }
   .tv-row-switch { margin-left: auto; }
 }
+/* Picking channels from a playlist. */
+.tv-browse-wrap { display: grid; gap: 10px; }
+.tv-browse-wrap .row input[type=search] { flex: 1 1 240px; min-width: 0; }
+.tv-browse-wrap select { flex: 0 1 220px; min-width: 0; }
+.tv-browse { list-style: none; margin: 0; padding: 0; max-height: min(52vh, 480px); overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.tv-browse label { display: flex; align-items: center; gap: 10px; padding: 7px 12px; cursor: pointer; }
+.tv-browse label:hover { background: var(--hover); }
+.tv-browse label.added { color: var(--text3); cursor: default; }
+.tv-browse input { width: auto; margin: 0; accent-color: var(--accent); flex: none; }
+.tv-browse img, .tv-browse-nologo { width: 32px; height: 24px; object-fit: contain; flex: none; }
+.tv-browse-name { display: flex; flex-direction: column; min-width: 0; }
+.tv-browse-name small { color: var(--text3); font-size: 12px; }
+.tv-probe { font-size: 13px; }
+.tv-src .tv-row-num svg { width: 20px; height: 20px; color: var(--text3); }
 /* The channel dialog: its choices, and a preview of what it airs. */
+.bad-ink { color: var(--bad-ink); }
 .tv-channel-form { display: grid; gap: 16px; }
 .tv-channel-form .seg { width: fit-content; }
 .tv-preview { font-size: 13.5px; min-height: 2.5em; }
@@ -1408,6 +1423,7 @@ kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px soli
 .tvg-row { display: flex; height: 64px; border-bottom: 1px solid var(--line); }
 .tvg-ch { position: sticky; left: 0; z-index: 2; flex: none; width: var(--ch); display: flex; align-items: center; gap: 10px; padding: 0 14px; background: var(--bg2); border: 0; border-right: 1px solid var(--line); color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .tvg-ch b { font-size: 18px; font-weight: 800; color: var(--text2); font-variant-numeric: tabular-nums; min-width: 1.6em; }
+.tvg-ch img { width: 28px; height: 28px; object-fit: contain; flex: none; }
 .tvg-ch span { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tvg-track { position: relative; flex: none; }
 .tvg-prog { position: absolute; top: 4px; bottom: 4px; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 0 10px; overflow: hidden; background: var(--bg3); border: 0; border-radius: 6px; color: inherit; font: inherit; text-align: left; cursor: pointer; }
@@ -1425,8 +1441,10 @@ kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px soli
 .tv-details .art { position: relative; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: var(--bg3); }
 .tv-details .art .ph { position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; text-align: center; color: var(--text3); font-weight: 700; background: linear-gradient(135deg, var(--ph-a), var(--ph-b)); }
 .tv-details .art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.tv-details .art.logo img, .card.tv-now .art.logo img { object-fit: contain; padding: 12%; }
 .tv-overview { margin: 0; color: var(--text2); line-height: 1.5; }
 .player .p-live { margin-left: auto; flex: none; border: 0; border-radius: 4px; padding: 4px 9px; font: inherit; font-size: 12px; font-weight: 800; letter-spacing: .06em; background: var(--bad-strong); color: #fff; cursor: pointer; }
+.player.p-stream .seek, .player.p-stream .p-transport > button:not(:first-child), .player.p-stream .p-time, .player.p-stream .p-ends, .player.p-stream .p-method { visibility: hidden; }
 .player .p-chans { flex: none; border: 1px solid rgba(255,255,255,.25); border-radius: 4px; padding: 3px 9px; font: inherit; font-size: 12px; font-weight: 700; background: rgba(0,0,0,.3); color: #fff; cursor: pointer; }
 .player .p-chans[aria-expanded="true"] { background: rgba(255,255,255,.18); }
 .p-menu .pm-chan-n { flex: none; min-width: 2em; font-weight: 800; font-variant-numeric: tabular-nums; color: rgba(255,255,255,.6); }

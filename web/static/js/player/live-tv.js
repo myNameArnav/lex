@@ -5,7 +5,7 @@
 // this.live = { channelId, channels, token, channel, now, next, skew,
 // switching } and this.liveBtn; they call start(), resetForNext(), seekTo().
 
-import { h, toast, fmtProgram, fmtClock } from '../ui.js';
+import { h, icons, toast, fmtProgram, fmtClock } from '../ui.js';
 import { api } from '../api.js';
 import { retryApi } from './retry.js';
 
@@ -28,14 +28,66 @@ export const liveTv = {
       });
       if (this.closed || token !== live.token) return;
       // skew: how far this device's clock is ahead of the server's.
-      Object.assign(live, { channel: r.channel, now: r.now, next: r.next || null, skew: Date.now() - r.serverTime });
+      Object.assign(live, { channel: r.channel, now: r.now || null, next: r.next || null, skew: Date.now() - r.serverTime, stream: r.stream || null });
       if (!live.channels.some((c) => c.id === r.channel.id)) live.channels = [r.channel];
+      this.root.classList.toggle('p-stream', !!r.stream);
+      if (r.stream) { this.playStream(); return; }
       await this.start(r.now.item.id, Math.max(0, this.livePosition()));
     } catch (e) {
       if (this.closed || token !== live.token) return;
       // Live TV turned off, or nothing left to air: no point retrying.
       if (e.status === 404) this.showError(e.message, { title: 'Live TV isn’t available', retry: false });
       else this.planFailed(e);
+    }
+  },
+
+  // playStream plays a live channel from the internet: the server's MP4 of
+  // it, with no seeking and no playback session (nothing to resume).
+  playStream() {
+    const live = this.live, v = this.video;
+    this.teardown();
+    this.plan = null; this.file = null; this.files = []; this.segments = [];
+    this.detail = { next: null };
+    this.item = live.now?.item || { id: 0, kind: 'live', title: live.channel.name };
+    this.renderTitle();
+    this.nextBtn.classList.toggle('hidden', !(live.channels.length > 1));
+    this.started = false;
+    // A new request each time: the server starts fetching it afresh.
+    v.src = `${live.stream.url}?t=${Date.now()}`;
+    v.play().catch(() => { if (!this.closed) { this.playBtn.innerHTML = icons.play; this.showSpinner(false); } });
+    this.setupMediaSession();
+  },
+
+  // The stream failed or ended: say why (the server's answer to the same
+  // request), with Retry tuning in again.
+  async streamFailed() {
+    const live = this.live;
+    if (this.closed || this.errEl || !live?.stream) return;
+    let msg = 'The channel’s stream stopped.';
+    const ctl = new AbortController();
+    try {
+      const res = await fetch(`${live.stream.url}?t=${Date.now()}`, { signal: ctl.signal, credentials: 'same-origin' });
+      if (!res.ok) msg = (await res.json().catch(() => null))?.error || msg;
+    } catch {}
+    ctl.abort();
+    if (this.closed || this.errEl || live.stream == null) return;
+    this.showError(msg, { title: 'This channel isn’t playing' });
+  },
+
+  // A live channel's guide moved on: what's on now and next, for the title.
+  async refreshStreamInfo() {
+    const live = this.live;
+    if (live.refreshing) return;
+    live.refreshing = true;
+    try {
+      const r = await api(`/api/tv/${encodeURIComponent(live.channelId)}`);
+      if (this.closed || !live.stream || r.channel.id !== live.channelId) return;
+      Object.assign(live, { now: r.now || null, next: r.next || null, skew: Date.now() - r.serverTime });
+      this.item = live.now?.item || { id: 0, kind: 'live', title: live.channel.name };
+      this.renderTitle();
+    } catch {} finally {
+      // Without a guide there's nothing to follow; with one, at most a minute apart.
+      setTimeout(() => { live.refreshing = false; }, 60000);
     }
   },
 
@@ -49,6 +101,10 @@ export const liveTv = {
   // past midnight is cut there), or when its file ends.
   checkLive() {
     const live = this.live;
+    if (live?.stream) {
+      if (live.now && Date.now() - live.skew >= live.now.end) this.refreshStreamInfo();
+      return;
+    }
     if (!live?.now || !this.started || this.stopped || this.errEl || live.switching) return;
     const slot = (live.now.end - live.now.start) / 1000;
     if (this.video.currentTime >= slot - 0.5) { this.nextProgram(); return; }
@@ -63,6 +119,8 @@ export const liveTv = {
   async nextProgram() {
     const live = this.live;
     if (live.switching || this.stopped) return;
+    // A live stream that ended: tell why rather than reconnecting in a loop.
+    if (live.stream) { this.streamFailed(); return; }
     live.switching = true;
     try {
       this.resetForNext();
@@ -74,6 +132,13 @@ export const liveTv = {
   // once it has finished airing.
   goLive() {
     const live = this.live;
+    if (live?.stream) {
+      // As far on as it has arrived.
+      const b = this.video.buffered;
+      if (b.length) this.video.currentTime = Math.max(0, b.end(b.length - 1) - 1);
+      this.video.play().catch(() => {});
+      return;
+    }
     if (!live?.now) return;
     const pos = this.livePosition();
     if (pos < (live.now.end - live.now.start) / 1000 - 5) {

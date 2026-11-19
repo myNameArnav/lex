@@ -33,6 +33,9 @@ type programView struct {
 
 type channelView struct {
 	tv.Channel
+	// Live: a channel from the internet, with its logo.
+	Live     bool          `json:"live,omitempty"`
+	Logo     string        `json:"logo,omitempty"`
 	Programs []programView `json:"programs"`
 }
 
@@ -86,6 +89,14 @@ func (s *Server) tvGuide(w http.ResponseWriter, r *http.Request) {
 		} else if !ok {
 			continue
 		}
+		if ch.Stream != nil {
+			limit := guidePrograms
+			if ranged {
+				limit = 0
+			}
+			out = append(out, channelView{Channel: ch, Live: true, Logo: ch.Stream.Logo, Programs: s.streamPrograms(ch, from, to, limit)})
+			continue
+		}
 		var progs []programView
 		sched, err := s.TV.Programs(ch, from, to)
 		if err == nil {
@@ -131,6 +142,10 @@ func (s *Server) tvChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
+	if ch.Stream != nil {
+		s.tuneStream(w, ch, now)
+		return
+	}
 	at := now
 	if ms, err := strconv.ParseInt(r.URL.Query().Get("at"), 10, 64); err == nil {
 		if t := time.UnixMilli(ms); t.After(now) && t.Before(now.Add(24*time.Hour)) {

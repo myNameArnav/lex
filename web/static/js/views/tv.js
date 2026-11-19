@@ -31,8 +31,12 @@ function programHead(it) {
 
 /** @param {Item} it */
 function programSub(it) {
+  if (it.kind === 'live') return it.originalTitle || 'Live';
   return it.kind === 'episode' ? `${fmtEpisode(it)} — ${it.title}` : String(it.year || '');
 }
+
+// art is a program's picture: a live channel's logo, else the title's.
+const art = (it, logo, w) => (it.kind === 'live' ? (logo ? lazyImg(logo, '') : null) : lazyImg(img(it, 'thumb', w), ''));
 
 const titleHref = (/** @type {Item} */ it) => `#/item/${it.kind === 'episode' && it.showId ? it.showId : it.id}`;
 
@@ -53,7 +57,7 @@ async function guide(path) {
 const nothing = () => emptyState({ level: 'h2', title: 'Nothing to air yet', text: 'Live TV plays movies and episodes once a library scan has read their running times.' });
 
 const intro = () => [h('h1', { class: 'page-title' }, 'Live TV'),
-  h('p', { class: 'muted', style: { margin: 0 } }, 'Channels that play your library at random, like TV. Tune in to join whatever is on.')];
+  h('p', { class: 'muted', style: { margin: 0 } }, 'Channels that play your library at random, like TV, and live channels from the internet. Tune in to join whatever is on.')];
 
 export async function tvView(ctx) {
   if (!state.caps.liveTv) return off();
@@ -79,7 +83,7 @@ async function listView(ctx) {
     return h('li', { class: 'tv-channel' },
       h('div', { class: 'tv-num', 'aria-hidden': 'true' }, h('b', null, ch.number), h('span', null, ch.name)),
       h('button', { type: 'button', class: 'card tv-now', 'aria-label': `Tune in to ${label}`, dataset: { focusKey: `tv-${ch.id}` }, onclick: () => playChannel(ch.id, channels) },
-        h('div', { class: 'art' }, placeholder(it), lazyImg(img(it, 'thumb', 480), ''),
+        h('div', { class: `art${ch.live ? ' logo' : ''}` }, placeholder(it), art(it, ch.logo, 480),
           h('div', { class: 'play-hover', 'aria-hidden': 'true' }, h('span', { html: icons.play })),
           progressBar(now - cur.start, cur.end - cur.start)),
         h('div', { class: 'meta' },
@@ -101,11 +105,15 @@ function programDialog(p, ch, channels, now) {
   const m = modal({
     title: programHead(it),
     body: h('div', { class: 'tv-details' },
-      h('div', { class: 'art' }, placeholder(it), lazyImg(img(it, 'thumb', 640), '')),
+      h('div', { class: `art${ch.live ? ' logo' : ''}` }, placeholder(it), art(it, ch.logo, 640)),
       h('p', { class: 'muted', style: { margin: 0 } }, `${ch.number} · ${ch.name} · ${on ? 'on now' : when}`),
       programSub(it) ? h('p', { style: { margin: 0, fontWeight: 600 } }, programSub(it)) : null,
       it.overview ? h('p', { class: 'tv-overview' }, it.overview) : null),
-    actions: [
+    actions: it.kind === 'live' ? [
+      h('div', { class: 'spacer' }),
+      on ? h('button', { class: 'btn primary', type: 'button', onclick: () => { m.close(); playChannel(ch.id, channels); } }, h('span', { html: icons.play }), 'Tune in')
+        : h('button', { class: 'btn', type: 'button', onclick: () => m.close() }, 'Close'),
+    ] : [
       h('a', { class: 'btn', href: titleHref(it), onclick: () => m.close() }, it.kind === 'episode' ? 'Show details' : 'Movie details'),
       h('div', { class: 'spacer' }),
       h('button', { class: `btn${on ? '' : ' primary'}`, type: 'button', onclick: () => { m.close(); openPlayer({ itemId: it.id, start: 0 }); } }, 'Play from the start'),
@@ -146,18 +154,20 @@ async function gridView(ctx) {
         Array.from({ length: (data.to - from) / SLOT }, (_, i) => h('span', { class: 'tvg-tick', role: 'columnheader', style: { left: `${x(from + i * SLOT)}px` } }, fmtClock(from + i * SLOT)))));
     const rows = data.channels.map((ch) => h('div', { class: 'tvg-row', role: 'row' },
       h('button', { type: 'button', class: 'tvg-ch', role: 'rowheader', tabindex: '-1', 'aria-label': `Tune in to channel ${ch.number}, ${ch.name}`, dataset: { focusKey: `tvg-ch-${ch.id}` }, onclick: () => playChannel(ch.id, channels) },
-        h('b', null, ch.number), h('span', null, ch.name)),
+        h('b', null, ch.number), ch.logo ? lazyImg(ch.logo, '') : null, h('span', null, ch.name)),
       h('div', { class: 'tvg-track', style: { width: `${width}px` } }, ch.programs.map((p) => {
         const l = Math.max(0, x(p.start)), r = Math.min(width, x(p.end));
         const it = p.item;
         const on = p.start <= now && now < p.end;
-        const label = `${fmtProgram(it)}, ${fmtClock(p.start)} to ${fmtClock(p.end)} on ${ch.name}${on ? ', on now: tune in' : ''}`;
+        // A live channel without a guide: one block, always on.
+        const whole = it.kind === 'live' && p.start <= from && p.end >= data.to;
+        const label = whole ? `${ch.name}, live: tune in` : `${fmtProgram(it)}, ${fmtClock(p.start)} to ${fmtClock(p.end)} on ${ch.name}${on ? ', on now: tune in' : ''}`;
         return h('button', { type: 'button', class: `tvg-prog${on ? ' now' : p.end <= now ? ' past' : ''}`, tabindex: '-1', 'aria-label': label, title: fmtProgram(it),
-          style: { left: `${l}px`, width: `${Math.max(r - l - 2, 4)}px` }, dataset: { start: String(p.start), end: String(p.end), focusKey: `tvg-${ch.id}-${p.start}` },
+          style: { left: `${l}px`, width: `${Math.max(r - l - 2, 4)}px` }, dataset: { start: String(p.start), end: String(p.end), focusKey: `tvg-${ch.id}-${p.start}`, whole: whole ? '1' : '' },
           onclick: () => (p.start <= Date.now() - skew && Date.now() - skew < p.end ? playChannel(ch.id, channels) : programDialog(p, ch, channels, Date.now() - skew)) },
           h('span', { class: 'tvg-t' }, programHead(it)),
-          h('span', { class: 'tvg-s' }, it.kind === 'episode' ? fmtEpisode(it) : fmtClock(p.start)),
-          on ? h('i', { class: 'tvg-bar', 'aria-hidden': 'true', style: { width: `${Math.min(100, ((now - p.start) / (p.end - p.start)) * 100)}%` } }) : null);
+          h('span', { class: 'tvg-s' }, whole ? 'Live' : it.kind === 'episode' ? fmtEpisode(it) : it.kind === 'live' && it.originalTitle ? it.originalTitle : fmtClock(p.start)),
+          on && !whole ? h('i', { class: 'tvg-bar', 'aria-hidden': 'true', style: { width: `${Math.min(100, ((now - p.start) / (p.end - p.start)) * 100)}%` } }) : null);
       }))));
     nowLine = h('div', { class: 'tvg-now', 'aria-hidden': 'true', style: { left: `${CH_WIDTH + x(now)}px` } });
     scroller = h('div', { class: 'tvg', role: 'grid', 'aria-label': 'Live TV guide', 'aria-rowcount': String(rows.length + 1), onkeydown: onKey, onfocusin: (e) => roveTo(e.target) },
@@ -249,7 +259,7 @@ async function gridView(ctx) {
       b.classList.toggle('now', on);
       b.classList.toggle('past', e <= now);
       let bar = /** @type {HTMLElement} */ (b.querySelector('.tvg-bar'));
-      if (on && !bar) b.appendChild(bar = h('i', { class: 'tvg-bar', 'aria-hidden': 'true' }));
+      if (on && !bar && !b.dataset.whole) b.appendChild(bar = h('i', { class: 'tvg-bar', 'aria-hidden': 'true' }));
       if (bar) { if (on) bar.style.width = `${Math.min(100, ((now - s) / (e - s)) * 100)}%`; else bar.remove(); }
     }
   }, 30000);

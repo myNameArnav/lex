@@ -6,6 +6,7 @@ import { h, icons, toggle, run, modal, confirmDialog, fmtClock, fmtProgram } fro
 import { api } from '../api.js';
 import { state, renderNav } from '../app.js';
 import { heading, field, select, toggleRow, formActions, formErrors, submitInline } from './forms.js';
+import { streamDialog, sourceDialog, browseDialog, sourceRow, host } from './livetv-streams.js';
 
 /** @typedef {import('../../../types/api.gen').tvLineup} Lineup */
 /** @typedef {import('../../../types/api.gen').tvLineupChannel} LineupChannel */
@@ -79,6 +80,7 @@ function summary(ch) {
   if (ch.source === 'all') return 'Automatic · every library';
   if (ch.source === 'library') return 'Automatic · library';
   if (ch.source === 'genre') return 'Automatic · genre';
+  if (ch.source === 'stream') return `Live stream · ${host(ch.stream?.url || '')}`;
   const c = ch.custom;
   if (!c) return '';
   if (c.kind === 'picked') return 'Picked titles';
@@ -202,16 +204,16 @@ export async function liveTvSection() {
     const last = lineup.channels.length - 1;
     list.replaceChildren(...lineup.channels.map((ch, i) => {
       const key = ch.id;
-      const nothing = !ch.titles;
+      const nothing = !ch.titles && ch.source !== 'stream';
       return h('li', { class: `tv-row${ch.off ? ' off' : ''}` },
         h('span', { class: 'tv-row-num', 'aria-hidden': 'true' }, ch.number),
         h('div', { class: 'tv-row-main' },
           h('div', { class: 'tv-row-name' }, h('span', { class: 'sr-only' }, `Channel ${ch.number}, `), ch.name),
-          h('div', { class: 'tv-row-sub' }, summary(ch), ' · ', nothing ? h('span', { class: 'warn' }, 'nothing to air') : plural(ch.titles, 'title'))),
+          h('div', { class: 'tv-row-sub' }, summary(ch), ch.source === 'stream' ? null : [' · ', nothing ? h('span', { class: 'warn' }, 'nothing to air') : plural(ch.titles, 'title')])),
         h('div', { class: 'tv-row-actions' },
           h('button', { type: 'button', class: 'btn icon ghost sm', 'aria-label': `Move ${ch.name} up`, title: 'Move up', disabled: i === 0, dataset: { focusKey: `up-${key}` }, html: icons.up, onclick: () => move(i, -1) }),
           h('button', { type: 'button', class: 'btn icon ghost sm tv-down', 'aria-label': `Move ${ch.name} down`, title: 'Move down', disabled: i === last, dataset: { focusKey: `down-${key}` }, html: icons.up, onclick: () => move(i, 1) }),
-          ch.custom ? h('button', { type: 'button', class: 'btn sm', 'aria-label': `Edit ${ch.name}`, dataset: { focusKey: `edit-${key}` }, onclick: () => edit(ch) }, 'Edit') : h('span', { class: 'tv-row-edit-gap' }),
+          ch.custom || ch.stream ? h('button', { type: 'button', class: 'btn sm', 'aria-label': `Edit ${ch.name}`, dataset: { focusKey: `edit-${key}` }, onclick: () => edit(ch) }, 'Edit') : h('span', { class: 'tv-row-edit-gap' }),
           // A label, so clicking the switch's track toggles it.
           (() => { const t = toggle(!ch.off, (on) => setOff(ch.id, !on), `${ch.name} on Live TV`); /** @type {HTMLElement} */ (t.firstChild).dataset.focusKey = `on-${key}`; return h('label', { class: 'tv-row-switch', title: ch.off ? 'Off: not on the guide' : 'On the guide' }, t); })()));
     }));
@@ -238,12 +240,36 @@ export async function liveTvSection() {
     const chs = lineup.channels.map((c) => (c.id === id ? { ...c, off } : c));
     save({ ...lineup, channels: chs }, { off: chs.filter((c) => c.off).map((c) => c.id) });
   };
-  const edit = (ch) => channelDialog(ch, genres, {
-    onSaved: (l, id) => { lineup = l; draw(`edit-${id}`); },
-    onRemoved: (l) => { lineup = l; draw('tv-new'); },
-  });
+  const done = { onSaved: (l, id) => { lineup = l; draw(`edit-${id}`); drawSources(); }, onRemoved: (l) => { lineup = l; draw('tv-new'); drawSources(); } };
+  const edit = (ch) => (ch?.stream ? streamDialog(ch.stream, done) : channelDialog(ch, genres, done));
   const add = h('button', { class: 'btn primary', type: 'button', dataset: { focusKey: 'tv-new' }, onclick: () => edit(null) }, h('span', { html: icons.plus }), 'New channel');
+  const addStream = h('button', { class: 'btn', type: 'button', dataset: { focusKey: 'tv-new-stream' }, onclick: () => streamDialog(null, done) }, h('span', { html: icons.plus }), 'New live channel');
+
+  // Playlists (IPTV) to pick live channels from.
+  const sources = h('ol', { class: 'tv-lineup', 'aria-label': 'Playlists' });
+  const guideNote = h('p', { class: 'help warn', role: 'status' });
+  const noSources = h('p', { class: 'muted', style: { margin: 0 } }, 'No playlists. Add one to pick channels from it, or add a single live channel above.');
+  const drawSources = () => {
+    const have = new Set(lineup.channels.filter((c) => c.stream).map((c) => c.stream.url));
+    const saved = (l) => { lineup = l; draw(); drawSources(); };
+    sources.replaceChildren(...lineup.sources.map((src) => sourceRow(src, {
+      browse: () => browseDialog(src, have, saved),
+      edit: () => sourceDialog(lineup.sources, src, saved),
+      remove: async (e) => {
+        const btn = e.currentTarget;
+        if (!await confirmDialog({ message: `Remove the playlist ${src.name}? Channels you added from it stay, without its guide.`, okLabel: 'Remove playlist', danger: true, title: 'Remove playlist' })) return;
+        run(btn, async () => saved(await api('/api/admin/tv/sources', { method: 'PUT', body: lineup.sources.filter((s) => s.id !== src.id) })), `Removed ${src.name}`);
+      },
+    })));
+    sources.hidden = !lineup.sources.length;
+    noSources.hidden = !!lineup.sources.length;
+    guideNote.textContent = lineup.guideError ? `Couldn’t read a guide: ${lineup.guideError}` : '';
+    guideNote.hidden = !lineup.guideError;
+  };
+  const addSource = h('button', { class: 'btn', type: 'button', onclick: () => sourceDialog(lineup.sources, null, (l) => { lineup = l; drawSources(); }) }, h('span', { html: icons.plus }), 'Add playlist');
   draw();
+  drawSources();
+  const [srcTitle, srcHelp] = heading('Playlists', 'IPTV playlists (M3U) to pick live channels from, with their guides (XMLTV). Live channels play through the server, which converts video the browser can’t play.');
 
   const [channelsTitle, channelsHelp] = heading('Channels', 'Channel numbers follow this order. Turning a channel off takes it off the guide; it keeps its number. Lex adds a channel for everything, one per library and one per common genre; add your own to pick titles or filter by library, genre and type.');
   return h('div', { class: 'form' },
@@ -253,5 +279,7 @@ export async function liveTvSection() {
     h('div', { class: 'form-section' },
       channelsTitle, channelsHelp,
       lineup.channels.length ? null : h('p', { class: 'muted' }, 'No channels yet: add a library, or a channel of your own.'),
-      list, h('div', null, add)));
+      list, h('div', { class: 'row wrap' }, add, addStream)),
+    h('div', { class: 'form-section' }, srcTitle, srcHelp,
+      noSources, guideNote, sources, h('div', null, addSource)));
 }
