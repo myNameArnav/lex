@@ -9,12 +9,20 @@ import type { subtitles } from '../static/js/player/subtitles.js';
 import type { audio } from '../static/js/player/audio.js';
 import type { stats } from '../static/js/player/stats.js';
 import type { menus } from '../static/js/player/menus.js';
+import type { Item, fileView, Plan, Segment } from './api.gen';
 
 type Parts = typeof liveTv & typeof upNext & typeof skipSegments & typeof chapters
   & typeof trickplay & typeof subtitles & typeof audio & typeof stats & typeof menus;
 
 declare module '../static/js/player.js' {
   interface Player extends Parts {
+    // What the server sent for the title (GET /api/items/{id}) and its plan.
+    item: Item;
+    files: fileView[];
+    file: fileView;
+    segments: Segment[];
+    plan: Plan | null;
+
     // State the parts keep on the player.
     menu: HTMLElement | null; // menus.js
     statsEl: HTMLElement | null; // stats.js

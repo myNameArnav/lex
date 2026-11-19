@@ -8,8 +8,12 @@ import { replaceHash, play, refreshSoft } from '../app.js';
 import { progressBar } from './cards.js';
 import { trailerButton, extrasRow, hero, heroPoster, facts, watchedButton, favButton, watchlistButton, genreLinks, moreButton, castRow, retryWhileFetching } from './title.js';
 
+/** @typedef {import('../../../types/api.gen').Item} Item */
+/** @typedef {import('../../../types/api.gen').UserData} UserData */
+
 // playShuffle plays a show's (or a season's) episodes in random order.
 // The button stays busy while the order loads.
+/** @param {Item} it */
 async function playShuffle(it, btn) {
   let eps = null;
   if (!(await run(btn, async () => { eps = await api(`/api/items/${it.id}/shuffle`); }))) return;
@@ -155,6 +159,7 @@ export async function showView(ctx, d) {
 
 // episodeRow: onChange(played) runs after the watched toggle succeeds.
 function episodeRow(e, onChange) {
+  /** @type {Partial<UserData>} */
   const ud = e.userData || {};
   let busy = false;
   // Unplaced daily-show episodes go by air date, which the line below the title shows.

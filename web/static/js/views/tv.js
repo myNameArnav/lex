@@ -6,6 +6,8 @@ import { openPlayer, isPlayerOpen } from '../player-loader.js';
 import { state, renderNav, refreshSoft, refreshLater } from '../app.js';
 import { placeholder, progressBar } from './cards.js';
 
+/** @typedef {import('../../../types/api.gen').Item} Item */
+
 // playChannel tunes into a Live TV channel; channels are what Next and
 // Page Up/Down switch through.
 function playChannel(id, channels) {
@@ -13,10 +15,12 @@ function playChannel(id, channels) {
 }
 
 // The guide's two lines for a program: the show or movie, then the episode.
+/** @param {Item} it */
 function programHead(it) {
   return it.kind === 'episode' ? it.showTitle || it.title : it.title;
 }
 
+/** @param {Item} it */
 function programSub(it) {
   return it.kind === 'episode' ? `${fmtEpisode(it)} — ${it.title}` : String(it.year || '');
 }

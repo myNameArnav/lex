@@ -1,3 +1,6 @@
+/** @typedef {import('../../types/api.gen').Item} Item */
+/** @typedef {import('../../types/api.gen').Stream} Stream */
+
 // Small DOM + formatting helpers shared by all views.
 
 /**
@@ -140,6 +143,7 @@ export function channelName(ch) {
 
 // Language plus the track title, or just the title when it already names
 // the language ("English SDH") or the track has no language tag.
+/** @param {Stream} s */
 export function trackName(s, sep = ' · ') {
   const lang = langName(s.language);
   const t = s.title && s.title !== lang ? s.title : '';
@@ -147,6 +151,7 @@ export function trackName(s, sep = ' · ') {
   return !s.language || t.toLowerCase().includes(lang.toLowerCase()) ? t : `${lang}${sep}${t}`;
 }
 
+/** @param {Stream} s */
 export function streamLabel(s) {
   const codec = (s.codec || '').toUpperCase().replace('HDMV_PGS_SUBTITLE', 'PGS').replace('SUBRIP', 'SRT');
   if (s.type === 'audio') {
@@ -167,6 +172,7 @@ export function streamLabel(s) {
 // datedEpisode: a date-named daily-show episode its provider hasn't placed
 // yet. The scanner groups those by year (season) and numbers them by date
 // (episode = MMDD), which means nothing to show as "S2024 E305".
+/** @param {Item} it */
 export function datedEpisode(it) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(it?.premiere || '');
   return !!m && it.season === +m[1] && it.episode === +m[2] * 100 + +m[3];
@@ -174,6 +180,7 @@ export function datedEpisode(it) {
 
 // "S1 E3", or "S1 E3–4" for a multi-episode file; the air date for an
 // unplaced daily-show episode.
+/** @param {Item} it */
 export function fmtEpisode(it) {
   if (datedEpisode(it)) return fmtAirDate(it.premiere);
   if (it?.episode == null) return it?.season != null ? `S${it.season}` : '';

@@ -12,7 +12,13 @@ import { tvView } from './views/tv.js';
 // admin.js imports this from here.
 export { fixMatch } from './views/title.js';
 
-// caps: { subtitleSearch, cacheEnabled, liveTv, maxTranscodeHeight, transcode } from the server (see /api/me).
+/** @typedef {import('../../types/api.gen').User} User */
+/** @typedef {import('../../types/api.gen').Library} Library */
+/** @typedef {import('../../types/api.gen').serverCaps} ServerCaps */
+
+// caps: the optional features this user can use, from the server (see /api/me).
+// subsRemaining: OpenSubtitles downloads left today, once a search has said.
+/** @type {{ me: User | null, caps: Partial<ServerCaps>, serverName: string, libraries: Library[], version: string, subsRemaining?: number | null }} */
 export const state = { me: null, caps: {}, serverName: 'lex', libraries: [], version: '' };
 const app = document.getElementById('app');
 let mainEl = null, navEl = null, searchInput = null;
