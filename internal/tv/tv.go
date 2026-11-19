@@ -17,13 +17,24 @@ import (
 )
 
 // Channel is a source of programs: one an admin made, the whole server, a
-// library or a genre.
+// library or a genre. Its number is its place in the lineup, counting the
+// channels turned off, so turning one off doesn't renumber the rest.
 type Channel struct {
 	ID     string `json:"id"`
 	Number int    `json:"number"`
 	Name   string `json:"name"`
 
+	// Off: turned off by the admin (only Lineup lists these).
+	Off    bool `json:"-"`
 	filter store.AirFilter
+}
+
+// Filter is what an admin's channel airs.
+func Filter(c store.TVChannel) store.AirFilter {
+	if c.Kind == "picked" {
+		return store.AirFilter{Kind: c.Kind, Titles: c.Titles}
+	}
+	return store.AirFilter{Libraries: c.Libraries, Genres: c.Genres, Kind: c.Kind, Exclude: c.Exclude}
 }
 
 // Program is one slot in a schedule. A program that would run past midnight
@@ -43,66 +54,79 @@ const (
 type Guide struct {
 	St *store.Store
 
-	mu          sync.Mutex
-	days        map[string][]Program // channel id + filter + date
-	channels    []Channel
-	channelsAt  time.Time
-	channelsFor string // the admin's channels (and hidden ones) the list was made from
-	libs        map[string]channelLibs
+	mu        sync.Mutex
+	days      map[string][]Program // channel id + filter + date
+	lineup    []Channel
+	lineupAt  time.Time
+	lineupFor string // the lineup settings the list was made from
+	pools     map[string]poolInfo
 }
 
-type channelLibs struct {
-	ids []int64
-	at  time.Time
+// poolInfo sums up what a channel can air.
+type poolInfo struct {
+	libs   []int64
+	titles int
+	at     time.Time
 }
 
 func New(st *store.Store) *Guide {
-	return &Guide{St: st, days: map[string][]Program{}, libs: map[string]channelLibs{}}
+	return &Guide{St: st, days: map[string][]Program{}, pools: map[string]poolInfo{}}
 }
 
-// Channels lists the admin's channels (Settings › Live TV), then the
-// automatic ones the admin hasn't turned off. A channel with nothing to air
-// (e.g. a library still scanning) is still listed here, with no programs, so
-// numbers don't shift. The list is kept for a minute, or until the admin's
-// channels change: the guide and every tune ask.
+// Channels lists the channels on air, in lineup order. A channel with
+// nothing to air (e.g. a library still scanning) is still listed here, with
+// no programs, so numbers don't shift.
 func (g *Guide) Channels() ([]Channel, error) {
+	all, err := g.Lineup()
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(slices.Clone(all), func(c Channel) bool { return c.Off }), nil
+}
+
+// Lineup lists every channel, including the ones turned off: the order the
+// admin set (Settings › Live TV), then the channels it doesn't name yet: the
+// admin's own, then the automatic ones. The list is kept for a minute, or
+// until the lineup settings change: the guide and every tune ask.
+func (g *Guide) Lineup() ([]Channel, error) {
 	cfg := g.St.Config()
-	sig := fmt.Sprint(cfg.TVChannels, cfg.TVHidden)
+	sig := fmt.Sprint(cfg.TVChannels, cfg.TVOrder, cfg.TVHidden)
 	g.mu.Lock()
-	if time.Since(g.channelsAt) < time.Minute && g.channelsFor == sig {
+	if time.Since(g.lineupAt) < time.Minute && g.lineupFor == sig {
 		defer g.mu.Unlock()
-		return g.channels, nil
+		return g.lineup, nil
 	}
 	g.mu.Unlock()
-	var out []Channel
+	var rest []Channel
 	for _, c := range cfg.TVChannels {
-		f := store.AirFilter{Libraries: c.Libraries, Genres: c.Genres, Kind: c.Kind, Exclude: c.Exclude}
-		if c.Kind == "picked" {
-			f = store.AirFilter{Kind: c.Kind, Titles: c.Titles}
-		}
-		out = append(out, Channel{ID: "custom-" + c.ID, Name: c.Name, filter: f})
+		rest = append(rest, Channel{ID: "custom-" + c.ID, Name: c.Name, filter: Filter(c)})
 	}
 	auto, err := g.Automatic()
 	if err != nil {
 		return nil, err
 	}
-	for _, c := range auto {
-		if !slices.Contains(cfg.TVHidden, c.ID) {
-			out = append(out, c)
+	rest = append(rest, auto...)
+	out := make([]Channel, 0, len(rest))
+	for _, id := range cfg.TVOrder {
+		if i := slices.IndexFunc(rest, func(c Channel) bool { return c.ID == id }); i >= 0 {
+			out = append(out, rest[i])
+			rest = slices.Delete(rest, i, i+1)
 		}
 	}
+	out = append(out, rest...)
 	for i := range out {
 		out[i].Number = i + 1
+		out[i].Off = slices.Contains(cfg.TVHidden, out[i].ID)
 	}
 	g.mu.Lock()
-	g.channels, g.channelsAt, g.channelsFor = out, time.Now(), sig
+	g.lineup, g.lineupAt, g.lineupFor = out, time.Now(), sig
 	g.mu.Unlock()
 	return out, nil
 }
 
-// Automatic lists every channel the library could fill, hidden or not, and
-// unnumbered: All (with more than one library), one per library, then the
-// most common genres.
+// Automatic lists every channel the library could fill, unnumbered: All
+// (with more than one library), one per library, then the most common
+// genres.
 func (g *Guide) Automatic() ([]Channel, error) {
 	libs, err := g.St.Libraries()
 	if err != nil {
@@ -125,7 +149,7 @@ func (g *Guide) Automatic() ([]Channel, error) {
 	return out, nil
 }
 
-// Channel finds a channel by id.
+// Channel finds a channel on air by id.
 func (g *Guide) Channel(id string) (Channel, bool, error) {
 	chs, err := g.Channels()
 	if err != nil {
@@ -141,36 +165,78 @@ func (g *Guide) Channel(id string) (Channel, bool, error) {
 
 // Libraries lists the libraries a channel's titles come from, so a channel
 // can be hidden from users who can't see all of them (every viewer sees the
-// same schedule, so it can't leave out what they can't see). Kept for a
-// minute.
+// same schedule, so it can't leave out what they can't see).
 func (g *Guide) Libraries(ch Channel) ([]int64, error) {
-	key := ch.ID + "|" + fmt.Sprint(ch.filter)
+	p, err := g.pool(ch.ID, ch.filter)
+	return p.libs, err
+}
+
+// Titles counts the movies and shows a channel can air.
+func (g *Guide) Titles(ch Channel) (int, error) {
+	p, err := g.pool(ch.ID, ch.filter)
+	return p.titles, err
+}
+
+// pool sums up what a filter airs. Kept for a minute.
+func (g *Guide) pool(id string, f store.AirFilter) (poolInfo, error) {
+	key := id + "|" + fmt.Sprint(f)
 	g.mu.Lock()
-	c, ok := g.libs[key]
+	c, ok := g.pools[key]
 	g.mu.Unlock()
 	if ok && time.Since(c.at) < time.Minute {
-		return c.ids, nil
+		return c, nil
 	}
-	pool, err := g.St.Airables(ch.filter)
+	pool, err := g.St.Airables(f)
 	if err != nil {
-		return nil, err
+		return poolInfo{}, err
 	}
-	var ids []int64
+	p := poolInfo{libs: []int64{}, titles: countTitles(pool), at: time.Now()}
 	for _, a := range pool {
-		if !slices.Contains(ids, a.LibraryID) {
-			ids = append(ids, a.LibraryID)
+		if !slices.Contains(p.libs, a.LibraryID) {
+			p.libs = append(p.libs, a.LibraryID)
 		}
 	}
-	slices.Sort(ids)
+	slices.Sort(p.libs)
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	for k, v := range g.libs {
+	for k, v := range g.pools {
 		if time.Since(v.at) >= time.Minute {
-			delete(g.libs, k)
+			delete(g.pools, k)
 		}
 	}
-	g.libs[key] = channelLibs{ids: ids, at: time.Now()}
-	return ids, nil
+	g.pools[key] = p
+	return p, nil
+}
+
+// countTitles counts the movies and shows in a pool.
+func countTitles(pool []store.Airable) int {
+	seen := map[int64]bool{}
+	for _, a := range pool {
+		k := -a.ItemID
+		if a.ShowID > 0 {
+			k = a.ShowID
+		}
+		seen[k] = true
+	}
+	return len(seen)
+}
+
+// Preview schedules an admin's channel as it would air if saved now (id is
+// its channel id, so an unchanged channel previews what it airs today): how
+// many titles it has and up to n programs from t on. Nothing is kept.
+func (g *Guide) Preview(id string, f store.AirFilter, t time.Time, n int) (int, []Program, error) {
+	pool, err := g.St.Airables(f)
+	if err != nil {
+		return 0, nil, err
+	}
+	day := midnight(t)
+	var out []Program
+	for _, p := range Schedule(pool, seed(id+"|"+day.Format("2006-01-02")), day, nextMidnight(day)) {
+		if p.End.After(t) && len(out) < n {
+			out = append(out, p)
+		}
+	}
+	return countTitles(pool), out, nil
 }
 
 // Programs returns the programs airing at some point in [from, to), in

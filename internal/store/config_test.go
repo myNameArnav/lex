@@ -41,6 +41,15 @@ func TestNormalizeTVChannels(t *testing.T) {
 	if !slices.Equal(d.TVHidden, []string{"lib-1", "genre-Drama"}) {
 		t.Fatalf("hidden = %q", d.TVHidden)
 	}
+	// The order and the channels turned off forget the admin's channels
+	// that are gone, but keep automatic ones the library may fill again.
+	d.TVChannels = []TVChannel{{ID: "a", Name: "A"}}
+	d.TVOrder = []string{"custom-gone", "genre-Western", "custom-a", "custom-a"}
+	d.TVHidden = []string{"custom-gone", "custom-a"}
+	d.normalize()
+	if !slices.Equal(d.TVOrder, []string{"genre-Western", "custom-a"}) || !slices.Equal(d.TVHidden, []string{"custom-a"}) {
+		t.Fatalf("order = %q, hidden = %q", d.TVOrder, d.TVHidden)
+	}
 }
 
 // Remuxing in the browser is on by default, also for settings saved before

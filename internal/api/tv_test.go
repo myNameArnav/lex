@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"lex/internal/store"
@@ -187,18 +189,108 @@ func TestTVHiddenChannels(t *testing.T) {
 	if code := getJSON(t, h, token, "/api/tv/lib-1", nil); code != 404 {
 		t.Fatalf("tuning a hidden channel: %d", code)
 	}
-	if code := getJSON(t, h, token, "/api/admin/tv/automatic", nil); code != 403 {
-		t.Fatalf("automatic channels for a viewer: %d", code)
+	if code := getJSON(t, h, token, "/api/admin/tv", nil); code != 403 {
+		t.Fatalf("lineup for a viewer: %d", code)
 	}
 	admin, err := s.St.CreateUser("boss", "test-password-123", true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	adminToken, _ := s.St.CreateToken(admin.ID, "Test", "127.0.0.1")
-	var auto []struct{ ID, Name string }
-	if code := getJSON(t, h, adminToken, "/api/admin/tv/automatic", &auto); code != 200 || len(auto) != 1 || auto[0].ID != "lib-1" || auto[0].Name != "Everything" {
-		t.Fatalf("automatic: %d %+v", code, auto)
+	var l tvLineup
+	if code := getJSON(t, h, adminToken, "/api/admin/tv", &l); code != 200 || len(l.Channels) != 2 {
+		t.Fatalf("lineup: %d %+v", code, l)
 	}
+	eps, lib := l.Channels[0], l.Channels[1]
+	if eps.ID != "custom-eps" || eps.Source != "custom" || eps.Custom == nil || eps.Custom.Name != "Episodes" || eps.Off || eps.Titles != 1 {
+		t.Fatalf("custom channel = %+v", eps)
+	}
+	if lib.ID != "lib-1" || lib.Name != "Everything" || lib.Source != "library" || !lib.Off || lib.Number != 2 || lib.Titles != 2 || lib.Custom != nil {
+		t.Fatalf("library channel = %+v", lib)
+	}
+}
+
+// Settings › Live TV saves each change on its own: the switch, the order,
+// the channels turned off, and each of the admin's channels.
+func TestTVLineupEditing(t *testing.T) {
+	s, h := securityServer(t)
+	viewer := tvLibrary(t, s)
+	admin, err := s.St.CreateUser("boss", "test-password-123", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, _ := s.St.CreateToken(admin.ID, "Test", "127.0.0.1")
+	send := func(method, path, body string, want int) tvLineup {
+		t.Helper()
+		w := adminRequest(t, h, token, method, path, body)
+		if w.Code != want {
+			t.Fatalf("%s %s: %d %s, want %d", method, path, w.Code, w.Body.String(), want)
+		}
+		var l tvLineup
+		if want == 200 {
+			if err := json.Unmarshal(w.Body.Bytes(), &l); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return l
+	}
+	ids := func(l tvLineup) (out []string) {
+		for _, c := range l.Channels {
+			out = append(out, c.ID)
+		}
+		return out
+	}
+	if w := adminRequest(t, h, viewer, "POST", "/api/admin/tv/channels", `{"name":"Mine"}`); w.Code != 403 {
+		t.Fatalf("viewer adds a channel: %d", w.Code)
+	}
+	send("POST", "/api/admin/tv/channels", `{"name":"  "}`, 400)
+	send("POST", "/api/admin/tv/channels", `{"name":"Picks","kind":"picked","titles":[]}`, 400)
+	// A new channel goes after the automatic ones.
+	l := send("POST", "/api/admin/tv/channels", `{"name":" Movies ","kind":"movie","genres":["","Crime","Crime"]}`, 200)
+	id := l.Saved
+	if !strings.HasPrefix(id, "custom-") || !slices.Equal(ids(l), []string{"lib-1", id}) {
+		t.Fatalf("after adding: %v, saved %q", ids(l), id)
+	}
+	if c := l.Channels[1].Custom; c.Name != "Movies" || !slices.Equal(c.Genres, []string{"Crime"}) || l.Channels[1].Number != 2 {
+		t.Fatalf("added = %+v", l.Channels[1])
+	}
+	custom := strings.TrimPrefix(id, "custom-")
+	l = send("PUT", "/api/admin/tv/channels/"+custom, `{"name":"Heat only","kind":"picked","titles":[1]}`, 200)
+	if c := l.Channels[1]; c.Name != "Heat only" || c.Titles != 1 || c.Custom.ID != custom {
+		t.Fatalf("edited = %+v", c)
+	}
+	send("PUT", "/api/admin/tv/channels/nope", `{"name":"X"}`, 404)
+	// Reorder and turn one off; the switch saves alone.
+	l = send("PUT", "/api/admin/tv", `{"order":["`+id+`","lib-1"],"off":["lib-1"]}`, 200)
+	if !slices.Equal(ids(l), []string{id, "lib-1"}) || !l.Channels[1].Off || l.Enabled != true {
+		t.Fatalf("after reordering: %+v", l)
+	}
+	if l = send("PUT", "/api/admin/tv", `{"enabled":false}`, 200); l.Enabled || !l.Channels[1].Off || l.Channels[0].ID != id {
+		t.Fatalf("after turning Live TV off: %+v", l)
+	}
+	send("PUT", "/api/admin/tv", `{"enabled":true}`, 200)
+	// The settings form doesn't touch any of it, even sending an old copy.
+	if w := adminRequest(t, h, token, "PUT", "/api/admin/config", `{"liveTv":false,"tvChannels":[],"tvOrder":[],"tvHidden":[],"serverName":"Den"}`); w.Code != 200 {
+		t.Fatalf("config: %d %s", w.Code, w.Body.String())
+	}
+	if c := s.St.Config(); !c.LiveTV || len(c.TVChannels) != 1 || len(c.TVHidden) != 1 || c.ServerName != "Den" {
+		t.Fatalf("config PUT changed Live TV: %+v", c)
+	}
+	// The preview counts titles and shows what's on.
+	var prev struct {
+		Titles   int           `json:"titles"`
+		Programs []programView `json:"programs"`
+	}
+	w := adminRequest(t, h, token, "POST", "/api/admin/tv/preview", `{"kind":"show"}`)
+	if err := json.Unmarshal(w.Body.Bytes(), &prev); err != nil || w.Code != 200 || prev.Titles != 1 || len(prev.Programs) != previewPrograms || prev.Programs[0].Item.Kind != "episode" {
+		t.Fatalf("preview: %d %+v", w.Code, prev)
+	}
+	// Removing a channel drops it from the order too.
+	l = send("DELETE", "/api/admin/tv/channels/"+custom, "", 200)
+	if !slices.Equal(ids(l), []string{"lib-1"}) || len(s.St.Config().TVOrder) != 1 {
+		t.Fatalf("after removing: %v, order %v", ids(l), s.St.Config().TVOrder)
+	}
+	send("DELETE", "/api/admin/tv/channels/"+custom, "", 404)
 }
 
 func TestTVCustomChannel(t *testing.T) {

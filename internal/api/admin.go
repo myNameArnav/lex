@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -24,18 +25,32 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.St.Config())
 }
 
+// putConfig saves the settings sent; the rest stay. Live TV's are left
+// alone: Settings › Live TV saves them through /api/admin/tv, and a page
+// holding an older copy of the config mustn't put them back.
 func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
-	old := s.St.Config()
-	c := old
-	if err := readJSON(r, &c); err != nil {
+	var raw json.RawMessage
+	if err := readJSON(r, &raw); err != nil {
 		writeErr(w, 400, "bad config: "+err.Error())
 		return
 	}
-	if msg := checkBackupDir(c.BackupDir, old.BackupDir); msg != "" {
-		writeErr(w, 400, msg)
+	var old store.Config
+	c, err := s.St.UpdateConfig(func(c *store.Config) error {
+		old = *c
+		if err := json.Unmarshal(raw, c); err != nil {
+			return badConfig("bad config: " + err.Error())
+		}
+		c.LiveTV, c.TVChannels, c.TVOrder, c.TVHidden = old.LiveTV, old.TVChannels, old.TVOrder, old.TVHidden
+		if msg := checkBackupDir(c.BackupDir, old.BackupDir); msg != "" {
+			return badConfig(msg)
+		}
+		return nil
+	})
+	var bad badConfig
+	if errors.As(err, &bad) {
+		writeErr(w, 400, string(bad))
 		return
 	}
-	c, err := s.St.SaveConfig(c)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -61,6 +76,11 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, c)
 }
+
+// badConfig is a config putConfig won't save; it says why.
+type badConfig string
+
+func (e badConfig) Error() string { return string(e) }
 
 func (s *Server) adminInfo(w http.ResponseWriter, r *http.Request) {
 	cfg := s.St.Config()

@@ -756,7 +756,6 @@ body:has(.save-bar) > .toasts { bottom: calc(80px + var(--sab)); }
 .settings .form-section > .form-grid > .field > .help { grid-column: 1; grid-row: 2; align-self: start; }
 .settings .form-section > .field:not(:has(> .help:not([hidden]))) > span:first-child,
 .settings .form-section > .form-grid > .field:not(:has(> .help:not([hidden]))) > span:first-child { grid-row: 1 / span 2; align-self: center; }
-.settings .form-section .tv-channel-edit .form-grid { display: grid; }
 .settings .toggle-row { gap: 28px; }
 .settings .toggle-row .lbl { gap: 2px; }
 .settings .form-section .field > .help, .settings .toggle-row .help { max-width: 64ch; }
@@ -990,11 +989,30 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 }
 .task { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text2); }
 /* An empty inline error line takes no room (it stays in the page as a live region). */
-.tv-channels-editor { display: grid; gap: 12px; }
-.tv-channels-editor h3 { margin: 0; font-size: 14px; }
-.tv-channels { display: grid; gap: 12px; }
-.tv-channels:empty { display: none; }
-.tv-channel-edit { border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 14px; }
+/* Settings › Live TV: the lineup, a row per channel. */
+.tv-lineup { list-style: none; margin: 4px 0 0; padding: 0; display: grid; border-top: 1px solid var(--line); }
+.tv-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.tv-row-num { font-size: 18px; font-weight: 800; color: var(--text2); font-variant-numeric: tabular-nums; text-align: right; }
+.tv-row-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tv-row-sub { font-size: 12.5px; color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tv-row.off .tv-row-num, .tv-row.off .tv-row-name { color: var(--text3); }
+.tv-row-actions { display: flex; align-items: center; gap: 6px; }
+.tv-row-switch { display: inline-flex; padding: 8px 0 8px 8px; cursor: pointer; }
+.tv-row-edit-gap { width: 52px; }
+.tv-down svg { transform: rotate(180deg); }
+@media (max-width: 600px) {
+  .tv-row { grid-template-columns: 28px minmax(0, 1fr); row-gap: 6px; }
+  .tv-row-actions { grid-column: 2; }
+  .tv-row-edit-gap { display: none; }
+  .tv-row-switch { margin-left: auto; }
+}
+/* The channel dialog: its choices, and a preview of what it airs. */
+.tv-channel-form { display: grid; gap: 16px; }
+.tv-channel-form .seg { width: fit-content; }
+.tv-preview { font-size: 13.5px; min-height: 2.5em; }
+.tv-preview p { margin: 0 0 6px; }
+.tv-preview-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.tv-preview-list li { display: flex; gap: 10px; min-width: 0; }
 .tv-filters { display: grid; gap: 14px; }
 .tv-filters[hidden], .title-picker[hidden] { display: none; }
 .title-picker .chips:empty { display: none; }

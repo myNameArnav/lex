@@ -23,7 +23,10 @@ type Store struct {
 	db *sql.DB
 	// cfgMu guards the cached config document.
 	cfgMu sync.RWMutex
-	cfg   Config
+	// cfgSaveMu orders config saves, so UpdateConfig's read and write
+	// aren't split by another save.
+	cfgSaveMu sync.Mutex
+	cfg       Config
 }
 
 const schema = `
