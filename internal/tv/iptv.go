@@ -2,10 +2,13 @@ package tv
 
 // IPTV: playlists (M3U) to pick live channels from, and their guides
 // (XMLTV). Both are fetched by the server with the source's User-Agent.
+// A playlist address may instead be a provider's channel API (JSON, as
+// OnnetPlayer apps read): it lists the channels and their guide at once.
 
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -18,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +41,10 @@ type PlaylistEntry struct {
 	// Headers: any others the playlist asks for (#EXTHTTP, or Kodi's
 	// "url|Name=value").
 	Headers []store.TVHeader `json:"headers"`
+
+	// fromAPI: read from a channel API, whose headers (the app's own
+	// data) are for the API, not for the channel's streams.
+	fromAPI bool
 }
 
 // maxDownload caps a playlist or guide download (a big XMLTV guide
@@ -205,10 +213,25 @@ var ErrNoChannels = errors.New("no channels found: it isn't an M3U playlist of h
 // ReadPlaylist reads a playlist (up to 64 MB) and says what's wrong with
 // one that holds no channels.
 func ReadPlaylist(r io.Reader) ([]PlaylistEntry, error) {
+	entries, _, err := readPlaylist(r)
+	return entries, err
+}
+
+// readPlaylist reads an M3U playlist, or a channel API's answer with the
+// channels' guide programs (by guide id).
+func readPlaylist(r io.Reader) ([]PlaylistEntry, map[string][]GuideProgram, error) {
 	b, err := io.ReadAll(io.LimitReader(r, 64<<20))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	if t := bytes.TrimSpace(b); len(t) > 0 && t[0] == '{' {
+		return ParseChannelAPI(t)
+	}
+	entries, err := readM3U(b)
+	return entries, nil, err
+}
+
+func readM3U(b []byte) ([]PlaylistEntry, error) {
 	entries, err := ParseM3U(bytes.NewReader(b))
 	if err != nil || len(entries) > 0 {
 		return entries, err
@@ -217,6 +240,74 @@ func ReadPlaylist(r io.Reader) ([]PlaylistEntry, error) {
 		return nil, ErrSingleStream
 	}
 	return nil, ErrNoChannels
+}
+
+// apiChannel is a channel in a channel API's answer.
+type apiChannel struct {
+	ID         json.Number `json:"channelId"`
+	Name       string      `json:"channelName"`
+	Category   string      `json:"channelCategory"`
+	Language   string      `json:"channelLanguage"`
+	Logo       string      `json:"channelLogoUrl"`
+	CustomLogo string      `json:"customChannelLogoUrl"`
+	HLS        string      `json:"unicastHlsUrl"`
+	Play       string      `json:"channelPlayUrl"`
+	Number     int         `json:"lcn"`
+	Programs   []struct {
+		Name  string `json:"programName"`
+		Desc  string `json:"programDesc"`
+		Start int64  `json:"startTime"`
+		End   int64  `json:"endTime"`
+	} `json:"programList"`
+}
+
+// ParseChannelAPI reads a channel API's answer (OnnetPlayer's EPG call):
+// {"statusCode":200,"data":[{"channelId","channelName","unicastHlsUrl",
+// "programList":[{"programName","startTime","endTime",…}],…}]}. Channels
+// come in their channel-number order; a channel's guide id is its id.
+func ParseChannelAPI(b []byte) ([]PlaylistEntry, map[string][]GuideProgram, error) {
+	var resp struct {
+		StatusCode int          `json:"statusCode"`
+		Message    string       `json:"message"`
+		Data       []apiChannel `json:"data"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		return nil, nil, errors.New("the address answered JSON that isn't a channel list")
+	}
+	if resp.StatusCode != 0 && resp.StatusCode != 200 {
+		return nil, nil, fmt.Errorf("the channel API answered: %s", cmp.Or(resp.Message, strconv.Itoa(resp.StatusCode)))
+	}
+	slices.SortStableFunc(resp.Data, func(a, b apiChannel) int { return cmp.Compare(a.Number, b.Number) })
+	var out []PlaylistEntry
+	guide := map[string][]GuideProgram{}
+	for _, c := range resp.Data {
+		u := cmp.Or(strings.TrimSpace(c.HLS), strings.TrimSpace(c.Play))
+		if !store.WebURL(u) {
+			continue
+		}
+		id := c.ID.String()
+		var groups []string
+		for _, g := range []string{c.Category, c.Language} {
+			if g = strings.TrimSpace(g); g != "" {
+				groups = append(groups, g)
+			}
+		}
+		out = append(out, PlaylistEntry{
+			Name: cmp.Or(strings.TrimSpace(c.Name), u), URL: u, GuideID: id,
+			Logo: cmp.Or(strings.TrimSpace(c.CustomLogo), strings.TrimSpace(c.Logo)), Group: strings.Join(groups, ";"),
+			Headers: []store.TVHeader{}, fromAPI: true,
+		})
+		for _, p := range c.Programs {
+			if p.End > p.Start && id != "" {
+				guide[id] = append(guide[id], GuideProgram{Title: strings.TrimSpace(p.Name), Description: strings.TrimSpace(p.Desc),
+					Start: time.Unix(p.Start, 0), End: time.Unix(p.End, 0)})
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil, nil, errors.New("the channel API listed no channels: check the headers the app sends")
+	}
+	return out, guide, nil
 }
 
 // UploadDir is where uploaded playlists and guides are kept.
@@ -259,6 +350,7 @@ func unpack(r io.Reader, c io.Closer) (io.ReadCloser, error) {
 
 type playlist struct {
 	entries []PlaylistEntry
+	guide   map[string][]GuideProgram // a channel API's guide
 	at      time.Time
 	err     error
 }
@@ -266,36 +358,44 @@ type playlist struct {
 // Playlist reads a source's channels; kept for an hour (a failed read for
 // a minute). Its User-Agent is the default for its channels.
 func (g *Guide) Playlist(ctx context.Context, src store.TVSource) ([]PlaylistEntry, error) {
+	p := g.playlist(ctx, src, time.Hour)
+	return p.entries, p.err
+}
+
+// playlist reads a source, or answers what was read less than maxAge ago.
+func (g *Guide) playlist(ctx context.Context, src store.TVSource, maxAge time.Duration) playlist {
 	key := fmt.Sprint(src.URL, src.PlaylistFile, src.UserAgent, src.Headers)
 	g.mu.Lock()
 	p, ok := g.playlists[key]
 	g.mu.Unlock()
-	if ok && (time.Since(p.at) < time.Hour && p.err == nil || time.Since(p.at) < time.Minute) {
-		return p.entries, p.err
+	if ok && (time.Since(p.at) < maxAge && p.err == nil || time.Since(p.at) < time.Minute) {
+		return p
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	var entries []PlaylistEntry
+	var guide map[string][]GuideProgram
 	body, err := g.open(ctx, src.URL, src.PlaylistFile, src.UserAgent, src.Headers)
 	if err == nil {
-		entries, err = ReadPlaylist(body)
+		entries, guide, err = readPlaylist(body)
 		body.Close()
 	}
 	for i := range entries {
 		if entries[i].UserAgent == "" {
 			entries[i].UserAgent = src.UserAgent
 		}
-		if len(entries[i].Headers) == 0 {
+		if len(entries[i].Headers) == 0 && !entries[i].fromAPI {
 			entries[i].Headers = src.Headers
 		}
 		if entries[i].Headers == nil {
 			entries[i].Headers = []store.TVHeader{}
 		}
 	}
+	p = playlist{entries, guide, time.Now(), err}
 	g.mu.Lock()
-	g.playlists[key] = playlist{entries, time.Now(), err}
+	g.playlists[key] = p
 	g.mu.Unlock()
-	return entries, err
+	return p
 }
 
 // GuideProgram is a program in an XMLTV guide.
@@ -355,12 +455,9 @@ func (g *Guide) refreshGuides(cfg store.Config) {
 			ids[st.GuideID] = true
 		}
 	}
-	var srcs []store.TVSource
-	for _, src := range cfg.TVSources {
-		if src.GuideURL != "" || src.GuideFile != "" {
-			srcs = append(srcs, src)
-		}
-	}
+	// Every source: one without a guide may be a channel API, whose
+	// answer holds the guide.
+	srcs := cfg.TVSources
 	keys := make([]string, 0, len(ids))
 	for k := range ids {
 		keys = append(keys, k)
@@ -400,14 +497,33 @@ func (g *Guide) refreshGuides(cfg store.Config) {
 }
 
 // readGuide adds src's programs for the channels in ids, from a day back
-// to two days on.
+// to two days on: from its XMLTV guide, or else from its channel API.
 func (g *Guide) readGuide(ctx context.Context, src store.TVSource, ids map[string]bool, into map[string][]GuideProgram) error {
+	from, to := time.Now().Add(-24*time.Hour), time.Now().Add(48*time.Hour)
+	if src.GuideURL == "" && src.GuideFile == "" {
+		// A channel API's guide only runs some hours ahead: read it afresh.
+		p := g.playlist(ctx, src, 30*time.Minute)
+		if p.err != nil {
+			return p.err
+		}
+		for id, progs := range p.guide {
+			if !ids[id] {
+				continue
+			}
+			for _, gp := range progs {
+				if gp.End.After(from) && gp.Start.Before(to) {
+					into[id] = append(into[id], gp)
+				}
+			}
+		}
+		return nil
+	}
 	body, err := g.open(ctx, src.GuideURL, src.GuideFile, src.UserAgent, src.Headers)
 	if err != nil {
 		return err
 	}
 	defer body.Close()
-	return ParseXMLTV(body, ids, time.Now().Add(-24*time.Hour), time.Now().Add(48*time.Hour), into)
+	return ParseXMLTV(body, ids, from, to, into)
 }
 
 // ParseXMLTV adds the <programme>s of the channels in ids that overlap

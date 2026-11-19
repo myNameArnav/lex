@@ -114,7 +114,7 @@ export function sourceDialog(sources, src, onSaved) {
   const errors = formErrors(`source-err-${++uid}`, []);
   const input = (k, attrs = {}) => h('input', { type: 'text', value: d[k], autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', ...attrs, oninput: (e) => { d[k] = e.target.value; } });
   const name = input('name', { maxlength: 60, placeholder: 'e.g. Free channels', autocapitalize: 'sentences' });
-  const url = input('url', { inputmode: 'url', placeholder: 'https://…/playlist.m3u' });
+  const url = input('url', { inputmode: 'url', placeholder: 'https://…/playlist.m3u, or a channel API address' });
   const guide = input('guideUrl', { inputmode: 'url', placeholder: 'Optional: https://…/guide.xml(.gz)' });
   // Each of the playlist and the guide is an address or an uploaded file.
   const pick = (kind, input, fileKey, urlKey, accept, label) => {
@@ -162,10 +162,10 @@ export function sourceDialog(sources, src, onSaved) {
   };
   const form = h('form', { class: 'form tv-channel-form', novalidate: true, onsubmit: (e) => { e.preventDefault(); submit(); } },
     field('Name', name),
-    h('div', { class: 'field' }, h('span', null, 'Playlist'), h('div', { class: 'help' }, 'A list of channels (M3U), by its address or as a file. You then pick which of its channels to add.'), playlistPick),
-    h('div', { class: 'field' }, h('span', null, 'Guide ', h('span', { class: 'muted' }, '(optional)')), h('div', { class: 'help' }, 'What’s on (XMLTV, may be gzipped), matched to channels by their tvg-id. Without one, channels show as Live.'), guidePick),
+    h('div', { class: 'field' }, h('span', null, 'Playlist'), h('div', { class: 'help' }, 'A list of channels (M3U), by its address or as a file. Or your provider’s channel API (JSON, as OnnetPlayer apps read), which brings its own guide: enter its address, and the User-Agent and headers its app sends below. You then pick which of its channels to add.'), playlistPick),
+    h('div', { class: 'field' }, h('span', null, 'Guide ', h('span', { class: 'muted' }, '(optional)')), h('div', { class: 'help' }, 'What’s on (XMLTV, may be gzipped), matched to channels by their tvg-id. Not needed for a channel API. Without one, channels show as Live.'), guidePick),
     field('User-Agent', input('userAgent', { placeholder: 'Optional' }), 'Sent when reading the playlist and guide, and for its channels unless the playlist names one.'),
-    headersEditor(d, 'Sent when reading the playlist and guide, and with its channels unless the playlist gives them their own.'));
+    headersEditor(d, 'Sent when reading the playlist and guide, and with its channels unless the playlist gives them their own. For a channel API, the app’s own data, e.g. Content-APP-DATA: {"groupId":1,…}, which is kept on the server and sent only to the API.'));
   const m = modal({ title: src ? `Edit ${src.name}` : 'New playlist', wide: true, dismissible: false, body: form,
     actions: [h('div', { class: 'spacer' }), errors.err, h('button', { class: 'btn', type: 'button', onclick: () => m.close() }, 'Cancel'), saveBtn] });
   requestAnimationFrame(() => name.focus());
@@ -241,7 +241,7 @@ export function sourceRow(src, { browse, edit, remove }) {
   return h('li', { class: 'tv-row tv-src' },
     h('span', { class: 'tv-row-num', 'aria-hidden': 'true', html: icons.broadcast }),
     h('div', { class: 'tv-row-main' }, h('div', { class: 'tv-row-name' }, src.name),
-      h('div', { class: 'tv-row-sub' }, [src.playlistFile ? 'uploaded playlist' : host(src.url), src.guideFile ? 'uploaded guide' : src.guideUrl ? `guide from ${host(src.guideUrl)}` : 'no guide'].join(' · '))),
+      h('div', { class: 'tv-row-sub' }, [src.playlistFile ? 'uploaded playlist' : host(src.url), src.guideFile ? 'uploaded guide' : src.guideUrl ? `guide from ${host(src.guideUrl)}` : 'no guide file'].join(' · '))),
     h('div', { class: 'tv-row-actions' },
       h('button', { type: 'button', class: 'btn sm primary', 'aria-label': `Add channels from ${src.name}`, dataset: { focusKey: `browse-${src.id}` }, onclick: browse }, 'Add channels'),
       h('button', { type: 'button', class: 'btn sm', 'aria-label': `Edit ${src.name}`, dataset: { focusKey: `src-edit-${src.id}` }, onclick: edit }, 'Edit'),

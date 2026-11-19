@@ -1022,7 +1022,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tv-browse-name small { color: var(--text3); font-size: 12px; }
 .tv-probe { font-size: 13px; }
 .tv-src-pick { display: grid; gap: 8px; }
-.tv-src-pick input[hidden] { display: none; }
+.tv-src-pick input[hidden], .tv-src-pick .btn[hidden] { display: none; }
 .tv-headers { display: grid; gap: 6px; }
 .tv-headers:empty { display: none; }
 .tv-header-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto; gap: 6px; align-items: center; }

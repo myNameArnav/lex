@@ -1,6 +1,10 @@
 package tv
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -108,5 +112,70 @@ func TestStreamChannels(t *testing.T) {
 	}
 	if libs, _ := g.Libraries(chs[0]); len(libs) != 0 {
 		t.Fatalf("libraries = %v", libs)
+	}
+}
+
+// A playlist address can be a provider's channel API (JSON): its channels
+// come in channel-number order with the source's User-Agent but not its
+// headers (they're the app's data, for the API), and its programs are the
+// guide of the channels picked.
+func TestChannelAPI(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Content-APP-DATA") != `{"groupId":1}` || r.UserAgent() != "App/2" {
+			w.Write([]byte(`{"message":"groupId missing in headers","statusCode":404}`))
+			return
+		}
+		fmt.Fprintf(w, `{"statusCode":200,"message":"SUCCESS","data":[
+			{"channelId":481,"channelName":"News 24","channelCategory":"News","channelLanguage":"English","channelLogoUrl":"https://cdn.test/n.png","unicastHlsUrl":"https://cdn.test/live/481/master.m3u8","lcn":2,"programList":[]},
+			{"channelId":478,"channelName":"Star","channelCategory":"Entertainment","channelLanguage":"Hindi","channelLogoUrl":"https://cdn.test/s.png","customChannelLogoUrl":"https://cdn.test/s2.png","unicastHlsUrl":"https://cdn.test/live/478/master.m3u8","lcn":1,
+			 "programList":[{"programName":"Morning Show","programDesc":"Talk.","startTime":%d,"endTime":%d},{"programName":"Old","startTime":%d,"endTime":%d}]},
+			{"channelId":9,"channelName":"Multicast only","unicastHlsUrl":"","multiCastUrl":"udp://239.0.0.1:1234","lcn":3,"programList":[]}]}`,
+			now.Add(-time.Hour).Unix(), now.Add(time.Hour).Unix(), now.Add(-72*time.Hour).Unix(), now.Add(-71*time.Hour).Unix())
+	}))
+	t.Cleanup(srv.Close)
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	g := New(st)
+	src := store.TVSource{ID: "p", Name: "Provider", URL: srv.URL + "/epg/v2/epg/IPTV/new", UserAgent: "App/2", Headers: []store.TVHeader{{Name: "Content-APP-DATA", Value: `{"groupId":1}`}}}
+
+	if _, err := g.Playlist(context.Background(), store.TVSource{URL: srv.URL}); err == nil || !strings.Contains(err.Error(), "groupId missing") {
+		t.Fatalf("without the app's data: %v, want the API's message", err)
+	}
+	entries, err := g.Playlist(context.Background(), src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[0].Name != "Star" || entries[1].Name != "News 24" {
+		t.Fatalf("entries = %+v, want Star then News 24 (the multicast one left out)", entries)
+	}
+	e := entries[0]
+	if e.GuideID != "478" || e.Logo != "https://cdn.test/s2.png" || e.Group != "Entertainment;Hindi" || e.UserAgent != "App/2" || len(e.Headers) != 0 {
+		t.Fatalf("entry = %+v", e)
+	}
+
+	c := st.Config()
+	c.TVSources = []store.TVSource{src}
+	c.TVStreams = []store.TVStream{{ID: "s", Name: "Star", URL: e.URL, GuideID: "478", Source: "p"}}
+	if _, err := st.SaveConfig(c); err != nil {
+		t.Fatal(err)
+	}
+	chs, err := g.Channels()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var progs []GuideProgram
+	for deadline := time.Now().Add(5 * time.Second); len(progs) == 0 && time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		progs = g.StreamPrograms(chs[0], now.Add(-3*time.Hour), now.Add(3*time.Hour))
+	}
+	if len(progs) != 1 || progs[0].Title != "Morning Show" || progs[0].Description != "Talk." || !progs[0].Start.Equal(now.Add(-time.Hour)) {
+		t.Fatalf("guide = %+v", progs)
+	}
+	if _, err := g.GuideStatus(); err != nil {
+		t.Fatalf("guide error: %v", err)
 	}
 }
