@@ -91,6 +91,34 @@ export const liveTv = {
     }
   },
 
+  // renderLiveTime draws the read-only bar: how far into the program on
+  // now this is (a library title by its playback position, a stream by the
+  // clock), with its start and end times; a stream without a guide is just
+  // "Live".
+  renderLiveTime() {
+    const live = this.live;
+    const now = live?.now;
+    const slot = now ? (now.end - now.start) / 1000 : 0;
+    const t = !now ? 0 : live.stream ? (Date.now() - live.skew - now.start) / 1000 : this.video.currentTime;
+    const pct = slot ? Math.min(100, Math.max(0, (t / slot) * 100)) : live?.stream ? 100 : 0;
+    this.fill.style.width = `${pct}%`;
+    this.knob.style.left = `${pct}%`;
+    const text = now ? [fmtClock(now.start), fmtClock(now.end)] : ['Live', ''];
+    if (this.nowEl.textContent !== text[0]) this.nowEl.textContent = text[0];
+    if (this.endEl.textContent !== text[1]) this.endEl.textContent = text[1];
+    this.timeEl.classList.toggle('no-end', !now);
+    this.endsEl.textContent = '';
+    if (this.chapEl.textContent) this.chapEl.textContent = '';
+    // Not focusable at all, even by a click: there's nothing to do with it.
+    this.seek.removeAttribute('tabindex');
+    this.seek.setAttribute('aria-readonly', 'true');
+    this.seek.setAttribute('aria-disabled', 'true');
+    this.seek.setAttribute('aria-valuemax', String(Math.max(0, Math.floor(slot))));
+    this.seek.setAttribute('aria-valuenow', String(Math.max(0, Math.min(Math.floor(t), Math.floor(slot)))));
+    this.seek.setAttribute('aria-valuetext', now ? `${fmtProgram(now.item)}, ${fmtClock(now.start)} to ${fmtClock(now.end)}` : 'Live');
+    for (const el of this.rail.querySelectorAll('.buf, .chap, .seg')) el.remove();
+  },
+
   // livePosition: where in the current program the broadcast is now (s).
   livePosition() {
     const { now, skew } = this.live;
@@ -142,7 +170,8 @@ export const liveTv = {
     if (!live?.now) return;
     const pos = this.livePosition();
     if (pos < (live.now.end - live.now.start) / 1000 - 5) {
-      this.seekTo(pos);
+      // Not seekTo: that's for the viewer, and Live TV can't be skipped.
+      this.video.currentTime = pos;
       this.video.play().catch(() => {});
     } else this.nextProgram();
   },

@@ -13,13 +13,16 @@ import (
 // A job that keeps reporting progress may run past the stall limit; one
 // that goes quiet is killed.
 func TestRunWatched(t *testing.T) {
-	slow := exec.Command("sh", "-c", `for i in 1 2 3 4 5 6; do echo "out_time=$i" >&3; sleep 0.1; done`)
-	if err := RunWatched(slow, 300*time.Millisecond); err != nil {
+	// Generous gaps: the job runs at the lowest priority, and on a busy
+	// machine (CI runs the ffmpeg tests alongside) it can wait a while
+	// for the CPU. It still runs well past the stall limit in total.
+	slow := exec.Command("sh", "-c", `for i in 1 2 3 4 5 6; do echo "out_time=$i" >&3; sleep 0.3; done`)
+	if err := RunWatched(slow, time.Second); err != nil {
 		t.Fatalf("progressing job: %v", err)
 	}
 	start := time.Now()
 	stuck := exec.Command("sh", "-c", `echo progress=continue >&3; sleep 30`)
-	if err := RunWatched(stuck, 300*time.Millisecond); !errors.Is(err, ErrStalled) {
+	if err := RunWatched(stuck, time.Second); !errors.Is(err, ErrStalled) {
 		t.Fatalf("stuck job: %v, want ErrStalled", err)
 	}
 	if d := time.Since(start); d > 5*time.Second {

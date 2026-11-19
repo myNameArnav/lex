@@ -148,7 +148,7 @@ export class Player {
     this.center.appendChild(this.statusEl);
     this.titleEl.id = 'player-title';
     this.restoreFocus = /** @type {HTMLElement | null} */ (document.activeElement);
-    this.root = h('div', { class: 'player', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'player-title', tabindex: '-1' },
+    this.root = h('div', { class: `player${this.live ? ' p-tv' : ''}`, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'player-title', tabindex: '-1' },
       this.video, this.pgsCanvas,
       h('div', { class: 'shade-top' }), h('div', { class: 'shade-bot' }),
       this.subsEl,
@@ -272,7 +272,7 @@ export class Player {
     let lastTap = 0;
     v.addEventListener('touchend', (e) => {
       const now = Date.now();
-      if (now - lastTap < 300) {
+      if (now - lastTap < 300 && !this.live) {
         const x = e.changedTouches[0].clientX / window.innerWidth;
         if (x < 0.35) this.skip(-prefs.get('skipBack'), true);
         else if (x > 0.65) this.skip(prefs.get('skipFwd'), true);
@@ -307,7 +307,10 @@ export class Player {
       this.tip.style.left = `${Math.min(Math.max(x, half + 4 - r.left), window.innerWidth - r.left - half - 4)}px`;
       return t;
     };
+    // Live TV plays on the clock: its bar shows where the program is, but
+    // can't be moved.
     this.seek.addEventListener('pointerdown', (e) => {
+      if (this.live) return;
       dragging = true;
       this.seek.setPointerCapture(e.pointerId);
       this.seek.classList.add('drag');
@@ -316,6 +319,7 @@ export class Player {
       this.poke();
     });
     this.seek.addEventListener('pointermove', (e) => {
+      if (this.live) return;
       const t = showTip(e);
       if (dragging) { this.dragT = t; this.renderTime(); this.poke(); }
     });
@@ -330,7 +334,7 @@ export class Player {
     this.seek.addEventListener('pointerleave', () => { if (!dragging && this.tip) { this.tip.remove(); this.tip = null; } });
     this.seek.addEventListener('click', (e) => e.stopPropagation());
     this.seek.addEventListener('keydown', (e) => {
-      if (e.metaKey || e.ctrlKey || e.altKey || !this.duration()) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || !this.duration() || this.live) return;
       const t = this.video.currentTime;
       const targets = { ArrowLeft: t - prefs.get('skipBack'), ArrowDown: t - prefs.get('skipBack'), ArrowRight: t + prefs.get('skipFwd'), ArrowUp: t + prefs.get('skipFwd'), PageDown: t - 60, PageUp: t + 60, Home: 0, End: this.duration() - 0.5 };
       if (!(e.key in targets)) return;
@@ -847,6 +851,7 @@ export class Player {
 
   // show: on-screen '+30s' / '−10s' (keys and double-taps; the buttons are their own feedback).
   skip(d, show = false) {
+    if (this.live) return;
     this.seekTo(this.video.currentTime + d);
     if (!show) return;
     // Repeated presses or taps add up in one bubble.
@@ -856,7 +861,10 @@ export class Player {
     this.osdSkip = { el, sum };
   }
 
+  // seekTo moves to t (s). Not on Live TV, which only follows the clock
+  // (goLive sets the position itself).
   seekTo(t) {
+    if (this.live) return;
     const d = this.duration();
     t = Math.max(0, Math.min(t, d ? d - 0.5 : t));
     this.video.currentTime = t;
@@ -962,7 +970,7 @@ export class Player {
       escape: () => { if (this.menu) this.closeMenu(); else if (!document.fullscreenElement) this.close(); },
       home: () => this.seekTo(0), end: () => this.seekTo(this.duration() - 5),
     };
-    if (/^[0-9]$/.test(k)) { this.seekTo((this.duration() * +k) / 10); e.preventDefault(); return; }
+    if (/^[0-9]$/.test(k) && !this.live) { this.seekTo((this.duration() * +k) / 10); e.preventDefault(); return; }
     if (map[k]) { e.preventDefault(); map[k](); this.poke(); }
   }
 
@@ -975,6 +983,7 @@ export class Player {
   }
 
   renderTime() {
+    if (this.live) { this.renderLiveTime(); return; }
     const d = this.duration();
     const t = this.dragT ?? this.video.currentTime;
     const pct = d ? (t / d) * 100 : 0;
@@ -1120,9 +1129,9 @@ export class Player {
       const ms = navigator.mediaSession;
       ms.setActionHandler('play', () => this.video.play());
       ms.setActionHandler('pause', () => this.video.pause());
-      ms.setActionHandler('seekbackward', () => this.skip(-prefs.get('skipBack')));
-      ms.setActionHandler('seekforward', () => this.skip(prefs.get('skipFwd')));
-      ms.setActionHandler('seekto', (d) => this.seekTo(d.seekTime));
+      ms.setActionHandler('seekbackward', this.live ? null : () => this.skip(-prefs.get('skipBack')));
+      ms.setActionHandler('seekforward', this.live ? null : () => this.skip(prefs.get('skipFwd')));
+      ms.setActionHandler('seekto', this.live ? null : (d) => this.seekTo(d.seekTime));
       ms.setActionHandler('nexttrack', this.detail.next || this.live ? () => this.playNext() : null);
       ms.setActionHandler('previoustrack', this.live ? () => this.switchChannel(-1) : null);
     } catch {}

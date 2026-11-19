@@ -250,7 +250,7 @@ func (s *Server) tvChannelDelete(w http.ResponseWriter, r *http.Request) {
 const previewPrograms = 5
 
 // tvPreview answers what a channel being edited would air: how many titles
-// it has and what's on today from now. A saved channel's id makes the
+// it has and what's on from now. A saved channel's id makes the
 // preview match what it airs today, while its choices are unchanged.
 func (s *Server) tvPreview(w http.ResponseWriter, r *http.Request) {
 	var ch store.TVChannel

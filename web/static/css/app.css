@@ -1447,7 +1447,14 @@ kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px soli
 .tv-details .art.logo img, .card.tv-now .art.logo img { object-fit: contain; padding: 12%; }
 .tv-overview { margin: 0; color: var(--text2); line-height: 1.5; }
 .player .p-live { margin-left: auto; flex: none; border: 0; border-radius: 4px; padding: 4px 9px; font: inherit; font-size: 12px; font-weight: 800; letter-spacing: .06em; background: var(--bad-strong); color: #fff; cursor: pointer; }
-.player.p-stream .seek, .player.p-stream .p-transport > button:not(:first-child), .player.p-stream .p-time, .player.p-stream .p-ends, .player.p-stream .p-method { visibility: hidden; }
+/* Live TV: the bar shows the program's progress but can't be moved, and
+   there's nothing to skip. */
+.player.p-tv .seek { cursor: default; }
+.player.p-tv .seek .knob { display: none; }
+.player.p-tv .p-transport > button:not(:first-child), .player.p-tv .p-ends { display: none; }
+.player.p-tv .p-end { pointer-events: none; }
+.player.p-tv .p-time.no-end > [aria-hidden], .player.p-tv .p-time.no-end .p-end { display: none; }
+.player.p-stream .p-method { visibility: hidden; }
 .player .p-chans { flex: none; border: 1px solid rgba(255,255,255,.25); border-radius: 4px; padding: 3px 9px; font: inherit; font-size: 12px; font-weight: 700; background: rgba(0,0,0,.3); color: #fff; cursor: pointer; }
 .player .p-chans[aria-expanded="true"] { background: rgba(255,255,255,.18); }
 .p-menu .pm-chan-n { flex: none; min-width: 2em; font-weight: 800; font-variant-numeric: tabular-nums; color: rgba(255,255,255,.6); }
