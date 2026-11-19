@@ -24,6 +24,11 @@ AddDevice=-/dev/video10
 AddDevice=-/dev/video11
 AddDevice=-/dev/video12
 AddDevice=-/dev/video19
+# The rest of bcm2835-codec (image_fx, encode_image): FFmpeg's HEVC decoder
+# lookup opens every video node a media controller lists and gives up if
+# one is missing.
+AddDevice=-/dev/video18
+AddDevice=-/dev/video31
 AddDevice=-/dev/dri
 AddDevice=-/dev/dma_heap
 AddDevice=-/dev/vchiq

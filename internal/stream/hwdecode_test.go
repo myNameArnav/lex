@@ -73,3 +73,18 @@ func TestCheckHWFallback(t *testing.T) {
 		t.Fatalf("want one warning, got %q", logged)
 	}
 }
+
+func TestHWDecodeAborted(t *testing.T) {
+	// Seen on the Pi: FFmpeg exits instead of falling back.
+	probe := "[hevc @ 0x55] probe_video_device: opening /dev/video18 failed, No such file or directory (2)"
+	hw := []string{"-hwaccel", "drm", "-i", "x.mkv"}
+	if !HWDecodeAborted(hw, probe) || !HWDecodeAborted(hw, fallbackStderr) {
+		t.Error("hardware decoder failure not detected")
+	}
+	if HWDecodeAborted([]string{"-i", "x.mkv"}, probe) {
+		t.Error("software run blamed on the hardware decoder")
+	}
+	if HWDecodeAborted(hw, "x.mkv: Invalid data found when processing input") {
+		t.Error("a broken file blamed on the hardware decoder")
+	}
+}
