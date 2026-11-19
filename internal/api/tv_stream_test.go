@@ -100,6 +100,12 @@ func TestLiveStreamChannel(t *testing.T) {
 		if err != nil || strings.Fields(string(out))[0] != "h264" || !strings.Contains(string(out), "aac") {
 			t.Fatalf("%s sent %q, %v", ch, out, err)
 		}
+		// The header carries the AAC config (Firefox plays no sound
+		// without it): ffprobe reads the profile from it.
+		out, err = exec.Command("ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=profile", "-of", "csv=p=0", mp4).Output()
+		if err != nil || strings.TrimSpace(string(out)) != "LC" {
+			t.Fatalf("%s: AAC profile %q (no config in the header?), %v", ch, out, err)
+		}
 	}
 	if hits == 0 {
 		t.Fatal("the stream was never fetched")

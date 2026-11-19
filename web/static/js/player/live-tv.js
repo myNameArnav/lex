@@ -64,10 +64,13 @@ export const liveTv = {
     const live = this.live;
     if (this.closed || this.errEl || !live?.stream) return;
     let msg = 'The channel’s stream stopped.';
+    const err = this.video.error;
     const ctl = new AbortController();
     try {
       const res = await fetch(`${live.stream.url}?t=${Date.now()}`, { signal: ctl.signal, credentials: 'same-origin' });
       if (!res.ok) msg = (await res.json().catch(() => null))?.error || msg;
+      // The server opens it fine: it's this browser that can't play it.
+      else if (err?.code === 3 || err?.code === 4) msg = `The server sends this channel, but this browser couldn’t play it${err.message ? ` (${err.message})` : ''}. Try another browser.`;
     } catch {}
     ctl.abort();
     if (this.closed || this.errEl || live.stream == null) return;
