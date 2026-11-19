@@ -1459,7 +1459,8 @@ kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px soli
 .tvg-prog.past { color: var(--text3); }
 .tvg-t { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tvg-s { font-size: 12px; color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tvg-bar { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); }
+/* How far into the program: quiet grey, so the now line is the guide's one color. */
+.tvg-bar { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--text3); opacity: .7; }
 .tvg-now { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--accent); z-index: 1; pointer-events: none; }
 .tvg-ch:focus-visible, .tvg-prog:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 @media (hover: hover) {
