@@ -65,6 +65,8 @@ const (
 
 type Guide struct {
 	St *store.Store
+	// Dir holds uploaded playlists and guides.
+	Dir string
 
 	mu        sync.Mutex
 	days      map[string][]Program // channel id + filter + date
@@ -104,7 +106,7 @@ func (g *Guide) Channels() ([]Channel, error) {
 // until the lineup settings change: the guide and every tune ask.
 func (g *Guide) Lineup() ([]Channel, error) {
 	cfg := g.St.Config()
-	sig := fmt.Sprint(cfg.TVChannels, cfg.TVStreams, cfg.TVOrder, cfg.TVHidden)
+	sig := fmt.Sprint(cfg.TVChannels, cfg.TVStreams, cfg.TVOrder, cfg.TVHidden, cfg.TVRemoved)
 	g.mu.Lock()
 	if time.Since(g.lineupAt) < time.Minute && g.lineupFor == sig {
 		defer g.mu.Unlock()
@@ -122,7 +124,11 @@ func (g *Guide) Lineup() ([]Channel, error) {
 	if err != nil {
 		return nil, err
 	}
-	rest = append(rest, auto...)
+	for _, c := range auto {
+		if !slices.Contains(cfg.TVRemoved, c.ID) {
+			rest = append(rest, c)
+		}
+	}
 	out := make([]Channel, 0, len(rest))
 	for _, id := range cfg.TVOrder {
 		if i := slices.IndexFunc(rest, func(c Channel) bool { return c.ID == id }); i >= 0 {

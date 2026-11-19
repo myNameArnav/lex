@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -94,6 +95,9 @@ func (s *Server) Handler() (http.Handler, error) {
 	s.resizeSem = make(chan struct{}, 2)
 	if s.TV == nil {
 		s.TV = tv.New(s.St)
+	}
+	if s.TV.Dir == "" && s.DataDir != "" {
+		s.TV.Dir = filepath.Join(s.DataDir, "livetv")
 	}
 	if err := s.loadStatic(); err != nil {
 		return nil, err
@@ -178,6 +182,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("DELETE /api/admin/tv/streams/{id}", a(s.tvStreamDelete))
 	mux.Handle("POST /api/admin/tv/streams/probe", a(s.tvStreamProbe))
 	mux.Handle("PUT /api/admin/tv/sources", a(s.tvSourcesSave))
+	mux.Handle("POST /api/admin/tv/files", a(s.tvUpload))
 	mux.Handle("GET /api/admin/tv/sources/{id}/channels", a(s.tvSourceChannels))
 	mux.Handle("GET /api/admin/libraries", a(s.adminLibraries))
 	mux.Handle("POST /api/admin/libraries", a(s.createLibrary))

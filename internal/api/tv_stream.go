@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -39,18 +41,35 @@ func liveItem(title, sub, desc string) *store.Item {
 }
 
 // streamPrograms are a live channel's programs in [from, to): its guide's,
-// or one block for the whole window named after the channel. limit <= 0:
-// all of them.
+// with what the guide leaves out (all of it, without one) as blocks named
+// after the channel, so there's always something on to tune into. limit
+// <= 0: all of them.
 func (s *Server) streamPrograms(ch tv.Channel, from, to time.Time, limit int) []programView {
 	out := []programView{}
-	for _, p := range s.TV.StreamPrograms(ch, from, to) {
+	add := func(p programView) bool {
 		if limit > 0 && len(out) >= limit {
-			break
+			return false
 		}
-		out = append(out, programView{Item: liveItem(p.Title, p.Subtitle, p.Description), Start: p.Start.UnixMilli(), End: p.End.UnixMilli()})
+		out = append(out, p)
+		return true
 	}
-	if len(out) == 0 {
-		out = append(out, programView{Item: liveItem(ch.Name, "", ""), Start: from.UnixMilli(), End: to.UnixMilli()})
+	filler := func(a, b time.Time) programView {
+		return programView{Item: liveItem(ch.Name, "", ""), Start: a.UnixMilli(), End: b.UnixMilli()}
+	}
+	at := from
+	for _, p := range s.TV.StreamPrograms(ch, from, to) {
+		if p.Start.Sub(at) >= time.Minute && !add(filler(at, p.Start)) {
+			return out
+		}
+		if p.End.After(at) {
+			if !add(programView{Item: liveItem(p.Title, p.Subtitle, p.Description), Start: p.Start.UnixMilli(), End: p.End.UnixMilli()}) {
+				return out
+			}
+			at = p.End
+		}
+	}
+	if to.Sub(at) >= time.Minute {
+		add(filler(at, to))
 	}
 	return out
 }
@@ -62,13 +81,17 @@ func (s *Server) tuneStream(w http.ResponseWriter, ch tv.Channel, now time.Time)
 		"url":  "/api/tv/" + ch.ID + "/stream",
 		"logo": ch.Stream.Logo,
 	}}
-	if progs := s.TV.StreamPrograms(ch, now, now.Add(12*time.Hour)); len(progs) > 0 {
-		pv := func(p tv.GuideProgram) programView {
-			return programView{Item: liveItem(p.Title, p.Subtitle, p.Description), Start: p.Start.UnixMilli(), End: p.End.UnixMilli()}
-		}
-		out["now"] = pv(progs[0])
-		if len(progs) > 1 {
-			out["next"] = pv(progs[1])
+	// Now is the guide's program airing now (none in a gap of the guide);
+	// next is the one after.
+	pv := func(p tv.GuideProgram) programView {
+		return programView{Item: liveItem(p.Title, p.Subtitle, p.Description), Start: p.Start.UnixMilli(), End: p.End.UnixMilli()}
+	}
+	for _, p := range s.TV.StreamPrograms(ch, now, now.Add(12*time.Hour)) {
+		if !p.Start.After(now) && out["now"] == nil {
+			out["now"] = pv(p)
+		} else if p.Start.After(now) {
+			out["next"] = pv(p)
+			break
 		}
 	}
 	writeJSON(w, out)
@@ -395,6 +418,9 @@ func checkStream(st store.TVStream) error {
 	return nil
 }
 
+// maxStreamsAdd is how many live channels can be added at once.
+const maxStreamsAdd = 2000
+
 // tvStreamsAdd adds live channels at the end of the lineup: one (the
 // stream dialog) or several (picked from a playlist).
 func (s *Server) tvStreamsAdd(w http.ResponseWriter, r *http.Request) {
@@ -403,8 +429,8 @@ func (s *Server) tvStreamsAdd(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad streams: "+err.Error())
 		return
 	}
-	if len(in) == 0 || len(in) > 500 {
-		writeErr(w, 400, "Add between 1 and 500 channels at a time")
+	if len(in) == 0 || len(in) > maxStreamsAdd {
+		writeErr(w, 400, fmt.Sprintf("Add between 1 and %d channels at a time", maxStreamsAdd))
 		return
 	}
 	for i := range in {
@@ -444,6 +470,7 @@ func (s *Server) tvStreamsAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Log.Infof("Live TV: %d live channel(s) added by %s", len(in), userOf(r).Name)
+	s.TV.RefreshGuides()
 	s.writeLineup(w, saved)
 }
 
@@ -500,15 +527,26 @@ func (s *Server) tvSourcesSave(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "bad sources: "+err.Error())
 		return
 	}
+	old := s.St.Config().TVSources
 	for i := range in {
 		in[i] = in[i].Clean()
-		if !store.WebURL(in[i].URL) {
-			writeErr(w, 400, "Enter the playlist’s http(s) address")
+		if !store.WebURL(in[i].URL) && in[i].PlaylistFile == "" {
+			writeErr(w, 400, "Enter the playlist’s http(s) address, or upload the file")
 			return
 		}
 		if in[i].GuideURL != "" && !store.WebURL(in[i].GuideURL) {
 			writeErr(w, 400, "Enter the guide’s http(s) address, or leave it empty")
 			return
+		}
+		// A new or changed playlist must list channels: say now if it's a
+		// single stream, or not a playlist at all.
+		if !slices.ContainsFunc(old, func(o store.TVSource) bool {
+			return o.URL == in[i].URL && o.PlaylistFile == in[i].PlaylistFile && o.UserAgent == in[i].UserAgent && fmt.Sprint(o.Headers) == fmt.Sprint(in[i].Headers)
+		}) {
+			if _, err := s.TV.Playlist(r.Context(), in[i]); err != nil {
+				writeErr(w, 400, "Couldn’t use the playlist: "+err.Error())
+				return
+			}
 		}
 	}
 	_, err := s.St.UpdateConfig(func(c *store.Config) error { c.TVSources = in; return nil })
@@ -516,7 +554,97 @@ func (s *Server) tvSourcesSave(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	s.removeUnusedUploads()
+	s.TV.RefreshGuides()
 	s.writeLineup(w, "")
+}
+
+// Uploaded playlists and guides: at most this big (a guide may be gzipped).
+const (
+	maxPlaylistUpload = 64 << 20
+	maxGuideUpload    = 256 << 20
+)
+
+// tvUpload keeps an uploaded playlist (?kind=playlist) or guide
+// (?kind=guide) for a playlist to use, after checking it is one; it answers
+// the file's name for the playlist, and how many channels a playlist has.
+// Files no playlist uses are removed when the playlists are next saved.
+func (s *Server) tvUpload(w http.ResponseWriter, r *http.Request) {
+	kind := r.URL.Query().Get("kind")
+	limit, ext := int64(maxPlaylistUpload), "m3u"
+	switch kind {
+	case "playlist":
+	case "guide":
+		limit, ext = maxGuideUpload, "xmltv"
+	default:
+		writeErr(w, 400, "kind must be playlist or guide")
+		return
+	}
+	dir := s.TV.UploadDir()
+	if dir == "" {
+		writeErr(w, 500, "no data folder")
+		return
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	name := store.RandomToken(8) + "." + ext
+	path := filepath.Join(dir, name)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	n, err := io.Copy(f, io.LimitReader(r.Body, limit+1))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	fail := func(code int, msg string) { os.Remove(path); writeErr(w, code, msg) }
+	switch {
+	case err != nil:
+		fail(400, "upload failed: "+err.Error())
+		return
+	case n > limit:
+		fail(413, fmt.Sprintf("The file is too big (at most %d MB)", limit>>20))
+		return
+	case n == 0:
+		fail(400, "The file is empty")
+		return
+	}
+	out := map[string]any{"file": name}
+	if kind == "playlist" {
+		entries, err := s.TV.Playlist(r.Context(), store.TVSource{PlaylistFile: name})
+		if err != nil {
+			fail(400, "Couldn’t use the playlist: "+err.Error())
+			return
+		}
+		out["channels"] = len(entries)
+	} else if err := tv.CheckXMLTV(s.TV, name); err != nil {
+		fail(400, "Couldn’t use the guide: "+err.Error())
+		return
+	}
+	s.Log.Infof("Live TV: %s uploaded a %s (%d KB)", userOf(r).Name, kind, n>>10)
+	writeJSON(w, out)
+}
+
+// removeUnusedUploads deletes uploaded files no playlist uses (older than
+// an hour, so one just uploaded for a playlist not yet saved stays).
+func (s *Server) removeUnusedUploads() {
+	dir := s.TV.UploadDir()
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	used := map[string]bool{}
+	for _, src := range s.St.Config().TVSources {
+		used[src.PlaylistFile], used[src.GuideFile] = true, true
+	}
+	for _, e := range ents {
+		if info, err := e.Info(); err == nil && store.UploadName(e.Name()) && !used[e.Name()] && time.Since(info.ModTime()) > time.Hour {
+			os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
 }
 
 // tvSourceChannels lists a playlist's channels for picking: those whose
@@ -536,6 +664,11 @@ func (s *Server) tvSourceChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	words := strings.Fields(strings.ToLower(r.URL.Query().Get("q")))
+	// ?all=1: every match (for "select all"), not just the first page.
+	limit := 200
+	if r.URL.Query().Get("all") == "1" {
+		limit = maxStreamsAdd
+	}
 	group := r.URL.Query().Get("group")
 	groupSet := map[string]bool{}
 	out := []tv.PlaylistEntry{}
@@ -554,7 +687,7 @@ func (s *Server) tvSourceChannels(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		matched++
-		if len(out) < 200 {
+		if len(out) < limit {
 			out = append(out, e)
 		}
 	}

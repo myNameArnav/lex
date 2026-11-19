@@ -999,6 +999,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tv-row-actions { display: flex; align-items: center; gap: 6px; }
 .tv-row-switch { display: inline-flex; padding: 8px 0 8px 8px; cursor: pointer; }
 .tv-row-edit-gap { width: 52px; }
+.tv-removed { margin: 0; }
+.tv-removed .btn { vertical-align: baseline; }
 .tv-down svg { transform: rotate(180deg); }
 @media (max-width: 600px) {
   .tv-row { grid-template-columns: 28px minmax(0, 1fr); row-gap: 6px; }
@@ -1019,6 +1021,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tv-browse-name { display: flex; flex-direction: column; min-width: 0; }
 .tv-browse-name small { color: var(--text3); font-size: 12px; }
 .tv-probe { font-size: 13px; }
+.tv-src-pick { display: grid; gap: 8px; }
+.tv-src-pick input[hidden] { display: none; }
 .tv-headers { display: grid; gap: 6px; }
 .tv-headers:empty { display: none; }
 .tv-header-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto; gap: 6px; align-items: center; }

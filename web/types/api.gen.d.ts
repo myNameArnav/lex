@@ -173,6 +173,7 @@ export interface Config {
   tvChannels: TVChannel[];
   tvOrder: string[];
   tvHidden: string[];
+  tvRemoved: string[];
   tvStreams: TVStream[];
   tvSources: TVSource[];
   cacheEnabled: boolean;
@@ -686,6 +687,8 @@ export interface TVSource {
   url: string;
   guideUrl: string;
   userAgent: string;
+  playlistFile: string;
+  guideFile: string;
   headers: TVHeader[];
 }
 
@@ -941,6 +944,7 @@ export interface tvLineup {
   enabled: boolean;
   channels: tvLineupChannel[];
   sources: TVSource[];
+  removed: tvRemoved[];
   guideError?: string;
   saved?: string;
 }
@@ -962,6 +966,13 @@ export interface tvLineupEdit {
   enabled?: boolean | null;
   order?: string[];
   off?: string[];
+  removed?: string[];
+}
+
+// api.tvRemoved
+export interface tvRemoved {
+  id: string;
+  name: string;
 }
 
 // [method, path, response, request body]; any where the handler doesn't
@@ -1002,6 +1013,7 @@ export type ApiRoutes = [
   ["GET", `/api/admin/stats/sessions`, Session[], any],
   ["GET", `/api/admin/stats/system`, { snapshot: Snapshot; strains?: Strain[]; diskBusy?: Record<string, number>; history?: Point[]; remuxJobs?: number; transcodeJobs?: number; cache?: CacheStatus; }, any],
   ["POST", `/api/admin/tv/channels`, tvLineup, TVChannel],
+  ["POST", `/api/admin/tv/files`, { file: string; channels?: number; }, any],
   ["POST", `/api/admin/tv/preview`, { titles: number; programs: programView[]; }, TVChannel],
   ["PUT", `/api/admin/tv/sources`, tvLineup, TVSource[]],
   ["POST", `/api/admin/tv/streams`, tvLineup, TVStream[]],

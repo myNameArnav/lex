@@ -90,6 +90,9 @@ type Config struct {
 	TVChannels []TVChannel `json:"tvChannels"`
 	TVOrder    []string    `json:"tvOrder"`
 	TVHidden   []string    `json:"tvHidden"`
+	// TVRemoved are automatic channels taken out of the lineup altogether
+	// (they come back when restored).
+	TVRemoved []string `json:"tvRemoved"`
 	// TVStreams are live channels from the internet (IPTV), "stream-<id>"
 	// in the lineup; TVSources are the playlists (M3U) they can be picked
 	// from, with a guide (XMLTV) for them.
@@ -220,9 +223,28 @@ type TVSource struct {
 	URL       string `json:"url"`
 	GuideURL  string `json:"guideUrl"`
 	UserAgent string `json:"userAgent"`
+	// PlaylistFile and GuideFile are uploaded files (in the data folder's
+	// livetv folder), used instead of URL and GuideURL.
+	PlaylistFile string `json:"playlistFile"`
+	GuideFile    string `json:"guideFile"`
 	// Headers are sent when reading the playlist and guide, and with its
 	// channels unless the playlist gives them their own.
 	Headers []TVHeader `json:"headers"`
+}
+
+// UploadName reports whether name is a file Lex named for an upload: hex
+// and an extension, nothing that leaves its folder.
+func UploadName(name string) bool {
+	stem, ext, ok := strings.Cut(name, ".")
+	if !ok || len(stem) < 8 || (ext != "m3u" && ext != "xmltv") {
+		return false
+	}
+	for _, c := range stem {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // WebURL reports whether u is an http(s) URL with a host: the only kind
@@ -255,6 +277,18 @@ func (st TVStream) Clean() TVStream {
 func (src TVSource) Clean() TVSource {
 	src.ID, src.Name, src.URL, src.GuideURL = strings.TrimSpace(src.ID), strings.Join(strings.Fields(src.Name), " "), strings.TrimSpace(src.URL), strings.TrimSpace(src.GuideURL)
 	src.UserAgent = strings.Join(strings.Fields(src.UserAgent), " ")
+	if !UploadName(src.PlaylistFile) {
+		src.PlaylistFile = ""
+	}
+	if !UploadName(src.GuideFile) {
+		src.GuideFile = ""
+	}
+	if src.PlaylistFile != "" {
+		src.URL = ""
+	}
+	if src.GuideFile != "" {
+		src.GuideURL = ""
+	}
 	var ua string
 	src.Headers, ua, _ = CleanHeaders(src.Headers)
 	if ua != "" && src.UserAgent == "" {
@@ -480,7 +514,7 @@ func (c *Config) normalizeTVChannels() {
 	seen = map[string]bool{}
 	for _, src := range c.TVSources {
 		src = src.Clean()
-		if !WebURL(src.URL) || (src.GuideURL != "" && !WebURL(src.GuideURL)) {
+		if !WebURL(src.URL) && src.PlaylistFile == "" || (src.GuideURL != "" && !WebURL(src.GuideURL)) {
 			continue
 		}
 		for src.ID == "" || seen[src.ID] {
@@ -489,11 +523,17 @@ func (c *Config) normalizeTVChannels() {
 		seen[src.ID] = true
 		if src.Name == "" {
 			src.Name = src.URL
+			if src.Name == "" {
+				src.Name = "Playlist"
+			}
 		}
 		sources = append(sources, src)
 	}
 	c.TVSources = sources
 	c.TVOrder, c.TVHidden = c.channelIDs(c.TVOrder), c.channelIDs(c.TVHidden)
+	c.TVRemoved = slices.DeleteFunc(c.channelIDs(c.TVRemoved), func(id string) bool {
+		return strings.HasPrefix(id, "custom-") || strings.HasPrefix(id, "stream-")
+	})
 }
 
 // Clean trims the channel's id and name, drops a kind it doesn't know,
@@ -589,7 +629,7 @@ func (s *Store) UpdateConfig(edit func(*Config) error) (Config, error) {
 	c := s.Config()
 	// Lists are shared with the cached config: edit copies.
 	c.TVChannels, c.TVOrder, c.TVHidden = slices.Clone(c.TVChannels), slices.Clone(c.TVOrder), slices.Clone(c.TVHidden)
-	c.TVStreams, c.TVSources = slices.Clone(c.TVStreams), slices.Clone(c.TVSources)
+	c.TVStreams, c.TVSources, c.TVRemoved = slices.Clone(c.TVStreams), slices.Clone(c.TVSources), slices.Clone(c.TVRemoved)
 	if err := edit(&c); err != nil {
 		return s.Config(), err
 	}

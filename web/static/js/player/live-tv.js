@@ -130,7 +130,9 @@ export const liveTv = {
   checkLive() {
     const live = this.live;
     if (live?.stream) {
-      if (live.now && Date.now() - live.skew >= live.now.end) this.refreshStreamInfo();
+      // The guide moves on at the end of what's on, or (in a gap) when the next starts.
+      const due = live.now ? live.now.end : live.next?.start;
+      if (due && Date.now() - live.skew >= due) this.refreshStreamInfo();
       return;
     }
     if (!live?.now || !this.started || this.stopped || this.errEl || live.switching) return;

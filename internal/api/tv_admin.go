@@ -35,10 +35,18 @@ type tvLineup struct {
 	Enabled  bool              `json:"enabled"`
 	Channels []tvLineupChannel `json:"channels"`
 	Sources  []store.TVSource  `json:"sources"`
+	// Removed are the automatic channels taken out of the lineup, to
+	// restore.
+	Removed []tvRemoved `json:"removed"`
 	// GuideError says why a source's guide couldn't be read.
 	GuideError string `json:"guideError,omitempty"`
 	// Saved is the id of the channel a create made.
 	Saved string `json:"saved,omitempty"`
+}
+
+type tvRemoved struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 func (s *Server) lineup() (tvLineup, error) {
@@ -50,6 +58,18 @@ func (s *Server) lineup() (tvLineup, error) {
 	out := tvLineup{Enabled: cfg.LiveTV, Channels: []tvLineupChannel{}, Sources: cfg.TVSources}
 	if _, err := s.TV.GuideStatus(); err != nil {
 		out.GuideError = err.Error()
+	}
+	out.Removed = []tvRemoved{}
+	if len(cfg.TVRemoved) > 0 {
+		auto, err := s.TV.Automatic()
+		if err != nil {
+			return tvLineup{}, err
+		}
+		for _, a := range auto {
+			if slices.Contains(cfg.TVRemoved, a.ID) {
+				out.Removed = append(out.Removed, tvRemoved{a.ID, a.Name})
+			}
+		}
 	}
 	for _, ch := range chs {
 		n, err := s.TV.Titles(ch)
@@ -101,6 +121,8 @@ type tvLineupEdit struct {
 	Order []string `json:"order,omitempty"`
 	// Off lists the channels turned off.
 	Off []string `json:"off,omitempty"`
+	// Removed lists the automatic channels taken out of the lineup.
+	Removed []string `json:"removed,omitempty"`
 }
 
 func (s *Server) tvAdminEdit(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +140,9 @@ func (s *Server) tvAdminEdit(w http.ResponseWriter, r *http.Request) {
 		}
 		if in.Off != nil {
 			c.TVHidden = in.Off
+		}
+		if in.Removed != nil {
+			c.TVRemoved = in.Removed
 		}
 		return nil
 	})

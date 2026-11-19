@@ -15,6 +15,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -190,22 +192,69 @@ func fetch(ctx context.Context, u, ua string, headers []store.TVHeader) (io.Read
 		resp.Body.Close()
 		return nil, fmt.Errorf("%s answered %s", req.URL.Host, resp.Status)
 	}
-	br := bufio.NewReader(io.LimitReader(resp.Body, maxDownload))
+	return unpack(resp.Body, resp.Body)
+}
+
+// ErrSingleStream: a playlist address that's one channel's stream (an HLS
+// playlist of segments or variants), not a list of channels.
+var ErrSingleStream = errors.New("this is a single stream, not a list of channels: add it with New live channel")
+
+// ErrNoChannels: a playlist with no http(s) channels in it.
+var ErrNoChannels = errors.New("no channels found: it isn't an M3U playlist of http(s) channels")
+
+// ReadPlaylist reads a playlist (up to 64 MB) and says what's wrong with
+// one that holds no channels.
+func ReadPlaylist(r io.Reader) ([]PlaylistEntry, error) {
+	b, err := io.ReadAll(io.LimitReader(r, 64<<20))
+	if err != nil {
+		return nil, err
+	}
+	entries, err := ParseM3U(bytes.NewReader(b))
+	if err != nil || len(entries) > 0 {
+		return entries, err
+	}
+	if bytes.Contains(b, []byte("#EXT-X-")) {
+		return nil, ErrSingleStream
+	}
+	return nil, ErrNoChannels
+}
+
+// UploadDir is where uploaded playlists and guides are kept.
+func (g *Guide) UploadDir() string { return g.Dir }
+
+// open reads an uploaded file when one is named, else downloads u.
+func (g *Guide) open(ctx context.Context, u, file, ua string, headers []store.TVHeader) (io.ReadCloser, error) {
+	if file == "" {
+		return fetch(ctx, u, ua, headers)
+	}
+	if g.Dir == "" || !store.UploadName(file) {
+		return nil, errors.New("the uploaded file is missing")
+	}
+	f, err := os.Open(filepath.Join(g.Dir, file))
+	if err != nil {
+		return nil, errors.New("the uploaded file is missing: upload it again")
+	}
+	return unpack(f, f)
+}
+
+// unpack unpacks gzip (by its magic bytes) and caps what's read.
+func unpack(r io.Reader, c io.Closer) (io.ReadCloser, error) {
+	br := bufio.NewReader(io.LimitReader(r, maxDownload))
 	if magic, _ := br.Peek(2); bytes.Equal(magic, []byte{0x1f, 0x8b}) {
 		gz, err := gzip.NewReader(br)
 		if err != nil {
-			resp.Body.Close()
+			c.Close()
 			return nil, err
 		}
 		return struct {
 			io.Reader
 			io.Closer
-		}{io.LimitReader(gz, maxDownload), resp.Body}, nil
+		}{io.LimitReader(gz, maxDownload), c}, nil
 	}
 	return struct {
 		io.Reader
 		io.Closer
-	}{br, resp.Body}, nil
+	}{br, c}, nil
 }
 
 type playlist struct {
@@ -217,7 +266,7 @@ type playlist struct {
 // Playlist reads a source's channels; kept for an hour (a failed read for
 // a minute). Its User-Agent is the default for its channels.
 func (g *Guide) Playlist(ctx context.Context, src store.TVSource) ([]PlaylistEntry, error) {
-	key := fmt.Sprint(src.URL, src.UserAgent, src.Headers)
+	key := fmt.Sprint(src.URL, src.PlaylistFile, src.UserAgent, src.Headers)
 	g.mu.Lock()
 	p, ok := g.playlists[key]
 	g.mu.Unlock()
@@ -227,9 +276,9 @@ func (g *Guide) Playlist(ctx context.Context, src store.TVSource) ([]PlaylistEnt
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	var entries []PlaylistEntry
-	body, err := fetch(ctx, src.URL, src.UserAgent, src.Headers)
+	body, err := g.open(ctx, src.URL, src.PlaylistFile, src.UserAgent, src.Headers)
 	if err == nil {
-		entries, err = ParseM3U(body)
+		entries, err = ReadPlaylist(body)
 		body.Close()
 	}
 	for i := range entries {
@@ -294,6 +343,11 @@ func (g *Guide) GuideStatus() (time.Time, error) {
 	return g.epg.at, g.epg.err
 }
 
+// RefreshGuides starts reading the guides now, if the playlists or the
+// channels picked from them changed (after a save, rather than on the
+// next look at the guide).
+func (g *Guide) RefreshGuides() { g.refreshGuides(g.St.Config()) }
+
 func (g *Guide) refreshGuides(cfg store.Config) {
 	ids := map[string]bool{}
 	for _, st := range cfg.TVStreams {
@@ -303,7 +357,7 @@ func (g *Guide) refreshGuides(cfg store.Config) {
 	}
 	var srcs []store.TVSource
 	for _, src := range cfg.TVSources {
-		if src.GuideURL != "" {
+		if src.GuideURL != "" || src.GuideFile != "" {
 			srcs = append(srcs, src)
 		}
 	}
@@ -332,7 +386,7 @@ func (g *Guide) refreshGuides(cfg store.Config) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		for _, src := range srcs {
-			if err := readGuide(ctx, src, ids, progs); err != nil {
+			if err := g.readGuide(ctx, src, ids, progs); err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", src.Name, err))
 			}
 		}
@@ -347,8 +401,8 @@ func (g *Guide) refreshGuides(cfg store.Config) {
 
 // readGuide adds src's programs for the channels in ids, from a day back
 // to two days on.
-func readGuide(ctx context.Context, src store.TVSource, ids map[string]bool, into map[string][]GuideProgram) error {
-	body, err := fetch(ctx, src.GuideURL, src.UserAgent, src.Headers)
+func (g *Guide) readGuide(ctx context.Context, src store.TVSource, ids map[string]bool, into map[string][]GuideProgram) error {
+	body, err := g.open(ctx, src.GuideURL, src.GuideFile, src.UserAgent, src.Headers)
 	if err != nil {
 		return err
 	}
@@ -415,6 +469,30 @@ func ParseXMLTV(r io.Reader, ids map[string]bool, from, to time.Time, into map[s
 			gp.Description = strings.TrimSpace(p.Desc[0])
 		}
 		into[ch] = append(into[ch], gp)
+	}
+}
+
+// CheckXMLTV checks that an uploaded guide is XMLTV: a <tv> document.
+func CheckXMLTV(g *Guide, file string) error {
+	body, err := g.open(context.Background(), "", file, "", nil)
+	if err != nil {
+		return err
+	}
+	defer body.Close()
+	dec := xml.NewDecoder(body)
+	dec.Strict = false
+	dec.CharsetReader = func(_ string, in io.Reader) (io.Reader, error) { return in, nil }
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return errors.New("it isn't an XMLTV guide")
+		}
+		if se, ok := tok.(xml.StartElement); ok {
+			if se.Name.Local != "tv" {
+				return errors.New("it isn't an XMLTV guide")
+			}
+			return nil
+		}
 	}
 }
 
