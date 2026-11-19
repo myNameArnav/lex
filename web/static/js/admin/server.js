@@ -128,7 +128,7 @@ export function transcodingSection() {
   const check = (d) => (!d.enableDirectPlay && !d.enableRemux && !d.enableTranscode ? ['Keep at least one playback method on', first] : null);
   return configForm(({ draft, num, text, tg, bind, info }) => {
     const encs = info.ffmpeg.encoders || [];
-    const encOpts = [['libx264', `libx264 (software)${encs.includes('libx264') ? '' : ' — not available'}`], ['h264_v4l2m2m', `h264_v4l2m2m (Raspberry Pi hardware)${encs.includes('h264_v4l2m2m') ? (info.ffmpeg.v4l2Device ? '' : ' — no /dev/video11') : ' — not in this ffmpeg'}`]];
+    const encOpts = [['libx264', `libx264 (software)${encs.includes('libx264') ? '' : ' (not available)'}`], ['h264_v4l2m2m', `h264_v4l2m2m (Raspberry Pi hardware)${encs.includes('h264_v4l2m2m') ? (info.ffmpeg.v4l2Device ? '' : ', no /dev/video11') : ', not in this ffmpeg'}`]];
     const direct = tg('enableDirectPlay', 'Direct Play', 'Send the original file untouched (range requests). Zero CPU.');
     first = direct.querySelector('input');
     return [
@@ -167,7 +167,7 @@ export function transcodingSection() {
 // saved settings.
 export async function metadataSection() {
   const form = await configForm(({ draft, text, tg }) => [
-    h('div', { class: 'form-section' }, heading('Providers', 'TMDB gives the richest data (posters, backdrops, cast, episode stills). Get a free API key at themoviedb.org → Settings → API. Without it, TVmaze is used for shows and your local Radarr (auto-detected, or set under ', h('a', { href: '#/settings/arr' }, 'Sonarr & Radarr'), ') for movies — no keys needed.'),
+    h('div', { class: 'form-section' }, heading('Providers', 'TMDB gives the richest data (posters, backdrops, cast, episode stills). Get a free API key at themoviedb.org → Settings → API. Without it, TVmaze is used for shows and your local Radarr (auto-detected, or set under ', h('a', { href: '#/settings/arr' }, 'Sonarr & Radarr'), ') for movies, with no keys needed.'),
       field('TMDB API key or read access token', text('tmdbKey', { type: 'password', placeholder: 'v3 key or v4 token', autocomplete: 'off' }), 'Saving a new key retries unmatched items automatically.'),
       field('Language', text('metadataLanguage', { placeholder: 'en-US' })),
       tg('enableTmdb', 'Use TMDB'),
@@ -205,7 +205,7 @@ export async function analysisSection() {
       h('div', { class: 'form-grid' },
         field('Interval (seconds)', num('trickplayInterval', { min: 2, max: 60 }), 'Changes apply to newly generated previews.'),
         field('Thumbnail width (px)', num('trickplayWidth', { min: 120, max: 480, step: 20 })))),
-    h('div', { class: 'form-section' }, heading('Intro & credits detection', 'Finds TV intros and end credits by comparing audio fingerprints of neighbouring episodes (like Jellyfin\'s Intro Skipper), or from chapters named Intro/Opening and Credits/Ending. Runs in the background at the lowest CPU priority after scans.'),
+    h('div', { class: 'form-section' }, heading('Intro & credits detection', 'Finds TV intros and end credits by comparing audio fingerprints of neighbouring episodes, or from chapters named Intro/Opening and Credits/Ending. Runs in the background at the lowest CPU priority after scans.'),
       tg('introDetect', 'Detect intros'),
       h('div', { class: 'form-grid' },
         field('Analyse the first (seconds)', num('introScanSecs', { min: 120, max: 1800, step: 30 }), 'Intros after cold opens can start a few minutes in.'),

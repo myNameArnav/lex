@@ -438,7 +438,7 @@ export class Player {
     if (forceHls) {
       mode = 'auto';
       if (!this.nativeHls()) {
-        toast("This browser can't play HLS natively (Safari and iOS can) — using the normal stream");
+        toast("This browser can't play HLS natively (Safari and iOS can). Using the normal stream");
         this.mode = 'auto';
         prefs.set('mode', 'auto');
       }
@@ -456,7 +456,7 @@ export class Player {
     try {
       res = await retryApi('/api/playback/plan', { method: 'POST', body: req }, {
         cancelled, retries: overrides.retries ?? 6,
-        onRetry: (n) => this.setStatus(`${this.recovering ? 'Connection lost — reconnecting' : 'Reconnecting to the server'}… (attempt ${n + 1})`),
+        onRetry: (n) => this.setStatus(`${this.recovering ? 'Connection lost. Reconnecting' : 'Reconnecting to the server'}… (attempt ${n + 1})`),
       });
     } catch (e) {
       if (cancelled()) return false;
@@ -609,7 +609,7 @@ export class Player {
     if (this.closed || this.stopped || this.recovering || !this.plan || this.errEl) return;
     this.recovering = true;
     this.startupWatch = null;
-    this.setStatus('Connection lost — reconnecting…');
+    this.setStatus('Connection lost. Reconnecting…');
     try {
       await this.replan({ mode: this.plan.hls ? this.mode : this.plan.method, resume: true, retries: 12 });
     } finally {
@@ -637,7 +637,7 @@ export class Player {
       const cause = this.bufferCause();
       this.logEvent('waiting', `${(waited / 1000).toFixed(0)}s at ${clock(this.video.currentTime)}, ${this.bufferSummary()}${cause ? ` — ${cause.text}` : ''}`);
     }
-    if (this.engine?.retries > 0 && waited >= 1000) this.setStatus('Connection lost — reconnecting…');
+    if (this.engine?.retries > 0 && waited >= 1000) this.setStatus('Connection lost. Reconnecting…');
     else if (waited >= 3000 && (!this.statusEl.textContent || this.statusEl.dataset.cause)) {
       // Say why, once there's a likely cause; otherwise just that it's slow.
       const cause = this.started ? this.bufferCause() : null;
@@ -715,7 +715,7 @@ export class Player {
       this.logEvent('rebuild', `${msg} — restarting the pipeline once`);
       this.failedPlan = this.plan;
       this.bufferRebuilds = 1;
-      toast('Video buffer stalled — restarting playback');
+      toast('Video buffer stalled. Restarting playback');
       return this.replan({ mode: this.plan.method });
     }
     if (decode) return this.fallback(msg);
@@ -742,7 +742,7 @@ export class Player {
     // decode); the next method still converts the audio here.
     const serverAudio = () => {
       this.noClientAudio = true;
-      toast("Couldn't convert the audio in this browser — the server will convert it");
+      toast("Couldn't convert the audio in this browser. The server will convert it");
       return this.replan({ mode: this.mode, resume: true });
     };
     const clientAudio = this.plan.clientAudio && !this.noClientAudio;
@@ -752,14 +752,14 @@ export class Player {
     // method. A video the browser can't decode still goes to transcode.
     if (this.plan.clientRemux && !this.noClientRemux && remuxFault(reason, this.video.error)) {
       this.noClientRemux = true;
-      toast("Couldn't remux this file in the browser — the server will remux it");
+      toast("Couldn't remux this file in the browser. The server will remux it");
       return this.replan({ mode: this.mode, resume: true });
     }
     // A hardware-encoded transcode the browser can't parse: retry once with
     // the server's software encoder before giving up.
     if (idx === 2 && /hardware/.test(this.plan.videoOut || '') && !this.swEncode) {
       this.swEncode = true;
-      toast('Hardware transcode failed in this browser — retrying with the software encoder');
+      toast('Hardware transcode failed in this browser. Retrying with the software encoder');
       await this.replan({ mode: 'transcode', resume: true });
       return;
     }
@@ -770,7 +770,7 @@ export class Player {
     }
     this.fallbacks++;
     const next = order[idx + 1];
-    toast(`${METHOD_LABEL[this.plan.method]} didn't work in this browser — switching to ${METHOD_LABEL[next]}`);
+    toast(`${METHOD_LABEL[this.plan.method]} didn't work in this browser. Switching to ${METHOD_LABEL[next]}`);
     this.mode = next;
     // Media errors pause the element; that isn't the viewer pausing.
     await this.replan({ mode: next, resume: true });

@@ -57,7 +57,7 @@ async function guide(path) {
 const nothing = () => emptyState({ level: 'h2', title: 'Nothing to air yet', text: 'Live TV plays movies and episodes once a library scan has read their running times.' });
 
 const intro = () => [h('h1', { class: 'page-title' }, 'Live TV'),
-  h('p', { class: 'muted', style: { margin: 0 } }, 'Channels that play your library at random, like TV, and live channels from the internet. Tune in to join whatever is on.')];
+  h('p', { class: 'muted', style: { margin: 0 } }, 'Channels that play your library at random, like TV, and live channels from the internet.')];
 
 export async function tvView(ctx) {
   if (!state.caps.liveTv) return off();

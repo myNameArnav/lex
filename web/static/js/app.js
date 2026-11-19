@@ -156,7 +156,7 @@ function renderAuth(setup, notice = '') {
     }
   } },
   h('div', { class: 'logo' }, h('img', { src: '/favicon.svg', alt: '', width: 28, height: 28 }), h('span', null, state.serverName)),
-  h('h1', null, setup ? 'Welcome! Create the admin account' : 'Sign in'),
+  h('h1', null, setup ? 'Create the admin account' : 'Sign in'),
   notice ? h('p', { class: 'muted', id: 'auth-notice', role: 'status', style: { margin: 0 } }, notice) : null,
   setup ? h('p', { class: 'muted', style: { margin: 0 } }, 'This account manages libraries, users and settings.') : null,
   field('Username', name), field('Password', pass, setup ? 'At least 12 characters.' : null), pass2 ? field('Confirm password', pass2) : null, err, btn);

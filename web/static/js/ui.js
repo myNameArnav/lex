@@ -437,7 +437,7 @@ export function staleBanner(target) {
     const times = [...failing.values()];
     const since = times.includes(null) ? null : Math.min(...times);
     el.replaceChildren(h('div', { class: 'panel stale-banner small' }, since
-      ? `Can’t reach the server — showing data from ${new Date(since).toLocaleTimeString()}. Retrying…`
+      ? `Can’t reach the server. Showing data from ${new Date(since).toLocaleTimeString()}. Retrying…`
       : 'Can’t reach the server. Retrying…'));
   };
   const b = {
