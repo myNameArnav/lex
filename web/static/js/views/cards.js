@@ -5,11 +5,15 @@ import { h, icons, fmtDuration, lazyImg, popupMenu, run, fmtEpisode, motionOK } 
 import { api, img } from '../api.js';
 import { focusAfterRoute, play, refreshSoft } from '../app.js';
 
+/** @typedef {import('../../../types/api.gen').Item} Item */
+/** @typedef {import('../../../types/api.gen').UserData} UserData */
+
 // List responses (/api/items, /api/home, /api/search) carry only what cards
 // use: ids, kind, title, year, season/episode, counts, userData, duration,
 // showTitle and updatedAt (store.cardCols). /api/items/:id/children adds
 // overview and premiere for episode rows and season tabs. Anything else
 // (overview, cast, genres, studios, ratings…) comes from /api/items/:id.
+/** @param {Item} it */
 function subtitleFor(it) {
   if (it.kind === 'show') return it.childCount ? `${it.childCount} episode${it.childCount === 1 ? '' : 's'}` : (it.year || '');
   if (it.kind === 'episode') return fmtEpisode(it);
@@ -17,6 +21,7 @@ function subtitleFor(it) {
   return it.year || '';
 }
 
+/** @param {Item} it */
 export function placeholder(it) {
   return h('div', { class: 'ph', 'aria-hidden': 'true' }, it.title);
 }
@@ -26,6 +31,7 @@ export const progressBar = (pos, dur) => h('div', { class: 'progress', 'aria-hid
 // posterCard: sub replaces the line under the title (e.g. a person's role).
 /** @param {any} it @param {{ sub?: string }} [options] */
 export function posterCard(it, { sub } = {}) {
+  /** @type {Partial<UserData>} */
   const ud = it.userData || {};
   const art = h('div', { class: 'art' }, placeholder(it), lazyImg(img(it, 'poster', 320), ''));
   const parent = it.kind === 'show' || it.kind === 'season';
@@ -44,23 +50,27 @@ export function posterCard(it, { sub } = {}) {
 
 // setWatchlist adds a movie or show to the watchlist or takes it off, and
 // says so (the toast is the undo hint). Resolves to whether it worked.
+/** @param {Item} it */
 async function setWatchlist(it, on) {
   const ok = await run(null, () => api(`/api/items/${it.id}/watchlist`, { method: 'POST', body: { watchlist: on } }), on ? 'Added to Watchlist' : 'Removed from Watchlist');
-  if (ok) (it.userData ||= {}).watchlist = on;
+  if (ok) (it.userData ||= /** @type {UserData} */ ({})).watchlist = on;
   return !!ok;
 }
 
 // setFavorite marks a title as a favorite or not, like setWatchlist.
+/** @param {Item} it */
 async function setFavorite(it, on) {
   const ok = await run(null, () => api(`/api/items/${it.id}/favorite`, { method: 'POST', body: { favorite: on } }), on ? 'Added to Favorites' : 'Removed from Favorites');
-  if (ok) (it.userData ||= {}).favorite = on;
+  if (ok) (it.userData ||= /** @type {UserData} */ ({})).favorite = on;
   return !!ok;
 }
 
 // The ⋯ on a movie or show poster: Watchlist, Favorites and watched
 // toggles. The view re-renders in place afterwards (Watchlist and Favorites
 // rows and filters change).
+/** @param {Item} it */
 function posterMenuButton(it) {
+  /** @type {Partial<UserData>} */
   const ud = it.userData || {};
   const items = [ud.watchlist
     ? { label: 'Remove from Watchlist', icon: 'bookmarkFill', onClick: async () => { if (await setWatchlist(it, false)) refreshSoft(); } }
@@ -78,7 +88,9 @@ function posterMenuButton(it) {
 
 // landCard: Continue Watching / Next Up (the artwork plays) and episode
 // search results (the card opens the episode).
+/** @param {Item} it @param {{ playOnClick?: boolean }} [options] */
 export function landCard(it, { playOnClick = true } = {}) {
+  /** @type {Partial<UserData>} */
   const ud = it.userData || {};
   const title = it.kind === 'episode' ? (it.showTitle || it.title) : it.title;
   const sub = it.kind === 'episode' ? `${fmtEpisode(it)} — ${it.title}` : [it.year, ud.position && it.duration ? `${fmtDuration(it.duration - ud.position)} left` : ''].filter(Boolean).join(' · ');
@@ -99,7 +111,9 @@ export function landCard(it, { playOnClick = true } = {}) {
 
 // The ⋯ on a Continue Watching / Next Up card. Removing a title from
 // Continue Watching clears its resume point and leaves its watched state be.
+/** @param {Item} it */
 function landMenuButton(it, title, card) {
+  /** @type {Partial<UserData>} */
   const ud = it.userData || {};
   const act = async (req, msg) => {
     // The card goes away: keep focus in the row on its neighbour.
@@ -141,6 +155,7 @@ export function scroller(track) {
   return h('div', { class: 'shelf-scroll' }, left, track, right);
 }
 
+/** @param {string} title @param {Item[]} items */
 export function shelf(title, items, kind, moreHref) {
   const track = h('div', { class: 'shelf-track', tabindex: '-1' }, items.map((it) => kind === 'landscape' ? landCard(it) : posterCard(it)));
   return h('section', { class: 'shelf' },

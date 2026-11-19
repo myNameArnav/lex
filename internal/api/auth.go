@@ -43,16 +43,24 @@ func (s *Server) issueToken(w http.ResponseWriter, r *http.Request, u *store.Use
 // TV is off unless an admin turns it on. maxTranscodeHeight is the
 // server's cap on transcoded video, so the quality menu can say which
 // resolution each bitrate will actually be delivered at.
-func (s *Server) caps(u *store.User) map[string]any {
+// serverCaps tells the UI which optional features this user can use.
+type serverCaps struct {
+	SubtitleSearch     bool `json:"subtitleSearch"`
+	CacheEnabled       bool `json:"cacheEnabled"`
+	LiveTV             bool `json:"liveTv"`
+	MaxTranscodeHeight int  `json:"maxTranscodeHeight"`
+	// The player suggests a lower quality only when the server can make one.
+	Transcode bool `json:"transcode"`
+}
+
+func (s *Server) caps(u *store.User) serverCaps {
 	c := s.St.Config()
-	return map[string]any{
-		"subtitleSearch":     strings.TrimSpace(c.OpenSubtitlesKey) != "" && subsAllowed(c, u),
-		"cacheEnabled":       u.IsAdmin && c.CacheEnabled,
-		"liveTv":             c.LiveTV,
-		"maxTranscodeHeight": c.MaxTranscodeHeight,
-		// The player suggests a lower quality only when the server can
-		// make one.
-		"transcode": c.EnableTranscode,
+	return serverCaps{
+		SubtitleSearch:     strings.TrimSpace(c.OpenSubtitlesKey) != "" && subsAllowed(c, u),
+		CacheEnabled:       u.IsAdmin && c.CacheEnabled,
+		LiveTV:             c.LiveTV,
+		MaxTranscodeHeight: c.MaxTranscodeHeight,
+		Transcode:          c.EnableTranscode,
 	}
 }
 

@@ -6,8 +6,11 @@ import { state, loadLibraries, refreshSoft, focusAfterRoute } from '../app.js';
 import { field, select, configForm, upper } from './forms.js';
 import { every } from './poll.js';
 
+/** @typedef {import('../../../types/api.gen').adminLibrary} adminLibrary */
+
 // Why a library shows less than its folders hold: files another library
 // already has (nested folders), or nothing found at all.
+/** @param {adminLibrary} l */
 function libraryNote(l) {
   const els = l.elsewhere || [];
   if (els.length) {
@@ -92,6 +95,7 @@ const within = (p, base) => p === base || base === '/' || p.startsWith(`${base}/
 
 let libModalId = 0;
 
+/** @param {adminLibrary} [lib] */
 function libraryModal(lib) {
   const uid = ++libModalId;
   const err = h('div', { class: 'err', role: 'alert', id: `lib-err-${uid}` });

@@ -5,7 +5,10 @@ import { state } from '../app.js';
 import { prefs } from '../prefs.js';
 import { assStyleOverrides } from '../substyle.js';
 
+/** @typedef {import('../../../types/api.gen').fileView} fileView */
+
 // The preferred audio track: the language asked for, else the file's default, else the first.
+/** @param {fileView} file */
 export function pickAudio(file, lang) {
   const auds = (file.info?.streams || []).filter((s) => s.type === 'audio');
   if (!auds.length) return -1;
@@ -14,6 +17,7 @@ export function pickAudio(file, lang) {
 
 // tp: the subtitle mode and language in effect for this title (see
 // track-memory.js).
+/** @param {fileView} file */
 export function pickSubtitle(file, audio, tp) {
   const mode = tp.subMode;
   const want = tp.subLang;

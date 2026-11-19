@@ -887,6 +887,15 @@ export interface programView {
   end: number;
 }
 
+// api.serverCaps
+export interface serverCaps {
+  subtitleSearch: boolean;
+  cacheEnabled: boolean;
+  liveTv: boolean;
+  maxTranscodeHeight: number;
+  transcode: boolean;
+}
+
 // [method, path, response, request body]; any where the handler doesn't
 // send or read JSON.
 export type ApiRoutes = [
@@ -965,11 +974,11 @@ export type ApiRoutes = [
   ["GET", `/api/admin/tasks`, { scan: LibraryStatus; metadata: AgentStatus; intro: IntroStatus; cache: CacheStatus; trickplay: TrickplayStatus; remuxJobs: number; transcodeJobs: number; }, any],
   ["GET", `/api/admin/users`, User[], any],
   ["POST", `/api/admin/users`, User | null, { Name: string; Password: string; isAdmin: boolean; allLibraries: boolean | null; libraries: number[]; }],
-  ["POST", `/api/auth/login`, { user: User | null; token: string; caps: Record<string, any>; }, { Name: string; Password: string; }],
+  ["POST", `/api/auth/login`, { user: User | null; token: string; caps: serverCaps; }, { Name: string; Password: string; }],
   ["POST", `/api/auth/logout`, { ok: boolean; }, any],
   ["DELETE", `/api/me/devices`, { signedOut: number; }, any],
   ["GET", `/api/me/devices`, TokenInfo[], any],
-  ["PUT", `/api/me/password`, { user: User | null; token: string; caps: Record<string, any>; }, { Current: string; New: string; }],
+  ["PUT", `/api/me/password`, { user: User | null; token: string; caps: serverCaps; }, { Current: string; New: string; }],
   ["PUT", `/api/me/prefs`, { ok: boolean; }, any],
   ["POST", `/api/playback/event`, { ok: boolean; logged: boolean; }, { sessionId: string; event: string; detail: string; }],
   ["POST", `/api/playback/plan`, { plan: Plan | null; item: Item | null; file: fileView; title: string; subtitle: string; cached: boolean; segments: Segment[]; }, planReq],
@@ -987,10 +996,10 @@ export type ApiRoutes = [
   ["GET", `/api/items`, { items: (Item | null)[]; total: number; }, any],
   ["GET", `/api/letters`, Record<string, number>, any],
   ["GET", `/api/libraries`, Library[], any],
-  ["GET", `/api/me`, { user: User | null; prefs: any; serverName: string; version: string; caps: Record<string, any>; }, any],
+  ["GET", `/api/me`, { user: User | null; prefs: any; serverName: string; version: string; caps: serverCaps; }, any],
   ["GET", `/api/person`, { name: string; image: personImage | null; roles: Record<string, string>; items: (Item | null)[]; }, any],
   ["GET", `/api/search`, { movies: (Item | null)[]; shows: (Item | null)[]; episodes: (Item | null)[]; }, any],
-  ["POST", `/api/setup`, { user: User | null; token: string; caps: Record<string, any>; }, { Name: string; Password: string; }],
+  ["POST", `/api/setup`, { user: User | null; token: string; caps: serverCaps; }, { Name: string; Password: string; }],
   ["GET", `/api/tv`, { channels: channelView[]; serverTime: number; }, any],
   ["GET", `/api/watchlist`, { items: (Item | null)[]; }, any],
 ];

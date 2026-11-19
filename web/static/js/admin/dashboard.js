@@ -9,6 +9,10 @@ import { lineChart, columnChart, barList, axisHours, axisBitrate } from '../char
 import { compatPanel } from './compat.js';
 import { every } from './poll.js';
 
+/** @typedef {import('../../../types/api.gen').Session} Session */
+/** @typedef {import('../../../types/api.gen').PlaybackStats} PlaybackStats */
+/** @typedef {import('../../../types/api.gen').ClientStats} ClientStats */
+
 const DASH = [['live', 'Live'], ['playback', 'Playback'], ['library', 'Library']];
 
 export async function dashboardView(ctx, tab) {
@@ -174,6 +178,7 @@ async function liveTab(ctx) {
 }
 
 // sessionCard builds one Now playing card; update(s) refreshes it in place.
+/** @param {Session} s0 */
 function sessionCard(s0, refresh) {
   let s = s0;
   const href = `#/item/${s.itemId}`;
@@ -212,6 +217,7 @@ function sessionCard(s0, refresh) {
       h('details', null, summary, h('dl', { class: 'kv' }, facts.map((f) => [f.dt, f.dd])))));
   const update = (next) => {
     s = next;
+    /** @type {Partial<ClientStats>} */
     const c = s.clientStats || {};
     const j = s.job;
     setText(title, s.title);
@@ -361,6 +367,7 @@ const fmtHours = (v) => {
 };
 
 // Plays, share and stall time per playback method, in one table.
+/** @param {PlaybackStats} st */
 function methodsTable(st) {
   const plays = Object.fromEntries((st.methods || []).map((m) => [m.key, m.count]));
   const stall = Object.fromEntries((st.bufferByMethod || []).map((m) => [m.key, m.value]));

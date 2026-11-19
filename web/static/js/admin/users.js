@@ -6,9 +6,13 @@ import { state, refreshSoft, setLeaveGuard, focusAfterRoute } from '../app.js';
 import { PW_RULE, PW_MSG, pwLength } from './account.js';
 import { field, toggleRow, formActions, formErrors, submitInline, actionsTh } from './forms.js';
 
+/** @typedef {import('../../../types/api.gen').User} User */
+/** @typedef {import('../../../types/api.gen').Library} Library */
+
 const fmtDay = (ts) => (ts ? new Date(ts * 1000).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '');
 
 // What a user may watch, in a few words.
+/** @param {User} u @param {Library[]} libs */
 function accessLabel(u, libs) {
   if (u.isAdmin || u.allLibraries) return 'All libraries';
   const names = libs.filter((l) => (u.libraries || []).includes(l.id)).map((l) => l.name);
@@ -74,6 +78,7 @@ function addUserForm() {
 
 // Which libraries a regular user may see and play: all of them (including
 // ones added later), or the ones ticked. The server hides everything else.
+/** @param {User} u @param {Library[]} libs */
 function libraryAccessModal(u, libs) {
   const formId = `user-libs-form-${u.id}`;
   let all = u.allLibraries !== false;
@@ -107,6 +112,7 @@ function libraryAccessModal(u, libs) {
 }
 
 // An admin sets a new password for someone else; it signs them out everywhere.
+/** @param {User} u */
 function resetPasswordModal(u) {
   const formId = `reset-pw-${u.id}`;
   const pw = h('input', { type: 'password', name: 'new-password', autocomplete: 'new-password', required: true, ...PW_RULE });

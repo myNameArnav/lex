@@ -11,8 +11,14 @@ import { state, takeEarly, play, refreshSoft, refreshLater } from '../app.js';
 import { scroller } from './cards.js';
 import { showView } from './show.js';
 
+/** @typedef {import('../../../types/api.gen').Item} Item */
+/** @typedef {import('../../../types/api.gen').fileView} fileView */
+/** @typedef {import('../../../types/api.gen').UserData} UserData */
+/** @typedef {import('../../../types/api.gen').MediaInfo} MediaInfo */
+
 // playExtra plays one of a title's local extras (a trailer, a featurette…)
 // from the top. Watching one leaves the title's progress alone.
+/** @param {Item} it */
 function playExtra(it, x) {
   openPlayer({ itemId: it.id, extra: x.id, start: 0, onClose: () => { if (!isPlayerOpen()) refreshSoft(); } });
 }
@@ -20,12 +26,14 @@ function playExtra(it, x) {
 const EXTRA_KINDS = { trailer: 'Trailer', featurette: 'Featurette', behindthescenes: 'Behind the scenes', deleted: 'Deleted scene', interview: 'Interview', scene: 'Scene', short: 'Short', other: 'Extra' };
 
 // trailerButton plays the title's first local trailer, if it has one.
+/** @param {Item} it */
 export function trailerButton(it, extras) {
   const t = extras?.find((x) => x.type === 'trailer');
   return t ? h('button', { class: 'btn lg', dataset: { focusKey: `trailer-${it.id}` }, onclick: () => playExtra(it, t) }, h('span', { html: icons.play }), 'Trailer') : null;
 }
 
 // extrasRow lists a title's local extras, each with a frame from it.
+/** @param {Item} it */
 export function extrasRow(it, extras) {
   if (!extras?.length) return null;
   return h('section', { class: 'shelf' },
@@ -51,6 +59,7 @@ export async function itemView(ctx, id) {
   return it.kind === 'show' ? showView(ctx, d) : mediaView(ctx, d);
 }
 
+/** @param {Item} it */
 export function hero(it, posterNode, info, backdropItem = it) {
   const bgImg = lazyImg(img(backdropItem, 'backdrop', 1280), '', () => {
     // No backdrop: blur the poster instead.
@@ -63,6 +72,7 @@ export function hero(it, posterNode, info, backdropItem = it) {
 }
 
 // The h1 names the page, so the artwork and its placeholder stay silent.
+/** @param {Item} it */
 export function heroPoster(it, kind, land) {
   const box = h('div', { class: `hero-poster ${land ? 'land' : ''}`, style: { position: 'relative' } }, h('div', { class: 'ph', 'aria-hidden': 'true', style: { position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', padding: '16px', textAlign: 'center', color: 'var(--text2)', fontWeight: 700, fontSize: '18px' } }, it.title));
   const im = lazyImg(img(it, kind, land ? 640 : 480), '');
@@ -71,6 +81,7 @@ export function heroPoster(it, kind, land) {
   return box;
 }
 
+/** @param {Item} it */
 export function facts(it, extra = []) {
   const f = [];
   if (it.year && it.kind !== 'episode') f.push(h('span', null, it.year));
@@ -82,7 +93,9 @@ export function facts(it, extra = []) {
   return h('div', { class: 'facts' }, f, extra);
 }
 
+/** @param {Item} it */
 function playButtons(it, playId = it.id, label = 'Play') {
+  /** @type {Partial<UserData>} */
   const ud = it.userData || {};
   const btns = [];
   if (ud.position > 0) {
@@ -96,6 +109,7 @@ function playButtons(it, playId = it.id, label = 'Play') {
 
 // watchedButton marks a title (a show: every episode) watched or unwatched.
 // Shows ask first: that clears every resume point at once.
+/** @param {Item} it */
 export function watchedButton(it) {
   const show = it.kind === 'show';
   // unplayedCount is left out of the JSON when it is 0.
@@ -110,6 +124,7 @@ export function watchedButton(it) {
 }
 
 // favButton toggles in place (no toast: it is undone with the same button).
+/** @param {Item} it */
 export function favButton(it) {
   let fav = !!it.userData?.favorite, busy = false;
   const b = h('button', { class: 'btn lg icon', dataset: { focusKey: `fav-${it.id}` }, onclick: async () => {
@@ -119,7 +134,7 @@ export function favButton(it) {
     show();
     try {
       await api(`/api/items/${it.id}/favorite`, { method: 'POST', body: { favorite: fav } });
-      (it.userData ||= {}).favorite = fav;
+      (it.userData ||= /** @type {UserData} */ ({})).favorite = fav;
     } catch (ex) {
       fav = !fav;
       show();
@@ -141,6 +156,7 @@ export function favButton(it) {
 }
 
 // watchlistButton toggles "Watch later" in place, like favButton.
+/** @param {Item} it */
 export function watchlistButton(it) {
   let on = !!it.userData?.watchlist, busy = false;
   const b = h('button', { class: 'btn lg icon', dataset: { focusKey: `watchlist-${it.id}` }, onclick: async () => {
@@ -150,7 +166,7 @@ export function watchlistButton(it) {
     show();
     try {
       await api(`/api/items/${it.id}/watchlist`, { method: 'POST', body: { watchlist: on } });
-      (it.userData ||= {}).watchlist = on;
+      (it.userData ||= /** @type {UserData} */ ({})).watchlist = on;
     } catch (ex) {
       on = !on;
       show();
@@ -172,6 +188,7 @@ export function watchlistButton(it) {
 }
 
 // Genre chips open the title's library filtered by that genre.
+/** @param {Item} it */
 export function genreLinks(it) {
   return h('div', { class: 'genres' }, it.genres.map((g) => h('a', { href: `#/library/${it.libraryId}?genre=${encodeURIComponent(g)}`, title: `More ${g} in this library` }, g)));
 }
@@ -180,9 +197,11 @@ const personHref = (name) => `#/person?name=${encodeURIComponent(name)}`;
 
 // moreItems lists the ⋯ menu's actions. They depend only on the item, its
 // files and the user, so the button is left out when there are none.
+/** @param {Item} it */
 function moreItems(it, d) {
   const items = [];
   if (d.files?.length) items.push({ label: 'Media info', icon: 'info', onClick: () => mediaInfoModal(d.files) });
+  /** @type {Partial<UserData>} */
   const ud = it.userData || {};
   if (it.kind !== 'show' && ud.position > 0) {
     items.push({ label: 'Remove from Continue Watching', icon: 'close', onClick: async () => {
@@ -222,12 +241,14 @@ function moreItems(it, d) {
   return items;
 }
 
+/** @param {Item} it */
 export function moreButton(it, d) {
   const items = moreItems(it, d);
   if (!items.length) return null;
   return h('button', { class: 'btn lg icon', title: 'More actions', 'aria-label': 'More actions', dataset: { focusKey: `more-${it.id}` }, html: icons.more, onclick: (e) => popupMenu(e.currentTarget, items) });
 }
 
+/** @param {Item} it */
 export function castRow(it, excludeDirectors = false) {
   const people = (it.cast || []).map((person, index) => ({ person, index })).filter(({ person }) => !excludeDirectors || person.role !== 'Director');
   if (!people.length) return null;
@@ -305,6 +326,7 @@ function mediaView(ctx, d) {
 // versionPicker chooses which of a title's files Play plays: its versions
 // (cuts, resolutions) or the parts of a split film. The choice is kept on
 // this device, and the page redraws for the chosen file.
+/** @param {Item} it @param {fileView[]} files @param {fileView} file */
 function versionPicker(it, files, file) {
   const parts = files.every((f) => f.part > 0);
   const sel = h('select', { 'aria-label': parts ? 'Part' : 'Version', dataset: { focusKey: `version-${it.id}` },
@@ -317,6 +339,7 @@ function versionPicker(it, files, file) {
 // this browser: a chip next to the resolution, and the reasons below the
 // file summary when the server has to do the work. Both stay empty until the
 // server answers, and on error.
+/** @param {Item} it @param {fileView} file */
 function compatBadge(it, file) {
   const pill = h('span', { class: 'pill play-tier', hidden: true });
   const note = h('p', { class: 'small compat-note', hidden: true });
@@ -337,6 +360,7 @@ function compatBadge(it, file) {
   return { pill, note };
 }
 
+/** @param {fileView} f */
 function fileSummary(f) {
   const s = f.info?.streams || [];
   const v = s.find((x) => x.type === 'video');
@@ -355,8 +379,10 @@ function fileSummary(f) {
 
 const CONTAINERS = { 'matroska,webm': 'MKV', 'mov,mp4,m4a,3gp,3g2,mj2': 'MP4' };
 
+/** @param {fileView[]} files */
 function mediaInfoModal(files) {
   const body = files.map((f) => {
+    /** @type {Partial<MediaInfo>} */
     const info = f.info || {};
     const blocks = [h('div', { class: 'panel' }, h('h3', null, 'File'), h('dl', { class: 'kv' },
       h('dt', null, 'Name'), h('dd', null, f.name),
@@ -370,6 +396,7 @@ function mediaInfoModal(files) {
       // The browser codec string stays (it helps debug playback) unless it
       // only repeats the codec name ("ac3 · ac-3").
       const cs = s.codecString && s.codecString.replace(/[^a-z0-9]/gi, '').toLowerCase() !== (s.codec || '').toLowerCase() ? s.codecString : '';
+      /** @type {[string, string | number][]} */
       const rows = [['Codec', `${s.codec}${s.profile ? ` (${s.profile})` : ''}${cs ? ` · ${cs}` : ''}`]];
       if (s.type === 'video') rows.push(['Resolution', `${s.width}×${s.height}`], ['Frame rate', s.frameRate ? s.frameRate.toFixed(3) : '?'], ['Bit depth', s.bitDepth], ['Pixel format', s.pixFmt], ['HDR', s.hdr || 'SDR'], s.dvProfile ? ['Dolby Vision', `profile ${s.dvProfile}, compat ${s.dvCompat}`] : null);
       if (s.type === 'audio') {
