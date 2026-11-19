@@ -14,6 +14,12 @@ Worker entry points (`web/static/js/*-worker.js`) and the service worker are
 checked with the worker globals (`web/tsconfig.worker.json`). Nothing is compiled: the browser runs
 the files as written.
 
+`api()` calls are typed from the Go handlers: `web/types/api.gen.d.ts` lists
+each route with the type its handler passes to `writeJSON` (and reads with
+`readJSON`). After changing the API, regenerate it with
+`go run ./cmd/lex-apitypes`; `go test` fails until you do, and the type check
+then flags the UI code that reads a field the server no longer sends.
+
 ## Before opening a pull request
 
 ```sh
@@ -57,7 +63,8 @@ internal/logx      leveled logger with a recent-lines buffer for the UI
 internal/proc      child-process helpers
 internal/version   version number and build commit
 web/static         vanilla JavaScript UI (no build step, type-checked by TypeScript)
-web/types          TypeScript declarations for the UI (not served)
+web/types          TypeScript declarations for the UI (not served); api.gen.d.ts is generated
+internal/apitypes  generates web/types/api.gen.d.ts from internal/api (cmd/lex-apitypes)
 web/static/vendor  prebuilt third-party browser code (JASSUB subtitle renderer, FFmpeg audio converter)
 wasm/audio         source of the browser's AC-3/E-AC-3/DTS/TrueHD → AAC converter (scripts/build-audio-wasm.sh)
 wasm/remux         source of the browser's MKV/WebM → fragmented MP4 remuxer (scripts/build-remux-wasm.sh)
