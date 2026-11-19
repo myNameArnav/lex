@@ -21,17 +21,22 @@ type tvLineupChannel struct {
 	Number int    `json:"number"`
 	Name   string `json:"name"`
 	Off    bool   `json:"off"`
-	// Source is "custom" (the admin's), "all", "library" or "genre".
+	// Source is "custom" (the admin's), "stream", "all", "library" or "genre".
 	Source string `json:"source"`
 	// Titles counts the movies and shows it can air.
 	Titles int `json:"titles"`
 	// Custom is the admin's channel, to edit.
 	Custom *store.TVChannel `json:"custom,omitempty"`
+	// Stream is a live channel from the internet, to edit.
+	Stream *store.TVStream `json:"stream,omitempty"`
 }
 
 type tvLineup struct {
 	Enabled  bool              `json:"enabled"`
 	Channels []tvLineupChannel `json:"channels"`
+	Sources  []store.TVSource  `json:"sources"`
+	// GuideError says why a source's guide couldn't be read.
+	GuideError string `json:"guideError,omitempty"`
 	// Saved is the id of the channel a create made.
 	Saved string `json:"saved,omitempty"`
 }
@@ -42,7 +47,10 @@ func (s *Server) lineup() (tvLineup, error) {
 	if err != nil {
 		return tvLineup{}, err
 	}
-	out := tvLineup{Enabled: cfg.LiveTV, Channels: []tvLineupChannel{}}
+	out := tvLineup{Enabled: cfg.LiveTV, Channels: []tvLineupChannel{}, Sources: cfg.TVSources}
+	if _, err := s.TV.GuideStatus(); err != nil {
+		out.GuideError = err.Error()
+	}
 	for _, ch := range chs {
 		n, err := s.TV.Titles(ch)
 		if err != nil {
@@ -56,6 +64,10 @@ func (s *Server) lineup() (tvLineup, error) {
 				c := cfg.TVChannels[i]
 				v.Custom = &c
 			}
+		case ch.Stream != nil:
+			v.Source = "stream"
+			st := *ch.Stream
+			v.Stream = &st
 		case ch.ID == "all":
 			v.Source = "all"
 		case strings.HasPrefix(ch.ID, "lib-"):

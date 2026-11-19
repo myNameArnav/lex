@@ -89,7 +89,8 @@ and ffmpeg pauses when the browser's buffer is full. Browsers without MSE
   the browser instead of burned in; timing, position, font, colour, edge and
   size controls.
 - **Live TV**: optional channels that play your library at random on a fixed
-  daily schedule, with a guide.
+  daily schedule, plus live IPTV channels (single streams or picked from an M3U
+  playlist, with XMLTV guides), all in one numbered lineup and a grid guide.
 - **Dashboard**: host CPU, memory, temperature, network and disk; every live
   stream with its method, reason, buffer and ffmpeg state; playback analytics
   and history; a library breakdown by codec, resolution and HDR; a diagnostic

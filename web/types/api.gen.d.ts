@@ -173,6 +173,8 @@ export interface Config {
   tvChannels: TVChannel[];
   tvOrder: string[];
   tvHidden: string[];
+  tvStreams: TVStream[];
+  tvSources: TVSource[];
   cacheEnabled: boolean;
   cacheDir: string;
   cacheMaxGb: number;
@@ -479,6 +481,18 @@ export interface PlaybackStats {
   hoursOfDay: Bucket[];
 }
 
+// tv.PlaylistEntry
+export interface PlaylistEntry {
+  name: string;
+  url: string;
+  logo: string;
+  group: string;
+  guideId: string;
+  userAgent: string;
+  referrer: string;
+  headers: TVHeader[];
+}
+
 // sysstats.Point
 export interface Point {
   t: number;
@@ -659,6 +673,35 @@ export interface TVChannel {
   exclude: number[];
 }
 
+// store.TVHeader
+export interface TVHeader {
+  name: string;
+  value: string;
+}
+
+// store.TVSource
+export interface TVSource {
+  id: string;
+  name: string;
+  url: string;
+  guideUrl: string;
+  userAgent: string;
+  headers: TVHeader[];
+}
+
+// store.TVStream
+export interface TVStream {
+  id: string;
+  name: string;
+  url: string;
+  userAgent: string;
+  referrer: string;
+  logo: string;
+  guideId: string;
+  source: string;
+  headers: TVHeader[];
+}
+
 // store.TokenInfo
 export interface TokenInfo {
   prefix: string;
@@ -750,6 +793,8 @@ export interface arrRequest {
 
 // api.channelView
 export interface channelView {
+  live?: boolean;
+  logo?: string;
   programs: programView[];
   id: string;
   number: number;
@@ -895,6 +940,8 @@ export interface serverCaps {
 export interface tvLineup {
   enabled: boolean;
   channels: tvLineupChannel[];
+  sources: TVSource[];
+  guideError?: string;
   saved?: string;
 }
 
@@ -907,6 +954,7 @@ export interface tvLineupChannel {
   source: string;
   titles: number;
   custom?: TVChannel | null;
+  stream?: TVStream | null;
 }
 
 // api.tvLineupEdit
@@ -919,11 +967,13 @@ export interface tvLineupEdit {
 // [method, path, response, request body]; any where the handler doesn't
 // send or read JSON.
 export type ApiRoutes = [
+  ["GET", `/api/admin/tv/sources/${string}/channels`, { total: number; matched: number; channels: PlaylistEntry[]; groups: string[]; }, any],
   ["GET", `/api/files/${string}/hls/seg/${string}`, any, any],
   ["GET", `/api/items/${string}/cast/${string}/image`, any, any],
   ["GET", `/api/admin/stats/library/titles`, LibraryTitle[], any],
   ["GET", `/api/admin/stats/library/unmatched`, UnmatchedTitle[], any],
   ["GET", `/api/admin/stats/library/unreadable`, UnreadableFile[], any],
+  ["POST", `/api/admin/tv/streams/probe`, { video: string; audio: string; width: number; height: number; convert: boolean; }, TVStream],
   ["POST", `/api/admin/arr/${string}/connect`, Status, arrRequest],
   ["POST", `/api/admin/arr/${string}/status`, Status, arrRequest],
   ["DELETE", `/api/admin/cache/items/${string}`, { ok: boolean; }, any],
@@ -931,6 +981,8 @@ export type ApiRoutes = [
   ["POST", `/api/admin/files/${string}/probe`, { ok: boolean; error?: string; }, any],
   ["DELETE", `/api/admin/tv/channels/${string}`, tvLineup, any],
   ["PUT", `/api/admin/tv/channels/${string}`, tvLineup, TVChannel],
+  ["DELETE", `/api/admin/tv/streams/${string}`, tvLineup, any],
+  ["PUT", `/api/admin/tv/streams/${string}`, tvLineup, TVStream],
   ["GET", `/api/files/${string}/hls/index.m3u8`, any, any],
   ["GET", `/api/files/${string}/hls/init.mp4`, any, any],
   ["POST", `/api/items/${string}/intro/reset`, { ok: boolean; }, any],
@@ -951,6 +1003,8 @@ export type ApiRoutes = [
   ["GET", `/api/admin/stats/system`, { snapshot: Snapshot; strains?: Strain[]; diskBusy?: Record<string, number>; history?: Point[]; remuxJobs?: number; transcodeJobs?: number; cache?: CacheStatus; }, any],
   ["POST", `/api/admin/tv/channels`, tvLineup, TVChannel],
   ["POST", `/api/admin/tv/preview`, { titles: number; programs: programView[]; }, TVChannel],
+  ["PUT", `/api/admin/tv/sources`, tvLineup, TVSource[]],
+  ["POST", `/api/admin/tv/streams`, tvLineup, TVStream[]],
   ["DELETE", `/api/admin/backups/${string}`, any, any],
   ["GET", `/api/admin/backups/${string}`, any, any],
   ["DELETE", `/api/admin/devices/${string}`, { ok: boolean; }, any],
@@ -978,6 +1032,7 @@ export type ApiRoutes = [
   ["POST", `/api/items/${string}/unmatch`, { ok: boolean; }, any],
   ["POST", `/api/items/${string}/watchlist`, { ok: boolean; }, { Watchlist: boolean; }],
   ["DELETE", `/api/me/devices/${string}`, { ok: boolean; }, any],
+  ["GET", `/api/tv/${string}/stream`, any, any],
   ["GET", `/api/admin/backups`, { dir: string; backups: BackupInfo[]; lastError: string; }, any],
   ["POST", `/api/admin/backups`, BackupInfo, any],
   ["GET", `/api/admin/cache`, { status: CacheStatus; entries: Entry[]; }, any],
@@ -1014,7 +1069,7 @@ export type ApiRoutes = [
   ["PUT", `/api/webhook/scan`, { ok: boolean; }, any],
   ["GET", `/api/collections/${string}`, { collection: Collection | null; items: (Item | null)[]; }, any],
   ["GET", `/api/items/${string}`, { item: Item | null; segments: any[] | Segment[]; files?: fileView[]; extra?: extraView; collection?: Collection | null; children?: (Item | null)[]; show?: Item | null; season?: Item | null; prev?: Item | null; next?: Item | null; extras?: extraView[]; nextEpisode?: Item | null; }, any],
-  ["GET", `/api/tv/${string}`, { channel: Channel; now: programView; serverTime: number; next?: programView; }, any],
+  ["GET", `/api/tv/${string}`, { channel: Channel; serverTime: number; stream?: Record<string, any>; now?: programView; next?: programView; }, any],
   ["GET", `/api/favorites`, { items: (Item | null)[]; }, any],
   ["GET", `/api/genres`, string[], any],
   ["GET", `/api/home`, { rows: homeRow[]; libraries: Library[]; }, any],

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"runtime"
 	"slices"
 	"strconv"
@@ -89,6 +90,11 @@ type Config struct {
 	TVChannels []TVChannel `json:"tvChannels"`
 	TVOrder    []string    `json:"tvOrder"`
 	TVHidden   []string    `json:"tvHidden"`
+	// TVStreams are live channels from the internet (IPTV), "stream-<id>"
+	// in the lineup; TVSources are the playlists (M3U) they can be picked
+	// from, with a guide (XMLTV) for them.
+	TVStreams []TVStream `json:"tvStreams"`
+	TVSources []TVSource `json:"tvSources"`
 
 	// SSD cache for media files living on a slower disk.
 	CacheEnabled   bool   `json:"cacheEnabled"`
@@ -138,6 +144,123 @@ type TVChannel struct {
 	Kind      string   `json:"kind"`
 	Titles    []int64  `json:"titles"`
 	Exclude   []int64  `json:"exclude"`
+}
+
+// TVStream is a live channel from the internet: an HLS (or MPEG-TS) URL
+// Lex fetches with the stream's own User-Agent and Referer, which many
+// providers require and a browser can't send. GuideID is its tvg-id in
+// the source's guide; Source the playlist it was picked from, if any.
+type TVStream struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	URL       string `json:"url"`
+	UserAgent string `json:"userAgent"`
+	Referrer  string `json:"referrer"`
+	Logo      string `json:"logo"`
+	GuideID   string `json:"guideId"`
+	Source    string `json:"source"`
+	// Headers are any other HTTP headers the provider wants (a cookie, a
+	// token, an Origin), sent with every request for the stream.
+	Headers []TVHeader `json:"headers"`
+}
+
+// TVHeader is an HTTP header sent when fetching a live channel.
+type TVHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// maxHeaders is how many headers a stream or playlist may send.
+const maxHeaders = 20
+
+// CleanHeaders keeps the headers that can be sent: a name of letters,
+// digits and dashes, a value without line breaks, none that HTTP sets
+// itself. A User-Agent or Referer among them moves to its own field
+// (returned, empty when there's none).
+func CleanHeaders(in []TVHeader) (out []TVHeader, ua, ref string) {
+	out = []TVHeader{}
+	for _, hd := range in {
+		name := strings.TrimSpace(hd.Name)
+		value := strings.Join(strings.Fields(hd.Value), " ")
+		if name == "" || !headerName(name) {
+			continue
+		}
+		switch strings.ToLower(name) {
+		case "user-agent":
+			ua = value
+			continue
+		case "referer", "referrer":
+			ref = value
+			continue
+		case "host", "content-length", "connection", "transfer-encoding", "te", "upgrade", "expect":
+			continue
+		}
+		if len(out) < maxHeaders {
+			out = append(out, TVHeader{Name: name, Value: value})
+		}
+	}
+	return out, ua, ref
+}
+
+func headerName(s string) bool {
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return len(s) <= 64
+}
+
+// TVSource is an IPTV playlist (M3U) to pick channels from, and a guide
+// (XMLTV) for the channels picked. UserAgent is sent for both, and is what
+// its channels use unless the playlist names one.
+type TVSource struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	URL       string `json:"url"`
+	GuideURL  string `json:"guideUrl"`
+	UserAgent string `json:"userAgent"`
+	// Headers are sent when reading the playlist and guide, and with its
+	// channels unless the playlist gives them their own.
+	Headers []TVHeader `json:"headers"`
+}
+
+// WebURL reports whether u is an http(s) URL with a host: the only kind
+// Lex fetches for Live TV (ffmpeg would also open local files).
+func WebURL(u string) bool {
+	p, err := url.Parse(u)
+	return err == nil && (p.Scheme == "http" || p.Scheme == "https") && p.Host != ""
+}
+
+// Clean trims a stream's fields; a header value can't hold a line break.
+func (st TVStream) Clean() TVStream {
+	one := func(v string) string { return strings.Join(strings.Fields(v), " ") }
+	st.ID, st.Name, st.URL, st.Logo, st.GuideID, st.Source = strings.TrimSpace(st.ID), one(st.Name), strings.TrimSpace(st.URL), strings.TrimSpace(st.Logo), strings.TrimSpace(st.GuideID), strings.TrimSpace(st.Source)
+	st.UserAgent, st.Referrer = one(st.UserAgent), one(st.Referrer)
+	var ua, ref string
+	st.Headers, ua, ref = CleanHeaders(st.Headers)
+	if ua != "" && st.UserAgent == "" {
+		st.UserAgent = ua
+	}
+	if ref != "" && st.Referrer == "" {
+		st.Referrer = ref
+	}
+	if st.Logo != "" && !WebURL(st.Logo) {
+		st.Logo = ""
+	}
+	return st
+}
+
+// Clean trims a source's fields.
+func (src TVSource) Clean() TVSource {
+	src.ID, src.Name, src.URL, src.GuideURL = strings.TrimSpace(src.ID), strings.Join(strings.Fields(src.Name), " "), strings.TrimSpace(src.URL), strings.TrimSpace(src.GuideURL)
+	src.UserAgent = strings.Join(strings.Fields(src.UserAgent), " ")
+	var ua string
+	src.Headers, ua, _ = CleanHeaders(src.Headers)
+	if ua != "" && src.UserAgent == "" {
+		src.UserAgent = ua
+	}
+	return src
 }
 
 func DefaultConfig() Config {
@@ -336,6 +459,40 @@ func (c *Config) normalizeTVChannels() {
 		chs = append(chs, ch)
 	}
 	c.TVChannels = chs
+	streams := make([]TVStream, 0, len(c.TVStreams))
+	seen = map[string]bool{}
+	for i, st := range c.TVStreams {
+		st = st.Clean()
+		if !WebURL(st.URL) {
+			continue
+		}
+		for st.ID == "" || seen[st.ID] {
+			st.ID = RandomToken(4)
+		}
+		seen[st.ID] = true
+		if st.Name == "" {
+			st.Name = "Stream " + strconv.Itoa(i+1)
+		}
+		streams = append(streams, st)
+	}
+	c.TVStreams = streams
+	sources := make([]TVSource, 0, len(c.TVSources))
+	seen = map[string]bool{}
+	for _, src := range c.TVSources {
+		src = src.Clean()
+		if !WebURL(src.URL) || (src.GuideURL != "" && !WebURL(src.GuideURL)) {
+			continue
+		}
+		for src.ID == "" || seen[src.ID] {
+			src.ID = RandomToken(4)
+		}
+		seen[src.ID] = true
+		if src.Name == "" {
+			src.Name = src.URL
+		}
+		sources = append(sources, src)
+	}
+	c.TVSources = sources
 	c.TVOrder, c.TVHidden = c.channelIDs(c.TVOrder), c.channelIDs(c.TVHidden)
 }
 
@@ -369,6 +526,9 @@ func (c *Config) channelIDs(in []string) []string {
 			continue
 		}
 		if custom, ok := strings.CutPrefix(id, "custom-"); ok && !slices.ContainsFunc(c.TVChannels, func(ch TVChannel) bool { return ch.ID == custom }) {
+			continue
+		}
+		if stream, ok := strings.CutPrefix(id, "stream-"); ok && !slices.ContainsFunc(c.TVStreams, func(st TVStream) bool { return st.ID == stream }) {
 			continue
 		}
 		out = append(out, id)
@@ -429,6 +589,7 @@ func (s *Store) UpdateConfig(edit func(*Config) error) (Config, error) {
 	c := s.Config()
 	// Lists are shared with the cached config: edit copies.
 	c.TVChannels, c.TVOrder, c.TVHidden = slices.Clone(c.TVChannels), slices.Clone(c.TVOrder), slices.Clone(c.TVHidden)
+	c.TVStreams, c.TVSources = slices.Clone(c.TVStreams), slices.Clone(c.TVSources)
 	if err := edit(&c); err != nil {
 		return s.Config(), err
 	}

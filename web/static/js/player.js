@@ -587,6 +587,7 @@ export class Player {
 
   async onVideoError() {
     const err = this.video.error;
+    if (this.live?.stream) { if (err && err.code !== 1) this.streamFailed(); return; }
     if (!err || err.code === 1 || this.closed || !this.plan || this.stopped) return;
     // The server went away mid-file: that says nothing about the codec.
     if (err.code === 2) return this.recoverNetwork(); // MEDIA_ERR_NETWORK
