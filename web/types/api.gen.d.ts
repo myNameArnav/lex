@@ -171,6 +171,7 @@ export interface Config {
   sonarrDetectDone: boolean;
   liveTv: boolean;
   tvChannels: TVChannel[];
+  tvOrder: string[];
   tvHidden: string[];
   cacheEnabled: boolean;
   cacheDir: string;
@@ -747,12 +748,6 @@ export interface arrRequest {
   origin: string;
 }
 
-// api.auto
-export interface auto {
-  id: string;
-  name: string;
-}
-
 // api.channelView
 export interface channelView {
   programs: programView[];
@@ -896,6 +891,31 @@ export interface serverCaps {
   transcode: boolean;
 }
 
+// api.tvLineup
+export interface tvLineup {
+  enabled: boolean;
+  channels: tvLineupChannel[];
+  saved?: string;
+}
+
+// api.tvLineupChannel
+export interface tvLineupChannel {
+  id: string;
+  number: number;
+  name: string;
+  off: boolean;
+  source: string;
+  titles: number;
+  custom?: TVChannel | null;
+}
+
+// api.tvLineupEdit
+export interface tvLineupEdit {
+  enabled?: boolean | null;
+  order?: string[];
+  off?: string[];
+}
+
 // [method, path, response, request body]; any where the handler doesn't
 // send or read JSON.
 export type ApiRoutes = [
@@ -909,6 +929,8 @@ export type ApiRoutes = [
   ["DELETE", `/api/admin/cache/items/${string}`, { ok: boolean; }, any],
   ["POST", `/api/admin/cache/items/${string}`, { queued: number; }, any],
   ["POST", `/api/admin/files/${string}/probe`, { ok: boolean; error?: string; }, any],
+  ["DELETE", `/api/admin/tv/channels/${string}`, tvLineup, any],
+  ["PUT", `/api/admin/tv/channels/${string}`, tvLineup, TVChannel],
   ["GET", `/api/files/${string}/hls/index.m3u8`, any, any],
   ["GET", `/api/files/${string}/hls/init.mp4`, any, any],
   ["POST", `/api/items/${string}/intro/reset`, { ok: boolean; }, any],
@@ -927,7 +949,8 @@ export type ApiRoutes = [
   ["GET", `/api/admin/stats/playback`, PlaybackStats | null, any],
   ["GET", `/api/admin/stats/sessions`, Session[], any],
   ["GET", `/api/admin/stats/system`, { snapshot: Snapshot; strains?: Strain[]; diskBusy?: Record<string, number>; history?: Point[]; remuxJobs?: number; transcodeJobs?: number; cache?: CacheStatus; }, any],
-  ["GET", `/api/admin/tv/automatic`, auto[], any],
+  ["POST", `/api/admin/tv/channels`, tvLineup, TVChannel],
+  ["POST", `/api/admin/tv/preview`, { titles: number; programs: programView[]; }, TVChannel],
   ["DELETE", `/api/admin/backups/${string}`, any, any],
   ["GET", `/api/admin/backups/${string}`, any, any],
   ["DELETE", `/api/admin/devices/${string}`, { ok: boolean; }, any],
@@ -960,7 +983,7 @@ export type ApiRoutes = [
   ["GET", `/api/admin/cache`, { status: CacheStatus; entries: Entry[]; }, any],
   ["POST", `/api/admin/compat`, compatSummary, compatReq],
   ["GET", `/api/admin/config`, Config, any],
-  ["PUT", `/api/admin/config`, Config, Config],
+  ["PUT", `/api/admin/config`, Config, any],
   ["GET", `/api/admin/devices`, TokenInfo[], any],
   ["GET", `/api/admin/fs`, { path: string; parent: string; dirs: string[]; }, any],
   ["DELETE", `/api/admin/history`, { ok: boolean; }, any],
@@ -972,6 +995,8 @@ export type ApiRoutes = [
   ["GET", `/api/admin/report`, any, any],
   ["POST", `/api/admin/scan`, { ok: boolean; }, { libraryId: number; }],
   ["GET", `/api/admin/tasks`, { scan: LibraryStatus; metadata: AgentStatus; intro: IntroStatus; cache: CacheStatus; trickplay: TrickplayStatus; remuxJobs: number; transcodeJobs: number; }, any],
+  ["GET", `/api/admin/tv`, tvLineup, any],
+  ["PUT", `/api/admin/tv`, tvLineup, tvLineupEdit],
   ["GET", `/api/admin/users`, User[], any],
   ["POST", `/api/admin/users`, User | null, { Name: string; Password: string; isAdmin: boolean; allLibraries: boolean | null; libraries: number[]; }],
   ["POST", `/api/auth/login`, { user: User | null; token: string; caps: serverCaps; }, { Name: string; Password: string; }],

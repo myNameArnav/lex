@@ -244,19 +244,39 @@ func TestCustomChannels(t *testing.T) {
 	if got := airs(chs[0]); len(got) != 1 || !got[2] {
 		t.Fatalf("picked and left out airs %v", got)
 	}
-	// Hiding an automatic channel takes it off the list, and the numbers
-	// close up; Automatic still offers it.
+	// The saved order comes first. Turning a channel off takes it off the
+	// air, but the rest keep their numbers; Lineup still lists it.
 	c := st.Config()
+	c.TVOrder = []string{"lib-1"}
+	if _, err := st.SaveConfig(c); err != nil {
+		t.Fatal(err)
+	}
+	if chs, _ := g.Channels(); len(chs) != 2 || chs[0].ID != "lib-1" || chs[0].Number != 1 || chs[1].ID != "custom-crime" || chs[1].Number != 2 {
+		t.Fatalf("lib-1 first: %+v", chs)
+	}
 	c.TVHidden = []string{"lib-1"}
 	if _, err := st.SaveConfig(c); err != nil {
 		t.Fatal(err)
 	}
-	if chs, _ := g.Channels(); len(chs) != 1 || chs[0].ID != "custom-crime" || chs[0].Number != 1 {
-		t.Fatalf("with lib-1 hidden: %+v", chs)
+	if chs, _ := g.Channels(); len(chs) != 1 || chs[0].ID != "custom-crime" || chs[0].Number != 2 {
+		t.Fatalf("with lib-1 off: %+v", chs)
 	}
-	if auto, err := g.Automatic(); err != nil || len(auto) != 1 || auto[0].ID != "lib-1" {
-		t.Fatalf("Automatic = %+v, %v", auto, err)
+	if all, err := g.Lineup(); err != nil || len(all) != 2 || all[0].ID != "lib-1" || !all[0].Off || all[1].Off {
+		t.Fatalf("Lineup = %+v, %v", all, err)
 	}
+	if _, found, _ := g.Channel("lib-1"); found {
+		t.Fatal("a channel turned off tunes in")
+	}
+	// Previewing an unchanged channel shows what it airs today.
+	if n, progs, err := g.Preview("custom-crime", Filter(st.Config().TVChannels[0]), time.Now(), 2); err != nil || n != 1 || len(progs) != 2 {
+		t.Fatalf("Preview = %d titles, %+v, %v", n, progs, err)
+	} else if want, _ := g.Next(chs[0], time.Now(), 2); progs[0] != want[0] || progs[1] != want[1] {
+		t.Fatalf("Preview %+v, airs %+v", progs, want)
+	}
+	if n, _ := g.Titles(chs[0]); n != 1 {
+		t.Fatalf("Titles = %d", n)
+	}
+	c.TVOrder = nil
 	c.TVHidden = nil
 	if _, err := st.SaveConfig(c); err != nil {
 		t.Fatal(err)

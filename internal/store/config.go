@@ -80,11 +80,14 @@ type Config struct {
 	SonarrKey        string `json:"sonarrKey"`
 	SonarrDetectDone bool   `json:"sonarrDetectDone"`
 
-	// LiveTV turns on the Live TV channels (off by default); TVChannels are
-	// the admin's own, aired before the automatic ones, and TVHidden the
-	// automatic channels (by id: "all", "lib-1", "genre-Drama") turned off.
+	// LiveTV turns on the Live TV channels (off by default). TVChannels are
+	// the admin's own. TVOrder is the lineup, by channel id ("custom-<id>",
+	// "all", "lib-1", "genre-Drama"): channels it doesn't list follow it, the
+	// admin's first. TVHidden are the channels turned off; they keep their
+	// number. All of these are edited through /api/admin/tv, not the config.
 	LiveTV     bool        `json:"liveTv"`
 	TVChannels []TVChannel `json:"tvChannels"`
+	TVOrder    []string    `json:"tvOrder"`
 	TVHidden   []string    `json:"tvHidden"`
 
 	// SSD cache for media files living on a slower disk.
@@ -322,32 +325,55 @@ func (c *Config) normalizeTVChannels() {
 	chs := make([]TVChannel, 0, len(c.TVChannels))
 	seen := map[string]bool{}
 	for i, ch := range c.TVChannels {
-		ch.ID = strings.TrimSpace(ch.ID)
+		ch = ch.Clean()
 		for ch.ID == "" || seen[ch.ID] {
 			ch.ID = RandomToken(4)
 		}
 		seen[ch.ID] = true
-		if ch.Name = strings.TrimSpace(ch.Name); ch.Name == "" {
+		if ch.Name == "" {
 			ch.Name = "Channel " + strconv.Itoa(i+1)
-		}
-		if ch.Kind != "movie" && ch.Kind != "show" && ch.Kind != "picked" {
-			ch.Kind = ""
-		}
-		ch.Libraries, ch.Titles, ch.Exclude = ids(ch.Libraries), ids(ch.Titles), ids(ch.Exclude)
-		ch.Genres = slices.DeleteFunc(slices.Clone(ch.Genres), func(g string) bool { return strings.TrimSpace(g) == "" })
-		if ch.Genres == nil {
-			ch.Genres = []string{}
 		}
 		chs = append(chs, ch)
 	}
 	c.TVChannels = chs
-	hidden := []string{}
-	for _, id := range c.TVHidden {
-		if id = strings.TrimSpace(id); id != "" && !slices.Contains(hidden, id) {
-			hidden = append(hidden, id)
+	c.TVOrder, c.TVHidden = c.channelIDs(c.TVOrder), c.channelIDs(c.TVHidden)
+}
+
+// Clean trims the channel's id and name, drops a kind it doesn't know,
+// non-ids and repeats from its lists, and uses empty lists rather than null
+// so the UI can compare drafts.
+func (ch TVChannel) Clean() TVChannel {
+	ch.ID, ch.Name = strings.TrimSpace(ch.ID), strings.TrimSpace(ch.Name)
+	if ch.Kind != "movie" && ch.Kind != "show" && ch.Kind != "picked" {
+		ch.Kind = ""
+	}
+	ch.Libraries, ch.Titles, ch.Exclude = ids(ch.Libraries), ids(ch.Titles), ids(ch.Exclude)
+	genres := []string{}
+	for _, g := range ch.Genres {
+		if g = strings.TrimSpace(g); g != "" && !slices.Contains(genres, g) {
+			genres = append(genres, g)
 		}
 	}
-	c.TVHidden = hidden
+	ch.Genres = genres
+	return ch
+}
+
+// channelIDs drops blanks, repeats and the ids of the admin's channels that
+// no longer exist, keeping the order. Automatic channels the library
+// doesn't fill now are kept: they may come back.
+func (c *Config) channelIDs(in []string) []string {
+	out := []string{}
+	for _, id := range in {
+		id = strings.TrimSpace(id)
+		if id == "" || slices.Contains(out, id) {
+			continue
+		}
+		if custom, ok := strings.CutPrefix(id, "custom-"); ok && !slices.ContainsFunc(c.TVChannels, func(ch TVChannel) bool { return ch.ID == custom }) {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
 }
 
 // ids drops non-ids and repeats, keeping the order.
@@ -390,6 +416,26 @@ func (s *Store) Config() Config {
 }
 
 func (s *Store) SaveConfig(c Config) (Config, error) {
+	s.cfgSaveMu.Lock()
+	defer s.cfgSaveMu.Unlock()
+	return s.saveConfig(c)
+}
+
+// UpdateConfig changes the config in place: edit gets the current one, and
+// no other save can come in between. An error from edit saves nothing.
+func (s *Store) UpdateConfig(edit func(*Config) error) (Config, error) {
+	s.cfgSaveMu.Lock()
+	defer s.cfgSaveMu.Unlock()
+	c := s.Config()
+	// Lists are shared with the cached config: edit copies.
+	c.TVChannels, c.TVOrder, c.TVHidden = slices.Clone(c.TVChannels), slices.Clone(c.TVOrder), slices.Clone(c.TVHidden)
+	if err := edit(&c); err != nil {
+		return s.Config(), err
+	}
+	return s.saveConfig(c)
+}
+
+func (s *Store) saveConfig(c Config) (Config, error) {
 	c.normalize()
 	if err := s.setKV("config", jsonString(c)); err != nil {
 		return c, err

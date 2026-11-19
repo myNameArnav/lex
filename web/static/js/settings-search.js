@@ -148,8 +148,8 @@ const INDEX = {
   livetv: [
     ['Live TV', 'channels tv broadcast', [
       ['Enable Live TV', 'channels tv broadcast'],
-      ['Automatic channels', 'genre channels hide'],
     ]],
+    ['Channels', 'lineup order number automatic genre library new channel add edit turn off hide', []],
   ],
   transcoding: [
     ['Playback methods', 'methods', [
