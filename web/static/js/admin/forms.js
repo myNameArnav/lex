@@ -18,10 +18,13 @@ function placeInfo(btn, text) {
   const pad = 12;
   const w = Math.min(text.offsetWidth, innerWidth - pad * 2);
   const left = Math.max(pad, Math.min(r.left + r.width / 2 - w / 2, innerWidth - pad - w));
-  const below = r.bottom + 8;
+  const below = r.bottom + 10;
   const fitsBelow = below + text.offsetHeight <= innerHeight - pad;
   text.style.left = `${left}px`;
-  text.style.top = `${fitsBelow ? below : Math.max(pad, r.top - 8 - text.offsetHeight)}px`;
+  text.style.top = `${fitsBelow ? below : Math.max(pad, r.top - 10 - text.offsetHeight)}px`;
+  // The arrow points back at the button that opened it.
+  text.style.setProperty('--arrow-x', `${r.left + r.width / 2 - left}px`);
+  text.dataset.side = fitsBelow ? 'below' : 'above';
 }
 
 export function infoPair(name, help, tag = 'div') {

@@ -763,7 +763,10 @@ body:has(.save-bar) > .toasts { bottom: calc(80px + var(--sab)); }
 .settings .form-section > h2 + p.info-text + :is(.field, .toggle-row, .form-grid) { margin-top: 8px; }
 /* Descriptions sit behind an ⓘ button beside the setting's name, in a popover under it. */
 .info-text:not(:popover-open) { display: none !important; }
-.info-text:popover-open { position: fixed; inset: auto; margin: 0 !important; width: max-content; max-width: min(42ch, calc(100vw - 24px)) !important; padding: 10px 12px; border: 1px solid var(--bg4); border-radius: 8px; background: var(--bg3); color: var(--text2); font-size: 13px; font-weight: 400; line-height: 1.45; text-transform: none; letter-spacing: normal; box-shadow: var(--shadow); cursor: auto; }
+.info-text:popover-open { position: fixed; overflow: visible; inset: auto; margin: 0 !important; width: max-content; max-width: min(42ch, calc(100vw - 24px)) !important; padding: 10px 12px; border: 1px solid var(--bg4); border-radius: 8px; background: var(--bg3); color: var(--text2); font-size: 13px; font-weight: 400; line-height: 1.45; text-transform: none; letter-spacing: normal; box-shadow: var(--shadow); cursor: auto; }
+.info-text:popover-open::before { content: ''; position: absolute; left: var(--arrow-x, 50%); width: 14px; height: 14px; margin-left: -8px; background: inherit; border: inherit; border-width: 1px 0 0 1px; transform: rotate(45deg); }
+.info-text[data-side=below]::before { top: -8px; }
+.info-text[data-side=above]::before { bottom: -8px; transform: rotate(225deg); }
 .info-btn { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin: -3px 0 -3px 4px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--text3); cursor: pointer; vertical-align: middle; flex: none; }
 .info-btn svg { width: 15px; height: 15px; }
 .info-btn:hover, .info-btn.on { color: var(--accent); }
