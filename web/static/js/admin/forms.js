@@ -7,20 +7,46 @@ import { api } from '../api.js';
 import { state, setLeaveGuard, renderNav } from '../app.js';
 
 // A setting's description sits behind an ⓘ button beside its name, so a
-// page reads as a list of settings rather than paragraphs. The text stays in
-// the page (hidden until opened), so it is still the control's description
-// for screen readers and still found by the browser's find-in-page.
+// page reads as a list of settings rather than paragraphs. The button opens
+// the text as a popover floating under it, so opening it never moves the
+// page. The text stays in the DOM, so it is still the control's description
+// for screen readers.
 let infoId = 0;
 
+function placeInfo(btn, text) {
+  const r = btn.getBoundingClientRect();
+  const pad = 12;
+  const w = Math.min(text.offsetWidth, innerWidth - pad * 2);
+  const left = Math.max(pad, Math.min(r.left + r.width / 2 - w / 2, innerWidth - pad - w));
+  const below = r.bottom + 8;
+  const fitsBelow = below + text.offsetHeight <= innerHeight - pad;
+  text.style.left = `${left}px`;
+  text.style.top = `${fitsBelow ? below : Math.max(pad, r.top - 8 - text.offsetHeight)}px`;
+}
+
 export function infoPair(name, help, tag = 'div') {
-  const text = h(tag, { class: 'help info-text', id: `info-${++infoId}`, hidden: true }, help);
-  const btn = h('button', { type: 'button', class: 'info-btn', title: 'More about this', 'aria-label': `About ${name}`, 'aria-expanded': 'false', 'aria-controls': text.id, html: icons.info,
+  const text = h(tag, { class: 'help info-text', id: `info-${++infoId}`, popover: 'auto', role: 'tooltip',
+    // A click inside the popover would otherwise reach the label around it and toggle its control.
+    onclick: (e) => e.preventDefault() }, help);
+  const btn = h('button', { type: 'button', class: 'info-btn', 'aria-label': `About ${name}`, 'aria-expanded': 'false', 'aria-controls': text.id, html: icons.info,
     onclick: (e) => {
       e.preventDefault(); // not the label's click: it would toggle or focus the control
-      text.hidden = !text.hidden;
-      btn.setAttribute('aria-expanded', String(!text.hidden));
-      btn.classList.toggle('on', !text.hidden);
+      text.togglePopover();
     } });
+  const close = () => text.hidePopover();
+  text.addEventListener('toggle', (e) => {
+    const open = /** @type {ToggleEvent} */ (e).newState === 'open';
+    btn.setAttribute('aria-expanded', String(open));
+    btn.classList.toggle('on', open);
+    if (open) {
+      placeInfo(btn, text);
+      addEventListener('scroll', close, { capture: true, once: true });
+      addEventListener('resize', close, { once: true });
+    } else {
+      removeEventListener('scroll', close, { capture: true });
+      removeEventListener('resize', close);
+    }
+  });
   return [btn, text];
 }
 
