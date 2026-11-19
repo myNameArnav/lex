@@ -10,8 +10,8 @@ TypeScript checks the UI's JavaScript (`bun check`, Bun 1.4.3 or newer). Types
 come from JSDoc comments and from `.d.ts` files in `web/types/`. Annotate
 function parameters that take options objects, and cast where the DOM returns
 something too general, e.g. `/** @type {HTMLElement} */ (document.activeElement)`.
-Worker entry points (`web/static/js/*-worker.js`) are checked with the worker
-globals (`web/tsconfig.worker.json`). Nothing is compiled: the browser runs
+Worker entry points (`web/static/js/*-worker.js`) and the service worker are
+checked with the worker globals (`web/tsconfig.worker.json`). Nothing is compiled: the browser runs
 the files as written.
 
 ## Before opening a pull request
