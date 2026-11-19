@@ -1,5 +1,16 @@
 // Small DOM + formatting helpers shared by all views.
 
+/**
+ * h creates an element. attrs: class, style (string or object), dataset,
+ * html (innerHTML), on* listeners, value/checked/selected/disabled as
+ * properties, anything else as an attribute (true → '', null/false → unset).
+ * children: nodes, text, nested arrays; null and false are skipped.
+ * @template {string} K
+ * @param {K} tag
+ * @param {Record<string, any> | null} [attrs]
+ * @param {...any} children
+ * @returns {K extends keyof HTMLElementTagNameMap ? HTMLElementTagNameMap[K] : HTMLElement}
+ */
 export function h(tag, attrs, ...children) {
   const el = document.createElement(tag);
   if (attrs) {
@@ -15,7 +26,7 @@ export function h(tag, attrs, ...children) {
     }
   }
   append(el, children);
-  return el;
+  return /** @type {any} */ (el);
 }
 
 function append(el, children) {
@@ -27,7 +38,9 @@ function append(el, children) {
   }
 }
 
+/** @type {(sel: string, root?: ParentNode) => HTMLElement | null} */
 export const $ = (sel, root = document) => root.querySelector(sel);
+/** @type {(sel: string, root?: ParentNode) => HTMLElement[]} */
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 export function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
@@ -244,6 +257,7 @@ let toastQueue = null;
 // A visible toast with the same key (or, without a key, the same text) is
 // updated and its timer restarted instead of stacking another one.
 // ms defaults to 3s, or 7s for errors and long messages.
+/** @param {any} msg @param {string} [kind] @param {{ key?: string, ms?: number }} [options] */
 export function toast(msg, kind = '', { key, ms } = {}) {
   msg = String(msg ?? '');
   msg = msg.charAt(0).toUpperCase() + msg.slice(1);
@@ -300,6 +314,16 @@ export function containTab(e, root) {
 let modalId = 0;
 // modal opens a dialog. It closes on ×, Escape, navigation (hashchange) and,
 // when dismissible, a click on the backdrop.
+/**
+ * @param {object} options
+ * @param {any} options.title
+ * @param {any} options.body
+ * @param {any[]} [options.actions]
+ * @param {boolean} [options.wide]
+ * @param {() => void} [options.onClose]
+ * @param {HTMLElement} [options.parent]
+ * @param {boolean} [options.dismissible]
+ */
 export function modal({ title, body, actions = [], wide = false, onClose, parent = document.body, dismissible = true }) {
   const titleId = `dialog-title-${++modalId}`;
   const bg = h('dialog', { class: 'modal-bg', 'aria-labelledby': titleId, 'aria-modal': 'true' });
@@ -316,7 +340,7 @@ export function modal({ title, body, actions = [], wide = false, onClose, parent
   window.addEventListener('hashchange', close);
   bg.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
   bg.addEventListener('close', close);
-  bg.addEventListener('keydown', (e) => { if (e.target.closest('dialog') === bg) containTab(e, bg); });
+  bg.addEventListener('keydown', (e) => { if (/** @type {Element} */ (e.target).closest('dialog') === bg) containTab(e, bg); });
   bg.addEventListener('mousedown', (e) => { if (e.target === bg && dismissible) close(); });
   const foot = actions.length ? h('div', { class: 'modal-foot' }, actions) : null;
   bg.appendChild(h('div', { class: `modal ${wide ? 'wide' : ''}` },
@@ -356,6 +380,12 @@ export function confirmDialog(message, okLabel = 'OK', danger = false, title = '
 // can't submit twice. A failure toasts its message; okMsg (a string, or a
 // function of fn's result) toasts on success. Resolves true on success and
 // false on failure or when the button was already busy. btn may be null.
+/**
+ * @param {HTMLButtonElement | null | undefined} btn
+ * @param {() => any} fn
+ * @param {string | ((result: any) => string | null | undefined | false)} [okMsg]
+ * @param {{ busyLabel?: string }} [options]
+ */
 export async function run(btn, fn, okMsg, { busyLabel } = {}) {
   if (btn?.disabled) return false;
   let saved = null, hadFocus = false;
@@ -414,6 +444,7 @@ export function staleBanner(target) {
 
 // emptyState renders a centred message for empty, error and not-found views.
 // actions: buttons or links; alert announces it; level: heading tag.
+/** @param {{ title?: any, text?: any, actions?: any[], alert?: boolean, level?: string }} [options] */
 export function emptyState({ title, text, actions = [], alert = false, level = 'h1' } = {}) {
   return h('div', { class: 'empty', role: alert ? 'alert' : null },
     h(level, null, title),
@@ -432,6 +463,11 @@ export function closePopupMenu() { activeMenu?.close(false); }
 // the same anchor closes it. Arrow keys, Home/End and Escape work as in a
 // native menu; it closes on outside clicks, navigation, resize and when the
 // page scroll moves the anchor. onClick may be async: a rejection toasts.
+/**
+ * @typedef {{ label?: string, icon?: string, onClick?: () => any, note?: string } | '-'} PopupItem
+ * @param {HTMLElement} anchor
+ * @param {PopupItem[]} items
+ */
 export function popupMenu(anchor, items) {
   if (activeMenu) {
     const same = activeMenu.anchor === anchor;

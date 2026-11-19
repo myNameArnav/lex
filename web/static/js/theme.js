@@ -13,7 +13,7 @@ export function applyTheme(theme = prefs.get('theme')) {
   if (fixed) root.dataset.theme = fixed; else delete root.dataset.theme;
   // index.html has one theme-color per scheme (by media query); a fixed
   // theme sets both to its colour.
-  for (const m of document.querySelectorAll('meta[name="theme-color"]')) {
+  for (const m of /** @type {NodeListOf<HTMLMetaElement>} */ (document.querySelectorAll('meta[name="theme-color"]'))) {
     const scheme = /light/.test(m.media) ? 'light' : 'dark';
     m.content = BG[fixed || scheme];
   }

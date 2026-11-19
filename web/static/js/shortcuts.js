@@ -9,6 +9,9 @@ import { prefs } from './prefs.js';
 
 export const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl';
 
+// [keys, what it does, join (see keys() in showShortcuts)]
+/** @typedef {[string[], string, string?]} Shortcut */
+/** @type {[string, Shortcut[]][]} */
 const SECTIONS = [
   ['General', [
     [[MOD, 'K'], 'Search (in Settings: search settings; press again for the app search)', '+'],
@@ -47,8 +50,10 @@ export function showShortcuts() {
   if (open) { open.close(); return; }
   const inPlayer = isPlayerOpen();
   const single = prefs.get('shortcuts');
+  /** @type {Shortcut} */
   const help = single ? [['?'], 'Show keyboard shortcuts'] : [[MOD, '/'], 'Show keyboard shortcuts', '+'];
   // The app's own keys don't work over the player, so it lists only its keys.
+  /** @type {[string, Shortcut[]][]} */
   const sections = inPlayer ? [SECTIONS[3], ['General', [help]]] : SECTIONS;
   // join: '+' held together, 'then' pressed in turn, '/' alternatives.
   const keys = (ks, join = '/') => h('span', { class: 'keys' }, ks.map((k, i) => [i ? h('span', { class: 'join' }, join) : null, h('kbd', null, k)]));

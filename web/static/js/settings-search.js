@@ -404,6 +404,6 @@ export function searchBox({ isAdmin, choose }) {
     }
   });
   const el = h('div', { class: 'settings-search', role: 'search' }, input, pop, live);
-  el.addEventListener('focusout', (ev) => { if (!el.contains(ev.relatedTarget)) close(); });
+  el.addEventListener('focusout', (ev) => { if (!el.contains(/** @type {Node | null} */ (ev.relatedTarget))) close(); });
   return { el, input };
 }

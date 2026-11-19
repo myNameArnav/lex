@@ -88,6 +88,12 @@ export const subtitles = {
 
   // The server is still extracting this track (big file, slow disk) and sent
   // what it has so far: keep fetching until it's complete.
+  /**
+   * @param {any} token
+   * @param {string} url
+   * @param {(data: any) => any} apply
+   * @param {(url: string) => Promise<{ text?: string, data?: ArrayBuffer, partial: boolean }>} [fetcher]
+   */
   async pollSub(token, url, apply, fetcher = fetchSub) {
     for (let wait = 3000; ; wait = Math.min(wait * 1.5, 15000)) {
       await new Promise((r) => setTimeout(r, wait));

@@ -58,7 +58,7 @@ export async function showView(ctx, d) {
   const listId = `episodes-${it.id}`;
   const tabs = h('div', { class: 'tabs', role: 'group', 'aria-label': 'Seasons' });
   const list = h('div', { class: 'episodes', id: listId, role: 'region', 'aria-label': 'Episodes' });
-  const tabFor = (s) => [...tabs.children].find((b) => +b.dataset.id === s.id);
+  const tabFor = (s) => [.../** @type {HTMLCollectionOf<HTMLElement>} */ (tabs.children)].find((b) => +b.dataset.id === s.id);
   // An episode toggled in the list: adjust its season's count now, then
   // refetch the show for the play button, Up next and every season count.
   // s is the episode's season (the user may have switched tabs since).
@@ -82,7 +82,7 @@ export async function showView(ctx, d) {
         const old = seasons.find((x) => x.id === s.id), tab = tabFor(s);
         if (old && tab) { old.unplayedCount = s.unplayedCount; seasonTabLabel(tab, old); }
       }
-      const key = cta.contains(document.activeElement) ? document.activeElement.dataset.focusKey : null;
+      const key = cta.contains(document.activeElement) ? /** @type {HTMLElement} */ (document.activeElement).dataset.focusKey : null;
       const n = heroActions(nd);
       cta.replaceWith(n);
       cta = n;
@@ -106,7 +106,7 @@ export async function showView(ctx, d) {
     let eps;
     try { eps = await api(`/api/items/${s.id}/children`); } catch { return; }
     if (active !== s || !ctx.isCurrent()) return;
-    const key = list.contains(document.activeElement) ? document.activeElement.dataset.focusKey : null;
+    const key = list.contains(document.activeElement) ? /** @type {HTMLElement} */ (document.activeElement).dataset.focusKey : null;
     renderEpisodes(s, eps);
     if (key) list.querySelector(`[data-focus-key="${key}"]`)?.focus({ preventScroll: true });
   };
@@ -118,7 +118,7 @@ export async function showView(ctx, d) {
   const showSeason = async (s) => {
     active = s;
     more?.setAttribute('aria-label', `Actions for ${s.title}`);
-    for (const b of tabs.children) {
+    for (const b of /** @type {HTMLCollectionOf<HTMLElement>} */ (tabs.children)) {
       const selected = +b.dataset.id === s.id;
       b.classList.toggle('active', selected);
       b.setAttribute('aria-pressed', String(selected));

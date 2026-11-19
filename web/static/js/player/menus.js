@@ -79,7 +79,7 @@ export const menus = {
   renderMenu(opts) {
     const m = this.menu;
     if (!m) return;
-    const active = m.contains(document.activeElement) ? document.activeElement : null;
+    const active = m.contains(document.activeElement) ? /** @type {HTMLElement} */ (document.activeElement) : null;
     const key = active?.dataset.key;
     clear(m);
     m.classList.remove('pm-wide');
@@ -210,14 +210,14 @@ export const menus = {
       // timing are one row away.
       const pick = (title, key, items, extra) => h('div', { class: 'pm-col' },
         h('div', { class: 'pm-title' }, title),
-        h('div', { class: 'pm-list', role: 'radiogroup', 'aria-label': title }, items.map((it) => opt(it, 'radio', key))),
+        h('div', { class: 'pm-list', role: 'radiogroup', 'aria-label': title }, items.map((it) => opt(it, 'radio'))),
         extra);
       const audLabel = (a) => ({ label: trackName(a), sub: [(a.codec || '').toUpperCase(), channelName(a.channels)].filter(Boolean).join(' '), key: `a-${a.index}` });
       const subLabel2 = (s) => ({ label: trackName(s) + (s.forced ? ' (Forced)' : '') + (s.hearingImpaired ? ' (SDH)' : ''),
         sub: [s.external ? 'External' : '', s.downloaded ? 'Downloaded' : '', !s.textSub && s.codec !== 'hdmv_pgs_subtitle' ? 'Burned in' : ''].filter(Boolean).join(' · '), key: `s-${s.index}` });
       const fx = auds.length && this.fxAvailable() ? h('div', { class: 'pm-chips', role: 'group', 'aria-label': 'Sound' },
-        [['nightMode', 'Night mode', 'Quiet parts louder, loud parts quieter', () => this.applyFx()],
-          ['voiceBoost', 'Boost voices', 'Clearer dialogue', () => { this.applyFx(); if (this.voiceNeedsReplan()) this.replan(); }]].map(([k, l, tip, apply]) => h('button', {
+        /** @type {[string, string, string, () => void][]} */ ([['nightMode', 'Night mode', 'Quiet parts louder, loud parts quieter', () => this.applyFx()],
+          ['voiceBoost', 'Boost voices', 'Clearer dialogue', () => { this.applyFx(); if (this.voiceNeedsReplan()) this.replan(); }]]).map(([k, l, tip, apply]) => h('button', {
           class: `pm-chip${prefs.get(k) ? ' on' : ''}`, 'aria-pressed': String(!!prefs.get(k)), title: tip, 'data-key': `fx-${k}`,
           onclick: () => { prefs.set(k, !prefs.get(k)); apply(); this.renderMenu(); },
         }, h('span', { class: 'ck', html: prefs.get(k) ? icons.check : '' }), l))) : null;
@@ -250,6 +250,7 @@ export const menus = {
     ].filter(([k]) => k !== 'hls' || this.mode === 'hls' || this.nativeHls());
     const upper = (t) => t.charAt(0).toUpperCase() + t.slice(1);
     // [pref, label, short name for the summary, apply]
+    /** @type {() => [string, string, string, ((on: boolean) => void)?][]} */
     const autoOpts = () => [
       ['autoSkipIntro', 'Skip intros', 'intros'],
       ['autoSkipCredits', 'Skip credits', 'credits'],

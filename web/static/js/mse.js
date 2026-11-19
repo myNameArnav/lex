@@ -139,7 +139,7 @@ export class MseEngine {
   whenIdle() {
     if (!this.sb || !this.sb.updating) return Promise.resolve();
     return new Promise((res) => {
-      const done = () => { this.sb.removeEventListener('updateend', done); this.sb.removeEventListener('error', done); res(); };
+      const done = () => { this.sb.removeEventListener('updateend', done); this.sb.removeEventListener('error', done); res(undefined); };
       this.sb.addEventListener('updateend', done);
       this.sb.addEventListener('error', done);
     });

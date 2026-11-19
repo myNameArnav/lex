@@ -78,6 +78,7 @@ export const prefs = {
 // Max-bitrate choices. The labels name only the bitrate: the resolution a
 // transcode comes out at depends on the server and the file, so
 // qualityOptions() adds it.
+/** @type {[number, string][]} [kbps (0: the original), label] */
 export const QUALITIES = [
   [0, 'Original'],
   [40000, '40 Mbps'],
@@ -116,6 +117,7 @@ export function transcodeHeight(kbps, maxHeight = 0, srcHeight = 0) {
 // leaves the video untouched when the browser can play it, so it names no
 // resolution. Entries that share a resolution stay separate: they still
 // differ in bitrate, which is what the choice limits.
+/** @returns {[number, string][]} */
 export function qualityOptions({ maxHeight = 0, srcHeight = 0, srcKbps = 0 } = {}) {
   return QUALITIES.map(([k, base]) => [k,
     !k || (srcKbps > 0 && k >= srcKbps) ? base : `${base} · ${transcodeHeight(k, maxHeight, srcHeight)}p`]);

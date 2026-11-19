@@ -39,7 +39,7 @@ window.addEventListener('lex:unauthorized', () => {
   state.me = null;
   routeToken++; // invalidates the current view, so its pollers and pending loads stop
   leaveGuard = null;
-  document.querySelectorAll('dialog[open]').forEach((d) => d.close());
+  document.querySelectorAll('dialog').forEach((d) => d.open && d.close());
   closePopupMenu();
   if (isPlayerOpen()) closePlayer();
   renderAuth(false, 'Your session ended. Sign in again to continue.');
@@ -247,7 +247,7 @@ export function renderNav() {
   const sig = [state.caps.liveTv ? 'tv' : '', ...state.libraries.map((l) => `${l.id}\t${l.name}`)].join('\n');
   if (!navLinks.size || sig !== navSig) {
     navSig = sig;
-    navLinks = new Map([['home', h('a', { href: '#/' }, 'Home')], ...(state.caps.liveTv ? [['tv', h('a', { href: '#/tv' }, 'Live TV')]] : []), ...state.libraries.map((l) => [l.id, h('a', { href: `#/library/${l.id}` }, l.name)])]);
+    navLinks = new Map(/** @type {[string, HTMLAnchorElement][]} */ ([['home', h('a', { href: '#/' }, 'Home')], ...(state.caps.liveTv ? [['tv', h('a', { href: '#/tv' }, 'Live TV')]] : []), ...state.libraries.map((l) => [l.id, h('a', { href: `#/library/${l.id}` }, l.name)])]));
     navEl.replaceChildren(...navLinks.values());
   }
   const cur = location.hash;
@@ -309,6 +309,7 @@ function leaveSearch() {
 }
 
 function userMenu(anchor) {
+  /** @type {import('./ui.js').PopupItem[]} */
   const items = [
     { label: 'Watchlist', icon: 'bookmark', onClick: () => { location.hash = '#/watchlist'; } },
     { label: 'Favorites', icon: 'heart', onClick: () => { location.hash = '#/favorites'; } },
@@ -444,7 +445,7 @@ export async function route({ soft = false } = {}) {
   renderNav();
   if (section !== 'search' && searchInput) searchInput.value = '';
   const restore = soft ? captureScroll() : history.state?.scroll || null;
-  const active = document.activeElement;
+  const active = /** @type {HTMLElement | null} */ (document.activeElement);
   const focusKey = pendingFocusKey || (soft ? active?.dataset?.focusKey : null);
   const focusWasInMain = mainEl.contains(active) && active !== mainEl;
   pendingFocusKey = null;
@@ -461,8 +462,8 @@ export async function route({ soft = false } = {}) {
       case 'library': view = await libraryView(ctx, +id); break;
       case 'item': view = await itemView(ctx, +id); break;
       case 'search': view = await searchView(ctx, query.get('q') || ''); break;
-      case 'watchlist': view = await watchlistView(ctx); break;
-      case 'favorites': view = await favoritesView(ctx); break;
+      case 'watchlist': view = await watchlistView(); break;
+      case 'favorites': view = await favoritesView(); break;
       case 'collection': view = await collectionView(ctx, +id); break;
       case 'person': view = await personView(ctx, query.get('name') || ''); break;
       case 'tv': view = await tvView(ctx); break;

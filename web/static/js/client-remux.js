@@ -46,6 +46,8 @@ export class RemuxWorker extends WorkerRPC {
     this.file = { url, audio, fragMs };
     this.fetched = 0;
     this.requests = 0;
+    this.rate = 0;
+    this.heap = 0;
   }
 
   replyError(data) {
@@ -91,6 +93,8 @@ export class RemuxStream {
     this.worker = worker;
     this.time = time;
     this.id = ++streams;
+    /** @type {Promise<void> | null} */
+    this.started = null;
   }
 
   request(msg) {
