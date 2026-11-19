@@ -36,12 +36,38 @@ type channelView struct {
 	Programs []programView `json:"programs"`
 }
 
-// guideWindow is how far ahead the guide looks, and guidePrograms how many
-// programs it shows per channel at most.
+// guideWindow is how far ahead the guide looks by default, and
+// guidePrograms how many programs it shows per channel then. With ?from=
+// and ?to= (Unix ms) it answers every program in that window instead, up to
+// maxGuideWindow long, starting no more than a day back.
 const (
-	guideWindow   = 3 * time.Hour
-	guidePrograms = 4
+	guideWindow    = 3 * time.Hour
+	guidePrograms  = 4
+	maxGuideWindow = 24 * time.Hour
 )
+
+// guideRange reads ?from= and ?to=; ok is false when they aren't given.
+func guideRange(r *http.Request, now time.Time) (from, to time.Time, ok bool) {
+	f, err1 := strconv.ParseInt(r.URL.Query().Get("from"), 10, 64)
+	t, err2 := strconv.ParseInt(r.URL.Query().Get("to"), 10, 64)
+	if err1 != nil || err2 != nil {
+		return now, now.Add(guideWindow), false
+	}
+	from, to = time.UnixMilli(f), time.UnixMilli(t)
+	if from.Before(now.Add(-maxGuideWindow)) {
+		from = now.Add(-maxGuideWindow)
+	}
+	if from.After(now.Add(7 * maxGuideWindow)) {
+		from = now.Add(7 * maxGuideWindow)
+	}
+	if !to.After(from) {
+		to = from.Add(guideWindow)
+	}
+	if to.Sub(from) > maxGuideWindow {
+		to = from.Add(maxGuideWindow)
+	}
+	return from, to, true
+}
 
 func (s *Server) tvGuide(w http.ResponseWriter, r *http.Request) {
 	chs, err := s.TV.Channels()
@@ -50,6 +76,7 @@ func (s *Server) tvGuide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
+	from, to, ranged := guideRange(r, now)
 	u := userOf(r)
 	out := []channelView{}
 	for _, ch := range chs {
@@ -60,9 +87,13 @@ func (s *Server) tvGuide(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		var progs []programView
-		sched, err := s.TV.Programs(ch, now, now.Add(guideWindow))
+		sched, err := s.TV.Programs(ch, from, to)
 		if err == nil {
-			progs, err = s.programViews(sched, u, guidePrograms)
+			limit := guidePrograms
+			if ranged {
+				limit = len(sched)
+			}
+			progs, err = s.programViews(sched, u, limit)
 		}
 		if errors.Is(err, errHiddenChannel) {
 			continue
@@ -75,7 +106,7 @@ func (s *Server) tvGuide(w http.ResponseWriter, r *http.Request) {
 			out = append(out, channelView{Channel: ch, Programs: progs})
 		}
 	}
-	writeJSON(w, map[string]any{"channels": out, "serverTime": now.UnixMilli()})
+	writeJSON(w, map[string]any{"channels": out, "serverTime": now.UnixMilli(), "from": from.UnixMilli(), "to": to.UnixMilli()})
 }
 
 // tvChannel answers what's on a channel: at ?at= (Unix ms; the end of the

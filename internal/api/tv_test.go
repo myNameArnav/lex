@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"lex/internal/store"
 )
@@ -93,6 +94,30 @@ func TestTVGuideAndTuning(t *testing.T) {
 	ch := guide.Channels[0]
 	if ch.ID != "lib-1" || ch.Number != 1 || len(ch.Programs) == 0 || ch.Programs[0].Item == nil {
 		t.Fatalf("channel = %+v", ch)
+	}
+	// A window gives every program in it, back to back.
+	from := time.Now().Add(-30 * time.Minute).UnixMilli()
+	to := from + 12*3600_000
+	var grid struct {
+		Channels []channelView `json:"channels"`
+		From     int64         `json:"from"`
+		To       int64         `json:"to"`
+	}
+	if code := getJSON(t, h, token, "/api/tv?from="+strconv.FormatInt(from, 10)+"&to="+strconv.FormatInt(to, 10), &grid); code != 200 || len(grid.Channels) != 1 || grid.From != from || grid.To != to {
+		t.Fatalf("grid: %d %+v", code, grid)
+	}
+	progs := grid.Channels[0].Programs
+	if len(progs) <= guidePrograms || progs[0].Start > from || progs[len(progs)-1].End < to {
+		t.Fatalf("grid programs: %d, %d..%d for %d..%d", len(progs), progs[0].Start, progs[len(progs)-1].End, from, to)
+	}
+	for i := 1; i < len(progs); i++ {
+		if progs[i].Start != progs[i-1].End {
+			t.Fatalf("gap at %d: %d after %d", i, progs[i].Start, progs[i-1].End)
+		}
+	}
+	// A window too long is cut to a day.
+	if getJSON(t, h, token, "/api/tv?from="+strconv.FormatInt(from, 10)+"&to="+strconv.FormatInt(from+72*3600_000, 10), &grid); grid.To-grid.From != int64(maxGuideWindow/time.Millisecond) {
+		t.Fatalf("long window: %d..%d", grid.From, grid.To)
 	}
 	var tuned struct {
 		Now        programView  `json:"now"`
