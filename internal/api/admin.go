@@ -40,7 +40,7 @@ func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
 		if err := json.Unmarshal(raw, c); err != nil {
 			return badConfig("bad config: " + err.Error())
 		}
-		c.LiveTV, c.TVChannels, c.TVOrder, c.TVHidden, c.TVStreams, c.TVSources = old.LiveTV, old.TVChannels, old.TVOrder, old.TVHidden, old.TVStreams, old.TVSources
+		c.LiveTV, c.TVChannels, c.TVOrder, c.TVHidden, c.TVStreams, c.TVSources, c.TVAutomatic = old.LiveTV, old.TVChannels, old.TVOrder, old.TVHidden, old.TVStreams, old.TVSources, old.TVAutomatic
 		if msg := checkBackupDir(c.BackupDir, old.BackupDir); msg != "" {
 			return badConfig(msg)
 		}

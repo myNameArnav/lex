@@ -19,6 +19,16 @@ func pool() []store.Airable {
 	return p
 }
 
+// addAutomatic adds automatic channels to the lineup.
+func addAutomatic(t *testing.T, st *store.Store, ids ...string) {
+	t.Helper()
+	c := st.Config()
+	c.TVAutomatic = ids
+	if _, err := st.SaveConfig(c); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestScheduleFillsTheDayInOrder(t *testing.T) {
 	start := time.Date(2026, 10, 12, 0, 0, 0, 0, time.UTC)
 	end := start.Add(24 * time.Hour)
@@ -138,6 +148,14 @@ func TestGuideChannelsAndAt(t *testing.T) {
 		}
 	}
 	g := New(st)
+	// No automatic channel is on the lineup until the admin adds it.
+	if chs, err := g.Channels(); err != nil || len(chs) != 0 {
+		t.Fatalf("channels by default = %+v, %v", chs, err)
+	}
+	if auto, _ := g.Automatic(); len(auto) != 3 {
+		t.Fatalf("automatic = %+v, want All and both libraries", auto)
+	}
+	addAutomatic(t, st, "all", "lib-1", "lib-2")
 	chs, err := g.Channels()
 	if err != nil {
 		t.Fatal(err)
@@ -187,6 +205,7 @@ func TestCustomChannels(t *testing.T) {
 	setChannels := func(chs ...store.TVChannel) {
 		c := st.Config()
 		c.TVChannels = chs
+		c.TVAutomatic = []string{"lib-1"}
 		if _, err := st.SaveConfig(c); err != nil {
 			t.Fatal(err)
 		}

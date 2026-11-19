@@ -35,6 +35,7 @@ func tvLibrary(t *testing.T, s *Server) string {
 	}
 	c := s.St.Config()
 	c.LiveTV = true
+	c.TVAutomatic = []string{"lib-1"}
 	if _, err := s.St.SaveConfig(c); err != nil {
 		t.Fatal(err)
 	}

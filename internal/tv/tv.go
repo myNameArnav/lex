@@ -65,6 +65,8 @@ const (
 
 type Guide struct {
 	St *store.Store
+	// Dir holds uploaded playlists and guides.
+	Dir string
 
 	mu        sync.Mutex
 	days      map[string][]Program // channel id + filter + date
@@ -100,11 +102,12 @@ func (g *Guide) Channels() ([]Channel, error) {
 
 // Lineup lists every channel, including the ones turned off: the order the
 // admin set (Settings › Live TV), then the channels it doesn't name yet: the
-// admin's own, then the automatic ones. The list is kept for a minute, or
+// admin's own, then the automatic ones the admin added (none are on the
+// lineup until added). The list is kept for a minute, or
 // until the lineup settings change: the guide and every tune ask.
 func (g *Guide) Lineup() ([]Channel, error) {
 	cfg := g.St.Config()
-	sig := fmt.Sprint(cfg.TVChannels, cfg.TVStreams, cfg.TVOrder, cfg.TVHidden)
+	sig := fmt.Sprint(cfg.TVChannels, cfg.TVStreams, cfg.TVOrder, cfg.TVHidden, cfg.TVAutomatic)
 	g.mu.Lock()
 	if time.Since(g.lineupAt) < time.Minute && g.lineupFor == sig {
 		defer g.mu.Unlock()
@@ -122,7 +125,11 @@ func (g *Guide) Lineup() ([]Channel, error) {
 	if err != nil {
 		return nil, err
 	}
-	rest = append(rest, auto...)
+	for _, c := range auto {
+		if slices.Contains(cfg.TVAutomatic, c.ID) {
+			rest = append(rest, c)
+		}
+	}
 	out := make([]Channel, 0, len(rest))
 	for _, id := range cfg.TVOrder {
 		if i := slices.IndexFunc(rest, func(c Channel) bool { return c.ID == id }); i >= 0 {
@@ -141,7 +148,8 @@ func (g *Guide) Lineup() ([]Channel, error) {
 	return out, nil
 }
 
-// Automatic lists every channel the library could fill, unnumbered: All
+// Automatic lists every channel the library could fill, for the admin to
+// add, unnumbered: All
 // (with more than one library), one per library, then the most common
 // genres.
 func (g *Guide) Automatic() ([]Channel, error) {

@@ -107,34 +107,65 @@ export function streamDialog(st, { onSaved, onRemoved }) {
 /**
  * @param {TVSource[]} sources
  * @param {TVSource | null} src
- * @param {(l: Lineup) => void} onSaved
+ * @param {(l: Lineup, added?: TVSource | null) => void} onSaved
  */
 export function sourceDialog(sources, src, onSaved) {
-  const d = structuredClone(src || { id: '', name: '', url: '', guideUrl: '', userAgent: '', headers: [] });
+  const d = structuredClone(src || { id: '', name: '', url: '', guideUrl: '', userAgent: '', headers: [], playlistFile: '', guideFile: '' });
   const errors = formErrors(`source-err-${++uid}`, []);
   const input = (k, attrs = {}) => h('input', { type: 'text', value: d[k], autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', ...attrs, oninput: (e) => { d[k] = e.target.value; } });
   const name = input('name', { maxlength: 60, placeholder: 'e.g. Free channels', autocapitalize: 'sentences' });
-  const url = input('url', { inputmode: 'url', placeholder: 'https://…/playlist.m3u' });
+  const url = input('url', { inputmode: 'url', placeholder: 'https://…/playlist.m3u, or a channel API address' });
   const guide = input('guideUrl', { inputmode: 'url', placeholder: 'Optional: https://…/guide.xml(.gz)' });
+  // Each of the playlist and the guide is an address or an uploaded file.
+  const pick = (kind, input, fileKey, urlKey, accept, label) => {
+    const status = h('span', { class: 'muted small', role: 'status' });
+    const fileIn = h('input', { type: 'file', accept, hidden: true, onchange: async () => {
+      const f = fileIn.files?.[0];
+      fileIn.value = '';
+      if (!f) return;
+      errors.reset();
+      status.textContent = `Uploading ${f.name}…`;
+      await run(upBtn, async () => {
+        const res = await fetch(`/api/admin/tv/files?kind=${kind}`, { method: 'POST', body: f, credentials: 'same-origin', headers: { 'Content-Type': 'application/octet-stream' } });
+        const r = await res.json().catch(() => ({}));
+        if (!res.ok) { status.textContent = ''; throw new Error(r.error || `Upload failed (${res.status})`); }
+        d[fileKey] = r.file; d[urlKey] = '';
+        if (!d.name.trim()) { d.name = f.name.replace(/\.[^.]+$/, '').replaceAll('_', ' '); name.value = d.name; }
+        show(`${f.name}${r.channels != null ? ` · ${r.channels.toLocaleString()} channel${r.channels === 1 ? '' : 's'}` : ''}`);
+      }, null, { busyLabel: 'Uploading…' });
+    } });
+    const upBtn = h('button', { type: 'button', class: 'btn sm', onclick: () => fileIn.click() }, 'Upload file');
+    const clearBtn = h('button', { type: 'button', class: 'btn sm ghost', onclick: () => { d[fileKey] = ''; show(); input.focus(); } }, 'Use an address');
+    const show = (text) => {
+      const file = !!d[fileKey];
+      input.hidden = file; clearBtn.hidden = !file;
+      status.textContent = file ? text || 'Uploaded file' : '';
+    };
+    show();
+    return h('div', { class: 'tv-src-pick' }, input, h('div', { class: 'row wrap' }, upBtn, clearBtn, status), fileIn);
+  };
+  const playlistPick = pick('playlist', url, 'playlistFile', 'url', '.m3u,.m3u8,.txt,audio/x-mpegurl,application/vnd.apple.mpegurl', 'playlist');
+  const guidePick = pick('guide', guide, 'guideFile', 'guideUrl', '.xml,.xmltv,.gz,text/xml,application/xml,application/gzip', 'guide');
   const saveBtn = h('button', { class: 'btn primary', type: 'button', onclick: () => submit() }, src ? 'Save' : 'Add playlist');
   const submit = () => {
     errors.reset();
     d.headers = d.headers.filter((x) => x.name.trim());
-    if (!webURL(d.url)) { errors.fail('Enter the playlist’s http(s) address', url); return; }
-    if (d.guideUrl.trim() && !webURL(d.guideUrl)) { errors.fail('Enter the guide’s http(s) address, or leave it empty', guide); return; }
+    if (!d.playlistFile && !webURL(d.url)) { errors.fail('Enter the playlist’s http(s) address, or upload the file', url); return; }
+    if (!d.guideFile && d.guideUrl.trim() && !webURL(d.guideUrl)) { errors.fail('Enter the guide’s http(s) address, or leave it empty', guide); return; }
     const next = src ? sources.map((s) => (s.id === src.id ? d : s)) : [...sources, d];
     submitInline(saveBtn, errors, async () => {
       const l = await api('/api/admin/tv/sources', { method: 'PUT', body: next });
       m.close();
-      onSaved(l);
-    }, src ? 'Saved the playlist' : 'Added the playlist');
+      // A new playlist: go straight to picking its channels.
+      onSaved(l, src ? null : l.sources.at(-1));
+    }, src ? 'Saved the playlist' : 'Added the playlist', (msg) => (/playlist/i.test(msg) ? [url] : /guide/i.test(msg) ? [guide] : []));
   };
   const form = h('form', { class: 'form tv-channel-form', novalidate: true, onsubmit: (e) => { e.preventDefault(); submit(); } },
     field('Name', name),
-    field('Playlist address', url, 'An M3U playlist of channels. You pick which of its channels to add.'),
-    field('Guide address', guide, 'An XMLTV guide (it may be gzipped) for what’s on: matched to channels by their tvg-id.'),
+    h('div', { class: 'field' }, h('span', null, 'Playlist'), h('div', { class: 'help' }, 'A list of channels (M3U), by its address or as a file. Or your provider’s channel API (JSON, as OnnetPlayer apps read), which brings its own guide: enter its address, and the User-Agent and headers its app sends below. You then pick which of its channels to add.'), playlistPick),
+    h('div', { class: 'field' }, h('span', null, 'Guide ', h('span', { class: 'muted' }, '(optional)')), h('div', { class: 'help' }, 'What’s on (XMLTV, may be gzipped), matched to channels by their tvg-id. Not needed for a channel API. Without one, channels show as Live.'), guidePick),
     field('User-Agent', input('userAgent', { placeholder: 'Optional' }), 'Sent when reading the playlist and guide, and for its channels unless the playlist names one.'),
-    headersEditor(d, 'Sent when reading the playlist and guide, and with its channels unless the playlist gives them their own.'));
+    headersEditor(d, 'Sent when reading the playlist and guide, and with its channels unless the playlist gives them their own. For a channel API, the app’s own data, e.g. Content-APP-DATA: {"groupId":1,…}, which is kept on the server and sent only to the API.'));
   const m = modal({ title: src ? `Edit ${src.name}` : 'New playlist', wide: true, dismissible: false, body: form,
     actions: [h('div', { class: 'spacer' }), errors.err, h('button', { class: 'btn', type: 'button', onclick: () => m.close() }, 'Cancel'), saveBtn] });
   requestAnimationFrame(() => name.focus());
@@ -162,7 +193,20 @@ export function browseDialog(src, have, onAdded) {
       onAdded(l);
     }, `Added ${picked.size} channel${picked.size === 1 ? '' : 's'}`);
   } }, 'Add channels');
-  const count = () => { addBtn.disabled = !picked.size; addBtn.textContent = picked.size ? `Add ${picked.size} channel${picked.size === 1 ? '' : 's'}` : 'Add channels'; };
+  const count = () => { addBtn.disabled = !picked.size; addBtn.textContent = picked.size ? `Add ${picked.size.toLocaleString()} channel${picked.size === 1 ? '' : 's'}` : 'Add channels'; };
+  // Every channel matching the search and group, not only those shown.
+  let matched = 0;
+  const allBtn = h('button', { type: 'button', class: 'btn sm', hidden: true, onclick: () => run(allBtn, async () => {
+    const r = await api(`/api/admin/tv/sources/${encodeURIComponent(src.id)}/channels?all=1&q=${encodeURIComponent(q.value.trim())}&group=${encodeURIComponent(groupSel.value)}`);
+    for (const e of r.channels) if (!have.has(e.url)) picked.set(e.url, e);
+    list.querySelectorAll('input[type=checkbox]:not(:disabled)').forEach((b) => { /** @type {HTMLInputElement} */ (b).checked = true; });
+    count();
+  }) }, 'Select all');
+  const noneBtn = h('button', { type: 'button', class: 'btn sm ghost', onclick: () => {
+    picked.clear();
+    list.querySelectorAll('input[type=checkbox]:not(:disabled)').forEach((b) => { /** @type {HTMLInputElement} */ (b).checked = false; });
+    count();
+  } }, 'Clear');
   async function load() {
     const mine = ++seq;
     let r;
@@ -172,6 +216,9 @@ export function browseDialog(src, have, onAdded) {
     }
     if (mine !== seq || !list.isConnected) return;
     if (!groupsShown) { groupsShown = true; groupSel.append(...r.groups.map((g) => h('option', { value: g }, g))); }
+    matched = r.matched;
+    allBtn.hidden = !matched;
+    allBtn.textContent = `Select all ${matched.toLocaleString()}`;
     status.textContent = r.matched > r.channels.length ? `Showing ${r.channels.length} of ${r.matched.toLocaleString()} matching (${r.total.toLocaleString()} in the playlist): search to narrow them down.`
       : `${r.matched.toLocaleString()} matching, ${r.total.toLocaleString()} in the playlist.`;
     list.replaceChildren(...r.channels.map((e) => {
@@ -183,7 +230,7 @@ export function browseDialog(src, have, onAdded) {
     }));
   }
   const m = modal({ title: `Add channels from ${src.name}`, wide: true,
-    body: h('div', { class: 'tv-browse-wrap' }, h('div', { class: 'row wrap' }, q, groupSel), status, list),
+    body: h('div', { class: 'tv-browse-wrap' }, h('div', { class: 'row wrap' }, q, groupSel), h('div', { class: 'row wrap' }, status, h('div', { class: 'spacer' }), allBtn, noneBtn), list),
     actions: [h('div', { class: 'spacer' }), h('button', { class: 'btn', type: 'button', onclick: () => m.close() }, 'Cancel'), addBtn] });
   q.focus();
   load();
@@ -194,7 +241,7 @@ export function sourceRow(src, { browse, edit, remove }) {
   return h('li', { class: 'tv-row tv-src' },
     h('span', { class: 'tv-row-num', 'aria-hidden': 'true', html: icons.broadcast }),
     h('div', { class: 'tv-row-main' }, h('div', { class: 'tv-row-name' }, src.name),
-      h('div', { class: 'tv-row-sub' }, [host(src.url), src.guideUrl ? `guide from ${host(src.guideUrl)}` : 'no guide'].join(' · '))),
+      h('div', { class: 'tv-row-sub' }, [src.playlistFile ? 'uploaded playlist' : host(src.url), src.guideFile ? 'uploaded guide' : src.guideUrl ? `guide from ${host(src.guideUrl)}` : 'no guide file'].join(' · '))),
     h('div', { class: 'tv-row-actions' },
       h('button', { type: 'button', class: 'btn sm primary', 'aria-label': `Add channels from ${src.name}`, dataset: { focusKey: `browse-${src.id}` }, onclick: browse }, 'Add channels'),
       h('button', { type: 'button', class: 'btn sm', 'aria-label': `Edit ${src.name}`, dataset: { focusKey: `src-edit-${src.id}` }, onclick: edit }, 'Edit'),
