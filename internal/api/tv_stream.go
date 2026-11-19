@@ -294,7 +294,12 @@ func (s *Server) tvStream(w http.ResponseWriter, r *http.Request) {
 	}
 	args = append(args, "-sn", "-dn")
 	if copyVideo {
-		args = append(args, "-c:v", "copy")
+		// Joining a live stream starts at a keyframe, but with open GOPs
+		// the B-frames after it may show before it and lean on the GOP
+		// before, which was never sent. Chrome skips them; macOS's decoder
+		// (Firefox, Safari) fails the whole stream. Drop them: only at the
+		// start, so a provider whose timestamps jump back later loses nothing.
+		args = append(args, "-c:v", "copy", "-bsf:v", "noise=drop='lt(pts,startpts)*lt(n,30)'")
 	} else {
 		h := p.Height
 		if cfg.MaxTranscodeHeight > 0 && (h <= 0 || h > cfg.MaxTranscodeHeight) {
