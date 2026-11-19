@@ -13,6 +13,7 @@
 
 // The server replaces the null below with { version, shell } for this build
 // (internal/api/server.go). The fallback keeps the file valid on its own.
+// @ts-expect-error: TypeScript sees only the null, which is always falsy.
 const BUILD = /*LEX_BUILD*/null || { version: 'dev', shell: ['/', '/css/app.css', '/js/app.js'] };
 const CACHE_PREFIX = 'lex-shell-';
 const CACHE = CACHE_PREFIX + BUILD.version;
@@ -84,24 +85,27 @@ async function shell(event, pathname) {
   }
 }
 
-self.addEventListener('install', (event) => {
+// TypeScript's worker globals type self as a plain worker.
+const sw = /** @type {ServiceWorkerGlobalScope} */ (/** @type {unknown} */ (self));
+
+sw.addEventListener('install', (event) => {
   // Everything is network-first, so a new worker can take over at once.
-  self.skipWaiting();
+  sw.skipWaiting();
   event.waitUntil(caches.open(CACHE).then((cache) =>
     cache.addAll(PRECACHE.map((p) => new Request(p, { cache: 'reload' })))));
 });
 
-self.addEventListener('activate', (event) => {
+sw.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     for (const key of await caches.keys()) {
       if (key.startsWith(CACHE_PREFIX) && key !== CACHE) await caches.delete(key);
     }
-    await self.clients.claim();
+    await sw.clients.claim();
   })());
 });
 
-self.addEventListener('fetch', (event) => {
-  const kind = route(event.request, self.location.origin);
+sw.addEventListener('fetch', (event) => {
+  const kind = route(event.request, sw.location.origin);
   if (kind === 'navigate') event.respondWith(navigate(event));
   else if (kind === 'shell') event.respondWith(shell(event, new URL(event.request.url).pathname));
 });

@@ -24,6 +24,7 @@ export function placeholder(it) {
 export const progressBar = (pos, dur) => h('div', { class: 'progress', 'aria-hidden': 'true' }, h('i', { style: { width: `${Math.min(100, (pos / dur) * 100)}%` } }));
 
 // posterCard: sub replaces the line under the title (e.g. a person's role).
+/** @param {any} it @param {{ sub?: string }} [options] */
 export function posterCard(it, { sub } = {}) {
   const ud = it.userData || {};
   const art = h('div', { class: 'art' }, placeholder(it), lazyImg(img(it, 'poster', 320), ''));

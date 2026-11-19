@@ -61,7 +61,7 @@ let toggleId = 0;
 
 export function toggleRow(label, help, checked, onchange, { disabled = false } = {}) {
   const control = toggle(checked, onchange, label);
-  const input = control.firstChild;
+  const input = /** @type {HTMLInputElement} */ (control.firstChild);
   input.id = `toggle-${++toggleId}`;
   input.disabled = disabled;
   let btn = null, helpEl = null;
@@ -103,6 +103,13 @@ export function formErrors(id, inputs) {
 // Runs a form's request through run() (busy button, no double submits), with
 // the server's error shown inline instead of as a toast; pick(message) names
 // the inputs to flag. Resolves true on success.
+/**
+ * @param {HTMLButtonElement} btn
+ * @param {{ fail: (msg: string, ...bad: HTMLElement[]) => void }} errors
+ * @param {() => any} fn
+ * @param {string | ((result: any) => string)} [okMsg]
+ * @param {(message: string) => HTMLElement[]} [pick]
+ */
 export async function submitInline(btn, errors, fn, okMsg, pick = () => []) {
   let failed = null;
   const ok = await run(btn, async () => {
@@ -116,6 +123,10 @@ export async function submitInline(btn, errors, fn, okMsg, pick = () => []) {
 // field) sends it, Save stays disabled until something differs from the
 // saved config, and leaving the page with unsaved edits asks first.
 // check(draft) may return [message, control] to stop a save with an inline error.
+/**
+ * @param {Function} build
+ * @param {{ check?: (draft: any) => any, onSaved?: (cfg: any) => void }} [options]
+ */
 export async function configForm(build, { check, onSaved } = {}) {
   let cfg = await api('/api/admin/config');
   const info = await api('/api/admin/info');
@@ -211,7 +222,7 @@ export const actionsTh = () => h('th', null, h('span', { class: 'sr-only' }, 'Ac
 // it back on the control with the same data-focus-key; when that one is gone,
 // on the one keyed next (if given) or the box's first keyed control.
 export function keepFocus(box, rebuild, next = null) {
-  const k = box.contains(document.activeElement) ? document.activeElement.dataset.focusKey : null;
+  const k = box.contains(document.activeElement) ? /** @type {HTMLElement} */ (document.activeElement).dataset.focusKey : null;
   rebuild();
   if (k === undefined || k === null) return;
   const keyed = [...box.querySelectorAll('[data-focus-key]')];

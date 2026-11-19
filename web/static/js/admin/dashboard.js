@@ -183,6 +183,7 @@ function sessionCard(s0, refresh) {
   const status = h('span', { class: 'muted nowrap' });
   const bar = meter(0, 101);
   const reasons = h('div', { class: 'small muted', style: { marginTop: '6px' } });
+  /** @type {[string, HTMLElement][]} */
   const health = ['Buffer', 'Delivery', 'Stalls', 'Read from'].map((k) => [k, h('b')]);
   const facts = ['Video', 'Audio', 'Bitrate', 'Client', 'Picture', 'ffmpeg'].map((k) => {
     const dt = h('dt', null, k), dd = h('dd');
@@ -221,7 +222,7 @@ function sessionCard(s0, refresh) {
     stop.setAttribute('aria-label', `Stop ${s.userName}'s stream of ${s.title}`);
     summary.setAttribute('aria-label', `Details for ${s.title}`);
     setText(status, `${s.paused ? 'Paused' : 'Playing'} · ${fmtTime(s.position)} / ${fmtTime(s.duration)}`);
-    bar.firstChild.style.width = `${s.duration ? Math.min(100, (s.position / s.duration) * 100) : 0}%`;
+    /** @type {HTMLElement} */ (bar.firstChild).style.width = `${s.duration ? Math.min(100, (s.position / s.duration) * 100) : 0}%`;
     reasons.hidden = !s.reasons?.length;
     setText(reasons, s.reasons?.length ? `Why ${s.method === 'transcode' ? 'transcoding' : 'converting'}: ${s.reasons.map(reasonLabel).join(' · ')}` : '');
     const buf = c.bufferAhead || 0;

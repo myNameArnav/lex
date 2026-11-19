@@ -131,7 +131,7 @@ async function fixture({ method = 'direct', hls = false, blocked = false, reject
   };
   const playerURL = new URL('player.js', jsRoot);
   const source = await readFile(playerURL, 'utf8');
-  const module = new vm.SourceTextModule(source + '\nexport { Player };', { context, identifier: playerURL.href });
+  const module = new vm.SourceTextModule(source, { context, identifier: playerURL.href });
   await module.link(link);
   await module.evaluate();
   const player = Object.assign(Object.create(module.namespace.Player.prototype), {

@@ -2,6 +2,11 @@ import { api } from '../api.js';
 
 // A server restart briefly makes the proxy unavailable: retry with backoff.
 // Permission and media errors stay terminal; cancelled() stops the retries.
+/**
+ * @param {string} path
+ * @param {import('../api.js').ApiOptions} [opts]
+ * @param {{ cancelled?: () => boolean, retries?: number, onRetry?: (attempt: number) => void }} [options]
+ */
 export async function retryApi(path, opts, { cancelled = () => false, retries = 6, onRetry } = {}) {
   for (let attempt = 0; ; attempt++) {
     try {

@@ -10,6 +10,7 @@ export const WATCHLIST_HINT = 'Open a movie or show and select the bookmark, or 
 export const FAVORITES_HINT = 'Open a movie or show and select the heart, or use a poster’s ⋯ menu, to add it to your favorites.';
 
 // titlesPage: a heading block over a grid of posters (or an empty state).
+/** @param {{ kicker?: string, title: string, count?: boolean, head?: HTMLElement, items: any[], sub?: (it: any) => string, empty: object }} page */
 function titlesPage({ kicker, title, count, head, items, sub, empty }) {
   const n = items.length;
   const text = h('div', { style: { minWidth: 0 } },

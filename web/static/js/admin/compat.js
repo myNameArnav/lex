@@ -53,7 +53,7 @@ function compatSummary(sum, req) {
     const converts = t === 'transcode' || t === 'unplayable';
     const all = sum.causes.filter((c) => c.tier === t && (!converts || c.stage === 'stream'));
     const off = all.find((c) => c.kind === 'setting' && c.key === 'transcode');
-    const reasons = all.filter((c) => c !== off).sort((a, b) => (a.kind === 'audio') - (b.kind === 'audio') || b.files - a.files);
+    const reasons = all.filter((c) => c !== off).sort((a, b) => Number(a.kind === 'audio') - Number(b.kind === 'audio') || b.files - a.files);
     return h('section', { class: 'compat-group' },
       h('button', { type: 'button', class: 'compat-head', onclick: () => open(t) },
         dot(t), h('b', null, TIERS[t].label), h('span', { class: 'muted' }, plural(sum.tiers[t], 'file')), h('span', { class: 'chev', 'aria-hidden': 'true', html: icons.chevR })),

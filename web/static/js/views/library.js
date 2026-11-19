@@ -82,7 +82,7 @@ export async function libraryView(ctx, id) {
   const sentinel = h('div', { style: { height: '40px' } });
   const random = h('button', { class: 'btn sm', title: 'Open a random title', disabled: true, onclick: async (e) => {
     await run(e.currentTarget, async () => {
-      const p = filterParams(new URLSearchParams({ library: id, sort: 'random', limit: 1 }));
+      const p = filterParams(new URLSearchParams({ library: id, sort: 'random', limit: '1' }));
       const r = await api(`/api/items?${p}`);
       if (r.items[0]) location.hash = `#/item/${r.items[0].id}`;
       else toast('No titles match these filters');
@@ -124,7 +124,7 @@ export async function libraryView(ctx, id) {
   const load = async () => {
     if (loading || offset >= total || !ctx.isCurrent()) return;
     loading = true;
-    const p = filterParams(new URLSearchParams({ library: id, sort: opts.sort, limit: PAGE, offset }));
+    const p = filterParams(new URLSearchParams({ library: id, sort: opts.sort, limit: String(PAGE), offset: String(offset) }));
     if (opts.desc) p.set('desc', '1');
     if (opts.sort === 'random') p.set('seed', opts.seed);
     try {

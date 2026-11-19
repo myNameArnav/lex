@@ -14,6 +14,12 @@ function stopTimers() { pollers.forEach((p) => clearInterval(p.t)); pollers = []
 // opener out from under it), and run at once when the tab is shown again.
 // fn should throw (or reject) when its request fails: after two failures in
 // a row onFail(lastOkAt) is called, and onRecover() after the next success.
+/**
+ * @param {any} ctx
+ * @param {number} ms
+ * @param {() => any} fn
+ * @param {{ onFail?: (lastOkAt: number) => void, onRecover?: () => void }} [hooks]
+ */
 export function every(ctx, ms, fn, { onFail, onRecover } = {}) {
   let fails = 0, lastOk = Date.now(), busy = false;
   const p = {};

@@ -47,7 +47,7 @@ let latest = 0;
 // update latest) before the next one runs.
 const delivered = () => new Promise((resolve) => {
   const c = new MessageChannel();
-  c.port1.onmessage = () => { c.port1.close(); resolve(); };
+  c.port1.onmessage = () => { c.port1.close(); resolve(undefined); };
   c.port2.postMessage(0);
 });
 

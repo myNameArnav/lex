@@ -1,10 +1,23 @@
 // Thin fetch wrapper for the JSON API.
 
 export class ApiError extends Error {
+  /** Machine-readable error code some responses carry (e.g. 'no_key'). @type {string | undefined} */
+  code;
+  /** @param {string} message @param {number} status */
   constructor(message, status) { super(message); this.status = status; }
 }
 
+/**
+ * @typedef {object} ApiOptions
+ * @property {string} [method] defaults to GET
+ * @property {unknown} [body] sent as JSON
+ * @property {AbortSignal} [signal]
+ * @property {boolean} [keepalive]
+ */
+
+/** @param {string} path @param {ApiOptions} [options] @returns {Promise<any>} */
 export async function api(path, { method = 'GET', body, signal, keepalive } = {}) {
+  /** @type {RequestInit & { headers: Record<string, string> }} */
   const opts = { method, signal, keepalive, credentials: 'same-origin', headers: {} };
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';

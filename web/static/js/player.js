@@ -65,7 +65,7 @@ const DIRECT_STARTUP_TIMEOUT = 15000;
 const REMUX_FAULT = /Browser remux|CHUNK_DEMUXER_ERROR_APPEND_FAILED|unplayable gap/;
 const remuxFault = (reason, err) => REMUX_FAULT.test(`${reason} ${err?.message || ''}`);
 
-class Player {
+export class Player {
   // shuffle: episodes to play in this order, from the first. channel: a Live
   // TV channel id to tune into, and channels the list to switch through.
   // extra: the file id of one of the item's local extras (a trailer...) to
@@ -119,8 +119,8 @@ class Player {
     this.subsEl = h('div', { class: 'p-subs', 'aria-live': 'off' });
     this.pgsCanvas = h('canvas', { class: 'p-pgs', 'aria-hidden': 'true' });
     this.seek = h('div', { class: 'seek', role: 'slider', tabindex: '0', 'aria-label': 'Playback position', 'aria-valuemin': '0', 'aria-valuemax': '0', 'aria-valuenow': '0', 'aria-valuetext': '0:00 of 0:00', 'aria-disabled': 'true' }, h('div', { class: 'rail' }), h('div', { class: 'knob' }));
-    this.rail = this.seek.firstChild;
-    this.knob = this.seek.lastChild;
+    this.rail = /** @type {HTMLElement} */ (this.seek.firstChild);
+    this.knob = /** @type {HTMLElement} */ (this.seek.lastChild);
     this.fill = h('div', { class: 'fill' });
     this.rail.appendChild(this.fill);
     // Current time / duration; clicking the duration swaps it for the time left (as VLC does).
@@ -146,7 +146,7 @@ class Player {
 
     this.center.appendChild(this.statusEl);
     this.titleEl.id = 'player-title';
-    this.restoreFocus = document.activeElement;
+    this.restoreFocus = /** @type {HTMLElement | null} */ (document.activeElement);
     this.root = h('div', { class: 'player', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'player-title', tabindex: '-1' },
       this.video, this.pgsCanvas,
       h('div', { class: 'shade-top' }), h('div', { class: 'shade-bot' }),
@@ -230,7 +230,7 @@ class Player {
     v.addEventListener('volumechange', () => {
       this.volBtn.innerHTML = v.muted || v.volume === 0 ? icons.mute : icons.volume;
       this.labelButton(this.volBtn, v.muted || v.volume === 0 ? 'Unmute (m)' : 'Mute (m)');
-      this.volRange.value = v.muted ? 0 : v.volume;
+      this.volRange.value = String(v.muted ? 0 : v.volume);
       this.volRange.setAttribute('aria-valuetext', this.volumeText());
       prefs.set('volume', v.volume); prefs.set('muted', v.muted);
     });
@@ -1128,7 +1128,7 @@ class Player {
   clearMediaSession() {
     const ms = globalThis.navigator?.mediaSession;
     if (!ms) return;
-    for (const a of ['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'nexttrack', 'previoustrack']) {
+    for (const a of /** @type {MediaSessionAction[]} */ (['play', 'pause', 'seekbackward', 'seekforward', 'seekto', 'nexttrack', 'previoustrack'])) {
       try { ms.setActionHandler(a, null); } catch {}
     }
   }
@@ -1152,7 +1152,7 @@ class Player {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     if (document.pictureInPictureElement === this.video) document.exitPictureInPicture().catch(() => {});
     // e.g. subtitle search, when Back closed the player under it.
-    for (const d of this.root.querySelectorAll('dialog[open]')) d.close();
+    for (const d of this.root.querySelectorAll('dialog')) if (d.open) d.close();
     this.teardown();
     this.destroyASS();
     this.fx.close();

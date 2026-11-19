@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": { "lib": ["es2023", "dom", "dom.iterable"] },
+  "include": ["static/js/**/*.js", "types/**/*.d.ts"],
+  "exclude": ["static/js/*-worker.js"]
+}

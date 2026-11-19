@@ -396,6 +396,7 @@ function mediaInfoModal(files) {
 // fixMatch searches the metadata providers for it (a movie or show) and
 // applies the chosen match. onDone runs after a match is applied; by default
 // the page redraws.
+/** @param {any} it @param {{ onDone?: () => any }} [options] */
 export async function fixMatch(it, { onDone = refreshSoft } = {}) {
   const q = h('input', { type: 'text', value: it.title, 'aria-label': 'Title to search', style: { flex: '1 1 120px' } });
   const y = h('input', { type: 'number', value: it.year || '', placeholder: 'Year', 'aria-label': 'Year', style: { width: '84px' } });
