@@ -1019,6 +1019,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tv-browse-name { display: flex; flex-direction: column; min-width: 0; }
 .tv-browse-name small { color: var(--text3); font-size: 12px; }
 .tv-probe { font-size: 13px; }
+.tv-headers { display: grid; gap: 6px; }
+.tv-headers:empty { display: none; }
+.tv-header-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto; gap: 6px; align-items: center; }
 .tv-src .tv-row-num svg { width: 20px; height: 20px; color: var(--text3); }
 /* The channel dialog: its choices, and a preview of what it airs. */
 .bad-ink { color: var(--bad-ink); }

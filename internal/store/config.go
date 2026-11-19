@@ -159,6 +159,56 @@ type TVStream struct {
 	Logo      string `json:"logo"`
 	GuideID   string `json:"guideId"`
 	Source    string `json:"source"`
+	// Headers are any other HTTP headers the provider wants (a cookie, a
+	// token, an Origin), sent with every request for the stream.
+	Headers []TVHeader `json:"headers"`
+}
+
+// TVHeader is an HTTP header sent when fetching a live channel.
+type TVHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// maxHeaders is how many headers a stream or playlist may send.
+const maxHeaders = 20
+
+// CleanHeaders keeps the headers that can be sent: a name of letters,
+// digits and dashes, a value without line breaks, none that HTTP sets
+// itself. A User-Agent or Referer among them moves to its own field
+// (returned, empty when there's none).
+func CleanHeaders(in []TVHeader) (out []TVHeader, ua, ref string) {
+	out = []TVHeader{}
+	for _, hd := range in {
+		name := strings.TrimSpace(hd.Name)
+		value := strings.Join(strings.Fields(hd.Value), " ")
+		if name == "" || !headerName(name) {
+			continue
+		}
+		switch strings.ToLower(name) {
+		case "user-agent":
+			ua = value
+			continue
+		case "referer", "referrer":
+			ref = value
+			continue
+		case "host", "content-length", "connection", "transfer-encoding", "te", "upgrade", "expect":
+			continue
+		}
+		if len(out) < maxHeaders {
+			out = append(out, TVHeader{Name: name, Value: value})
+		}
+	}
+	return out, ua, ref
+}
+
+func headerName(s string) bool {
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return len(s) <= 64
 }
 
 // TVSource is an IPTV playlist (M3U) to pick channels from, and a guide
@@ -170,6 +220,9 @@ type TVSource struct {
 	URL       string `json:"url"`
 	GuideURL  string `json:"guideUrl"`
 	UserAgent string `json:"userAgent"`
+	// Headers are sent when reading the playlist and guide, and with its
+	// channels unless the playlist gives them their own.
+	Headers []TVHeader `json:"headers"`
 }
 
 // WebURL reports whether u is an http(s) URL with a host: the only kind
@@ -184,6 +237,14 @@ func (st TVStream) Clean() TVStream {
 	one := func(v string) string { return strings.Join(strings.Fields(v), " ") }
 	st.ID, st.Name, st.URL, st.Logo, st.GuideID, st.Source = strings.TrimSpace(st.ID), one(st.Name), strings.TrimSpace(st.URL), strings.TrimSpace(st.Logo), strings.TrimSpace(st.GuideID), strings.TrimSpace(st.Source)
 	st.UserAgent, st.Referrer = one(st.UserAgent), one(st.Referrer)
+	var ua, ref string
+	st.Headers, ua, ref = CleanHeaders(st.Headers)
+	if ua != "" && st.UserAgent == "" {
+		st.UserAgent = ua
+	}
+	if ref != "" && st.Referrer == "" {
+		st.Referrer = ref
+	}
 	if st.Logo != "" && !WebURL(st.Logo) {
 		st.Logo = ""
 	}
@@ -194,6 +255,11 @@ func (st TVStream) Clean() TVStream {
 func (src TVSource) Clean() TVSource {
 	src.ID, src.Name, src.URL, src.GuideURL = strings.TrimSpace(src.ID), strings.Join(strings.Fields(src.Name), " "), strings.TrimSpace(src.URL), strings.TrimSpace(src.GuideURL)
 	src.UserAgent = strings.Join(strings.Fields(src.UserAgent), " ")
+	var ua string
+	src.Headers, ua, _ = CleanHeaders(src.Headers)
+	if ua != "" && src.UserAgent == "" {
+		src.UserAgent = ua
+	}
 	return src
 }
 

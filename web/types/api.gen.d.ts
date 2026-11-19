@@ -490,6 +490,7 @@ export interface PlaylistEntry {
   guideId: string;
   userAgent: string;
   referrer: string;
+  headers: TVHeader[];
 }
 
 // sysstats.Point
@@ -672,6 +673,12 @@ export interface TVChannel {
   exclude: number[];
 }
 
+// store.TVHeader
+export interface TVHeader {
+  name: string;
+  value: string;
+}
+
 // store.TVSource
 export interface TVSource {
   id: string;
@@ -679,6 +686,7 @@ export interface TVSource {
   url: string;
   guideUrl: string;
   userAgent: string;
+  headers: TVHeader[];
 }
 
 // store.TVStream
@@ -691,6 +699,7 @@ export interface TVStream {
   logo: string;
   guideId: string;
   source: string;
+  headers: TVHeader[];
 }
 
 // store.TokenInfo

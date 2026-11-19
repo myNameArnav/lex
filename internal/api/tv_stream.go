@@ -96,15 +96,22 @@ func inputArgs(st store.TVStream) []string {
 	if st.UserAgent != "" {
 		args = append(args, "-user_agent", st.UserAgent)
 	}
+	var hs strings.Builder
 	if st.Referrer != "" {
-		args = append(args, "-headers", "Referer: "+st.Referrer+"\r\n")
+		hs.WriteString("Referer: " + st.Referrer + "\r\n")
+	}
+	for _, hd := range st.Headers {
+		hs.WriteString(hd.Name + ": " + hd.Value + "\r\n")
+	}
+	if hs.Len() > 0 {
+		args = append(args, "-headers", hs.String())
 	}
 	return append(args, "-i", st.URL)
 }
 
 // probeStream reads st's variants and codecs; kept for ten minutes.
 func (s *Server) probeStream(ctx context.Context, st store.TVStream) (streamProbe, error) {
-	key := st.URL + "|" + st.UserAgent + "|" + st.Referrer
+	key := fmt.Sprint(st.URL, st.UserAgent, st.Referrer, st.Headers)
 	probeMu.Lock()
 	p, ok := probeCache[key]
 	probeMu.Unlock()

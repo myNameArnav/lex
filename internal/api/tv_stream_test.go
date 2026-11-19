@@ -32,7 +32,7 @@ func TestLiveStreamChannel(t *testing.T) {
 	run(append(src, "-c:v", "mpeg2video", "-c:a", "mp2", "-f", "mpegts", filepath.Join(dir, "mpeg2.ts"))...)
 	var hits, refused int
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("User-Agent") != "TestPlayer/1.0" {
+		if r.Header.Get("User-Agent") != "TestPlayer/1.0" || r.Header.Get("X-Token") != "secret" {
 			refused++
 			http.Error(w, "no", 401)
 			return
@@ -53,14 +53,17 @@ func TestLiveStreamChannel(t *testing.T) {
 	if w.Code != 502 {
 		t.Fatalf("probe without the User-Agent: %d %s", w.Code, w.Body.String())
 	}
-	w = adminRequest(t, h, token, "POST", "/api/admin/tv/streams/probe", `{"url":"`+origin.URL+`/h264.m3u8","userAgent":"TestPlayer/1.0"}`)
+	if w = adminRequest(t, h, token, "POST", "/api/admin/tv/streams/probe", `{"url":"`+origin.URL+`/h264.m3u8","userAgent":"TestPlayer/1.0"}`); w.Code != 502 {
+		t.Fatalf("probe without the token header: %d", w.Code)
+	}
+	w = adminRequest(t, h, token, "POST", "/api/admin/tv/streams/probe", `{"url":"`+origin.URL+`/h264.m3u8","userAgent":"TestPlayer/1.0","headers":[{"name":"X-Token","value":"secret"}]}`)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"video":"h264"`) || !strings.Contains(w.Body.String(), `"convert":false`) {
 		t.Fatalf("probe: %d %s", w.Code, w.Body.String())
 	}
 	if w = adminRequest(t, h, token, "POST", "/api/admin/tv/streams", `[{"name":"Local","url":"file:///etc/passwd"}]`); w.Code != 400 {
 		t.Fatalf("a local file: %d", w.Code)
 	}
-	w = adminRequest(t, h, token, "POST", "/api/admin/tv/streams", `[{"name":"News","url":"`+origin.URL+`/h264.m3u8","userAgent":"TestPlayer/1.0"},{"name":"Old","url":"`+origin.URL+`/mpeg2.ts","userAgent":"TestPlayer/1.0"}]`)
+	w = adminRequest(t, h, token, "POST", "/api/admin/tv/streams", `[{"name":"News","url":"`+origin.URL+`/h264.m3u8","userAgent":"TestPlayer/1.0","headers":[{"name":"X-Token","value":"secret"}]},{"name":"Old","url":"`+origin.URL+`/mpeg2.ts","headers":[{"name":"User-Agent","value":"TestPlayer/1.0"},{"name":"X-Token","value":"secret"}]}]`)
 	var l tvLineup
 	if err := json.Unmarshal(w.Body.Bytes(), &l); err != nil || w.Code != 200 || len(l.Channels) != 3 || l.Channels[1].Source != "stream" || l.Channels[1].Stream.UserAgent != "TestPlayer/1.0" {
 		t.Fatalf("add: %d %s", w.Code, w.Body.String())

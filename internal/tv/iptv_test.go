@@ -18,14 +18,17 @@ func TestParseM3U(t *testing.T) {
 		"#EXTVLCOPT:http-referrer=https://site.test/\n" +
 		"https://b.test/two.m3u8\n" +
 		"#EXTINF:-1,Three\n" +
-		"https://c.test/three.ts|User-Agent=Kodi/20&Referer=https://k.test/\n" +
+		"https://c.test/three.ts|User-Agent=Kodi/20&Referer=https://k.test/&X-Token=a%20b\n" +
+		"#EXTINF:-1,Four\n" +
+		`#EXTHTTP:{"Cookie":"s=1","Origin":"https://o.test","Host":"evil"}` + "\n" +
+		"https://d.test/four.m3u8\n" +
 		"#EXTINF:-1,Local\n" +
 		"file:///etc/passwd\n"
 	got, err := ParseM3U(strings.NewReader(in))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 3 {
+	if len(got) != 4 {
 		t.Fatalf("entries = %+v", got)
 	}
 	if e := got[0]; e.Name != "One, the first" || e.GuideID != "One.us@SD" || e.Logo != "https://img.test/1.png" || e.Group != "Movies;News" || e.URL != "https://a.test/one.m3u8" {
@@ -34,8 +37,12 @@ func TestParseM3U(t *testing.T) {
 	if e := got[1]; e.UserAgent != "Player/1.0" || e.Referrer != "https://site.test/" || e.GuideID != "Two.uk" {
 		t.Fatalf("second = %+v", e)
 	}
-	if e := got[2]; e.URL != "https://c.test/three.ts" || e.UserAgent != "Kodi/20" || e.Referrer != "https://k.test/" || e.UserAgent == got[1].UserAgent {
+	if e := got[2]; e.URL != "https://c.test/three.ts" || e.UserAgent != "Kodi/20" || e.Referrer != "https://k.test/" || len(e.Headers) != 1 || e.Headers[0] != (store.TVHeader{Name: "X-Token", Value: "a b"}) {
 		t.Fatalf("third = %+v", e)
+	}
+	// Host is HTTP's own: dropped.
+	if e := got[3]; len(e.Headers) != 2 || e.Headers[0] != (store.TVHeader{Name: "Cookie", Value: "s=1"}) || e.Headers[1].Name != "Origin" {
+		t.Fatalf("fourth = %+v", e)
 	}
 }
 

@@ -8,11 +8,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -30,6 +32,9 @@ type PlaylistEntry struct {
 	GuideID   string `json:"guideId"`
 	UserAgent string `json:"userAgent"`
 	Referrer  string `json:"referrer"`
+	// Headers: any others the playlist asks for (#EXTHTTP, or Kodi's
+	// "url|Name=value").
+	Headers []store.TVHeader `json:"headers"`
 }
 
 // maxDownload caps a playlist or guide download (a big XMLTV guide
@@ -38,8 +43,9 @@ const maxDownload = 512 << 20
 
 // ParseM3U reads an extended M3U playlist: #EXTINF lines (tvg-id,
 // tvg-logo, group-title, then the name after the comma), #EXTVLCOPT
-// http-user-agent / http-referrer, #EXTGRP, and Kodi's "url|User-Agent=…"
-// suffix. Entries that aren't http(s) are left out.
+// http-user-agent / http-referrer, #EXTHTTP {"Header": "value"}, #EXTGRP,
+// and Kodi's "url|User-Agent=…&Other=…" suffix (values URL-encoded).
+// Entries that aren't http(s) are left out.
 func ParseM3U(r io.Reader) ([]PlaylistEntry, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64<<10), 1<<20)
@@ -87,6 +93,18 @@ func ParseM3U(r io.Reader) ([]PlaylistEntry, error) {
 			case "http-referrer", "http-referer":
 				cur.Referrer = strings.TrimSpace(v)
 			}
+		case strings.HasPrefix(line, "#EXTHTTP:"):
+			var hs map[string]string
+			if json.Unmarshal([]byte(line[len("#EXTHTTP:"):]), &hs) == nil {
+				keys := make([]string, 0, len(hs))
+				for k := range hs {
+					keys = append(keys, k)
+				}
+				slices.Sort(keys)
+				for _, k := range keys {
+					cur.Headers = append(cur.Headers, store.TVHeader{Name: k, Value: hs[k]})
+				}
+			}
 		case strings.HasPrefix(line, "#EXTGRP:"):
 			if cur.Group == "" {
 				cur.Group = strings.TrimSpace(line[len("#EXTGRP:"):])
@@ -97,12 +115,21 @@ func ParseM3U(r io.Reader) ([]PlaylistEntry, error) {
 			cur.URL = strings.TrimSpace(u)
 			for _, kv := range strings.Split(opts, "&") {
 				k, v, _ := strings.Cut(kv, "=")
-				switch strings.ToLower(strings.TrimSpace(k)) {
-				case "user-agent":
-					cur.UserAgent = strings.TrimSpace(v)
-				case "referer", "referrer":
-					cur.Referrer = strings.TrimSpace(v)
+				if dv, err := url.QueryUnescape(v); err == nil {
+					v = dv
 				}
+				if k = strings.TrimSpace(k); k != "" {
+					cur.Headers = append(cur.Headers, store.TVHeader{Name: k, Value: v})
+				}
+			}
+			// A User-Agent or Referer among them goes to its own field.
+			var ua, ref string
+			cur.Headers, ua, ref = store.CleanHeaders(cur.Headers)
+			if ua != "" {
+				cur.UserAgent = ua
+			}
+			if ref != "" {
+				cur.Referrer = ref
 			}
 			if store.WebURL(cur.URL) {
 				if cur.Name == "" {
@@ -138,8 +165,9 @@ func m3uAttrs(s string) map[string]string {
 	}
 }
 
-// fetch downloads u with ua (a gzip file or response is unpacked).
-func fetch(ctx context.Context, u, ua string) (io.ReadCloser, error) {
+// fetch downloads u with ua and headers (a gzip file or response is
+// unpacked).
+func fetch(ctx context.Context, u, ua string, headers []store.TVHeader) (io.ReadCloser, error) {
 	if !store.WebURL(u) {
 		return nil, errors.New("not an http(s) address")
 	}
@@ -149,6 +177,9 @@ func fetch(ctx context.Context, u, ua string) (io.ReadCloser, error) {
 	}
 	if ua == "" {
 		ua = "lex"
+	}
+	for _, hd := range headers {
+		req.Header.Set(hd.Name, hd.Value)
 	}
 	req.Header.Set("User-Agent", ua)
 	resp, err := http.DefaultClient.Do(req)
@@ -186,7 +217,7 @@ type playlist struct {
 // Playlist reads a source's channels; kept for an hour (a failed read for
 // a minute). Its User-Agent is the default for its channels.
 func (g *Guide) Playlist(ctx context.Context, src store.TVSource) ([]PlaylistEntry, error) {
-	key := src.URL + "|" + src.UserAgent
+	key := fmt.Sprint(src.URL, src.UserAgent, src.Headers)
 	g.mu.Lock()
 	p, ok := g.playlists[key]
 	g.mu.Unlock()
@@ -196,7 +227,7 @@ func (g *Guide) Playlist(ctx context.Context, src store.TVSource) ([]PlaylistEnt
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	var entries []PlaylistEntry
-	body, err := fetch(ctx, src.URL, src.UserAgent)
+	body, err := fetch(ctx, src.URL, src.UserAgent, src.Headers)
 	if err == nil {
 		entries, err = ParseM3U(body)
 		body.Close()
@@ -204,6 +235,12 @@ func (g *Guide) Playlist(ctx context.Context, src store.TVSource) ([]PlaylistEnt
 	for i := range entries {
 		if entries[i].UserAgent == "" {
 			entries[i].UserAgent = src.UserAgent
+		}
+		if len(entries[i].Headers) == 0 {
+			entries[i].Headers = src.Headers
+		}
+		if entries[i].Headers == nil {
+			entries[i].Headers = []store.TVHeader{}
 		}
 	}
 	g.mu.Lock()
@@ -311,7 +348,7 @@ func (g *Guide) refreshGuides(cfg store.Config) {
 // readGuide adds src's programs for the channels in ids, from a day back
 // to two days on.
 func readGuide(ctx context.Context, src store.TVSource, ids map[string]bool, into map[string][]GuideProgram) error {
-	body, err := fetch(ctx, src.GuideURL, src.UserAgent)
+	body, err := fetch(ctx, src.GuideURL, src.UserAgent, src.Headers)
 	if err != nil {
 		return err
 	}

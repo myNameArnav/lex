@@ -119,3 +119,18 @@ func TestHistoryRetentionSetting(t *testing.T) {
 		}
 	}
 }
+
+// Headers for live channels: only ones that can be sent; a User-Agent or
+// Referer moves to its field, and a line break can't start another header.
+func TestCleanHeaders(t *testing.T) {
+	st := TVStream{URL: "https://a.test/x.m3u8", Headers: []TVHeader{
+		{Name: "X-Token", Value: "abc\r\nX-Evil: 1"}, {Name: "Bad Name", Value: "x"}, {Name: "user-agent", Value: "App/2"},
+		{Name: "Referer", Value: "https://r.test/"}, {Name: "Host", Value: "evil.test"}, {Name: "", Value: "x"},
+	}}.Clean()
+	if len(st.Headers) != 1 || st.Headers[0] != (TVHeader{Name: "X-Token", Value: "abc X-Evil: 1"}) || st.UserAgent != "App/2" || st.Referrer != "https://r.test/" {
+		t.Fatalf("cleaned = %+v", st)
+	}
+	if st := (TVStream{UserAgent: "Mine", Headers: []TVHeader{{Name: "User-Agent", Value: "Other"}}}).Clean(); st.UserAgent != "Mine" || len(st.Headers) != 0 {
+		t.Fatalf("field wins: %+v", st)
+	}
+}

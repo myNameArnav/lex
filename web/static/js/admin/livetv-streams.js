@@ -19,6 +19,31 @@ function codecLine(p) {
   return [p.width && p.height ? `${p.width}×${p.height}` : '', p.video ? name(p.video) : 'no video', p.audio ? name(p.audio) : 'no audio'].filter(Boolean).join(' · ');
 }
 
+// headersEditor edits d.headers: a name and a value per row, rows added
+// and removed; onChange runs after every edit.
+function headersEditor(d, help, onChange = () => {}) {
+  d.headers ||= [];
+  const id = `headers-${++uid}`;
+  const rows = h('div', { class: 'tv-headers' });
+  const draw = (focus) => {
+    rows.replaceChildren(...d.headers.map((hd, i) => h('div', { class: 'tv-header-row' },
+      h('input', { type: 'text', value: hd.name, placeholder: 'Name, e.g. Cookie', 'aria-label': `Header ${i + 1} name`, autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false',
+        oninput: (e) => { hd.name = e.target.value; onChange(); } }),
+      h('input', { type: 'text', value: hd.value, placeholder: 'Value', 'aria-label': `Header ${i + 1} value`, autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false',
+        oninput: (e) => { hd.value = e.target.value; onChange(); } }),
+      h('button', { type: 'button', class: 'btn icon ghost sm', 'aria-label': `Remove header ${hd.name || i + 1}`, title: 'Remove', html: icons.close, onclick: () => {
+        d.headers.splice(i, 1); draw(Math.min(i, d.headers.length - 1)); onChange();
+      } }))));
+    if (focus != null) (/** @type {HTMLElement | null} */ (rows.children[focus]?.querySelector('input')) || addBtn).focus();
+  };
+  const addBtn = h('button', { type: 'button', class: 'btn sm', disabled: false, onclick: () => {
+    if (d.headers.length >= 20) return;
+    d.headers.push({ name: '', value: '' }); draw(d.headers.length - 1); onChange();
+  } }, h('span', { html: icons.plus }), 'Add header');
+  draw();
+  return h('div', { class: 'field', role: 'group', 'aria-labelledby': id }, h('span', { id }, 'Other headers'), h('div', { class: 'help' }, help), rows, h('div', null, addBtn));
+}
+
 // streamDialog adds a live channel (st null) or edits one: its address and
 // the headers its provider wants, with a test that opens it.
 /**
@@ -26,7 +51,7 @@ function codecLine(p) {
  * @param {{ onSaved: (l: Lineup, id: string) => void, onRemoved: (l: Lineup) => void }} cb
  */
 export function streamDialog(st, { onSaved, onRemoved }) {
-  const d = structuredClone(st || { id: '', name: '', url: '', userAgent: '', referrer: '', logo: '', guideId: '', source: '' });
+  const d = structuredClone(st || { id: '', name: '', url: '', userAgent: '', referrer: '', logo: '', guideId: '', source: '', headers: [] });
   const errors = formErrors(`stream-err-${++uid}`, []);
   const input = (k, attrs = {}) => h('input', { type: 'text', value: d[k], autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', ...attrs, oninput: (e) => { d[k] = e.target.value; result.replaceChildren(); } });
   const name = input('name', { maxlength: 60, placeholder: 'e.g. News 24', autocapitalize: 'sentences' });
@@ -50,6 +75,7 @@ export function streamDialog(st, { onSaved, onRemoved }) {
     h('div', { class: 'form-grid' },
       field('User-Agent', input('userAgent', { placeholder: 'Only if the provider wants one' }), 'Sent with every request for the stream, its segments and its key. Some providers only answer their own app’s.'),
       field('Referer', input('referrer', { placeholder: 'Optional' }))),
+    headersEditor(d, 'Any other headers the provider wants with every request, such as a Cookie, Origin or token.', () => result.replaceChildren()),
     h('div', { class: 'form-grid' },
       field('Logo address', input('logo', { inputmode: 'url', placeholder: 'Optional' })),
       field('Guide id', input('guideId', { placeholder: 'tvg-id, optional' }), 'The channel’s id in a playlist’s guide (XMLTV), for what’s on.')),
@@ -57,6 +83,7 @@ export function streamDialog(st, { onSaved, onRemoved }) {
   const saveBtn = h('button', { class: 'btn primary', type: 'button', onclick: () => submit() }, st ? 'Save' : 'Add channel');
   const submit = () => {
     errors.reset();
+    d.headers = d.headers.filter((x) => x.name.trim());
     if (!d.name.trim()) { errors.fail('Give the channel a name', name); return; }
     if (!webURL(d.url)) { errors.fail('Enter the stream’s http(s) address', url); return; }
     submitInline(saveBtn, errors, async () => {
@@ -83,7 +110,7 @@ export function streamDialog(st, { onSaved, onRemoved }) {
  * @param {(l: Lineup) => void} onSaved
  */
 export function sourceDialog(sources, src, onSaved) {
-  const d = structuredClone(src || { id: '', name: '', url: '', guideUrl: '', userAgent: '' });
+  const d = structuredClone(src || { id: '', name: '', url: '', guideUrl: '', userAgent: '', headers: [] });
   const errors = formErrors(`source-err-${++uid}`, []);
   const input = (k, attrs = {}) => h('input', { type: 'text', value: d[k], autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', ...attrs, oninput: (e) => { d[k] = e.target.value; } });
   const name = input('name', { maxlength: 60, placeholder: 'e.g. Free channels', autocapitalize: 'sentences' });
@@ -92,6 +119,7 @@ export function sourceDialog(sources, src, onSaved) {
   const saveBtn = h('button', { class: 'btn primary', type: 'button', onclick: () => submit() }, src ? 'Save' : 'Add playlist');
   const submit = () => {
     errors.reset();
+    d.headers = d.headers.filter((x) => x.name.trim());
     if (!webURL(d.url)) { errors.fail('Enter the playlist’s http(s) address', url); return; }
     if (d.guideUrl.trim() && !webURL(d.guideUrl)) { errors.fail('Enter the guide’s http(s) address, or leave it empty', guide); return; }
     const next = src ? sources.map((s) => (s.id === src.id ? d : s)) : [...sources, d];
@@ -105,7 +133,8 @@ export function sourceDialog(sources, src, onSaved) {
     field('Name', name),
     field('Playlist address', url, 'An M3U playlist of channels. You pick which of its channels to add.'),
     field('Guide address', guide, 'An XMLTV guide (it may be gzipped) for what’s on: matched to channels by their tvg-id.'),
-    field('User-Agent', input('userAgent', { placeholder: 'Optional' }), 'Sent when reading the playlist and guide, and for its channels unless the playlist names one.'));
+    field('User-Agent', input('userAgent', { placeholder: 'Optional' }), 'Sent when reading the playlist and guide, and for its channels unless the playlist names one.'),
+    headersEditor(d, 'Sent when reading the playlist and guide, and with its channels unless the playlist gives them their own.'));
   const m = modal({ title: src ? `Edit ${src.name}` : 'New playlist', wide: true, dismissible: false, body: form,
     actions: [h('div', { class: 'spacer' }), errors.err, h('button', { class: 'btn', type: 'button', onclick: () => m.close() }, 'Cancel'), saveBtn] });
   requestAnimationFrame(() => name.focus());
@@ -127,7 +156,7 @@ export function browseDialog(src, have, onAdded) {
   const q = h('input', { type: 'search', placeholder: 'Search channels', 'aria-label': 'Search channels', autocomplete: 'off', oninput: () => { clearTimeout(timer); timer = setTimeout(load, 250); } });
   const addBtn = h('button', { class: 'btn primary', type: 'button', disabled: true, onclick: () => {
     run(addBtn, async () => {
-      const body = [...picked.values()].map((e) => ({ id: '', name: e.name, url: e.url, logo: e.logo, guideId: e.guideId, userAgent: e.userAgent, referrer: e.referrer, source: src.id }));
+      const body = [...picked.values()].map((e) => ({ id: '', name: e.name, url: e.url, logo: e.logo, guideId: e.guideId, userAgent: e.userAgent, referrer: e.referrer, headers: e.headers || [], source: src.id }));
       const l = await api('/api/admin/tv/streams', { method: 'POST', body });
       m.close();
       onAdded(l);
