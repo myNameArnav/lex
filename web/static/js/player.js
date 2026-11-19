@@ -138,6 +138,7 @@ export class Player {
     this.nextBtn = b('next', this.live ? 'Next channel (n)' : 'Next episode (n)', () => this.playNext(), 'hidden');
     // Live TV: LIVE while at the live point, Go live once behind it.
     this.liveBtn = this.live ? h('button', { class: 'p-live', type: 'button', title: 'Back to what’s on now', onclick: (e) => { e.stopPropagation(); this.goLive(); } }, 'LIVE') : null;
+    this.chanBtn = this.live ? h('button', { class: 'p-chans', type: 'button', title: 'Channels (t)', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', onclick: (e) => { e.stopPropagation(); this.toggleMenu('channels'); } }, 'Channels') : null;
     this.fsBtn = b('fullscreen', 'Fullscreen (f)', () => this.toggleFullscreen());
     this.ccBtn = b('cc', 'Subtitles & audio (c)', (e) => this.toggleMenu('tracks'));
     this.gearBtn = b('gear', 'Settings', () => this.toggleMenu('settings'));
@@ -152,7 +153,7 @@ export class Player {
       h('div', { class: 'shade-top' }), h('div', { class: 'shade-bot' }),
       this.subsEl,
       this.center,
-      h('div', { class: 'p-top' }, b('back', 'Close (Esc)', () => this.close()), this.titleEl, this.liveBtn),
+      h('div', { class: 'p-top' }, b('back', 'Close (Esc)', () => this.close()), this.titleEl, this.liveBtn, this.chanBtn),
       h('div', { class: 'p-bot' },
         this.seek,
         h('div', { class: 'p-controls' },
@@ -956,6 +957,7 @@ export class Player {
       n: () => this.playNext(), s: () => this.skipBtn?.click(),
       pageup: () => (this.live ? this.switchChannel(1) : this.jumpChapter(1)), pagedown: () => (this.live ? this.switchChannel(-1) : this.jumpChapter(-1)),
       g: () => this.nudgeSubs(-0.1), h: () => this.nudgeSubs(0.1),
+      t: () => { if (this.live) this.toggleMenu('channels'); },
       escape: () => { if (this.menu) this.closeMenu(); else if (!document.fullscreenElement) this.close(); },
       home: () => this.seekTo(0), end: () => this.seekTo(this.duration() - 5),
     };

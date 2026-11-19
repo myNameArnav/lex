@@ -35,13 +35,15 @@ export const menus = {
     this.closeMenu(false);
     this.menuName = name;
     this.menuPage = null;
-    this.menuOpener = name === 'tracks' ? this.ccBtn : this.gearBtn;
+    this.menuOpener = name === 'tracks' ? this.ccBtn : name === 'channels' ? this.chanBtn : this.gearBtn;
     this.menuOpener.setAttribute('aria-expanded', 'true');
-    this.menu = h('div', { class: 'p-menu', role: 'dialog', 'aria-label': name === 'tracks' ? 'Subtitles and audio' : 'Settings', onclick: (e) => e.stopPropagation() });
+    this.menu = h('div', { class: 'p-menu', role: 'dialog', 'aria-label': name === 'tracks' ? 'Subtitles and audio' : name === 'channels' ? 'Channels' : 'Settings', onclick: (e) => e.stopPropagation() });
     this.root.appendChild(this.menu);
     this.renderMenu();
-    // Subtitles are what people change most: start on the chosen one.
-    (name === 'tracks' && this.menu.querySelector('.pm-col:last-child .pm-opt.on') || this.menu.querySelector('.pm-row, .pm-opt'))?.focus();
+    // Subtitles are what people change most: start on the chosen one; on
+    // the channel list, the channel playing.
+    (name !== 'settings' && this.menu.querySelector('.pm-col:last-child .pm-opt.on, .pm-chan.on') || this.menu.querySelector('.pm-row, .pm-opt'))?.focus();
+    if (name === 'channels') this.loadChannelGuide();
     this.showUI(true);
   },
 
@@ -91,6 +93,7 @@ export const menus = {
   },
 
   fillMenu(m) {
+    if (this.menuName === 'channels') { this.fillChannels(m); return; }
     const row = (label, value, page) => h('button', { class: 'pm-row', 'data-key': page, onclick: () => this.openPage(page) },
       h('span', { class: 'pm-label' }, label), h('span', { class: 'pm-val' }, value), h('span', { class: 'pm-chev', html: icons.chevR }));
     const sw = (label, on, set, hint) => h('label', { class: 'pm-row pm-toggle' },

@@ -1025,6 +1025,6 @@ export type ApiRoutes = [
   ["GET", `/api/person`, { name: string; image: personImage | null; roles: Record<string, string>; items: (Item | null)[]; }, any],
   ["GET", `/api/search`, { movies: (Item | null)[]; shows: (Item | null)[]; episodes: (Item | null)[]; }, any],
   ["POST", `/api/setup`, { user: User | null; token: string; caps: serverCaps; }, { Name: string; Password: string; }],
-  ["GET", `/api/tv`, { channels: channelView[]; serverTime: number; }, any],
+  ["GET", `/api/tv`, { channels: channelView[]; serverTime: number; from: number; to: number; }, any],
   ["GET", `/api/watchlist`, { items: (Item | null)[]; }, any],
 ];

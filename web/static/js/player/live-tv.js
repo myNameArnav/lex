@@ -5,7 +5,8 @@
 // this.live = { channelId, channels, token, channel, now, next, skew,
 // switching } and this.liveBtn; they call start(), resetForNext(), seekTo().
 
-import { toast } from '../ui.js';
+import { h, toast, fmtProgram, fmtClock } from '../ui.js';
+import { api } from '../api.js';
 import { retryApi } from './retry.js';
 
 export const liveTv = {
@@ -79,6 +80,41 @@ export const liveTv = {
       this.seekTo(pos);
       this.video.play().catch(() => {});
     } else this.nextProgram();
+  },
+
+  // The channel list (the Channels button): every channel with what's on
+  // it now, from the guide (loaded when the list opens).
+  async loadChannelGuide() {
+    const live = this.live;
+    try {
+      const r = await api('/api/tv');
+      live.guide = new Map(r.channels.map((c) => [c.id, c.programs]));
+      live.channels = r.channels.map(({ id, number, name }) => ({ id, number, name }));
+      live.skew = Date.now() - r.serverTime;
+    } catch { return; }
+    if (this.menuName === 'channels') this.renderMenu();
+  },
+
+  fillChannels(m) {
+    const { channels, channelId, guide } = this.live;
+    m.classList.add('pm-wide');
+    m.append(h('div', { class: 'pm-title' }, 'Channels'),
+      h('div', { role: 'radiogroup', 'aria-label': 'Channels' }, channels.map((ch) => {
+        const now = guide?.get(ch.id)?.[0];
+        const on = ch.id === channelId;
+        return h('button', { class: `pm-opt pm-chan${on ? ' on' : ''}`, role: 'radio', 'aria-checked': String(on), 'data-key': `ch-${ch.id}`, onclick: () => this.chooseChannel(ch.id) },
+          h('span', { class: 'pm-chan-n' }, ch.number),
+          h('span', { class: 'pm-opt-l' }, ch.name, now ? h('small', null, `${fmtProgram(now.item)} · until ${fmtClock(now.end)}`) : null));
+      })));
+  },
+
+  async chooseChannel(id) {
+    this.closeMenu();
+    if (id === this.live.channelId) { this.goLive(); return; }
+    const ch = this.live.channels.find((c) => c.id === id);
+    if (ch) toast(`${ch.number} · ${ch.name}`);
+    this.resetForNext();
+    await this.tune(id);
   },
 
   async switchChannel(dir) {
