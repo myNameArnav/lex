@@ -6,7 +6,8 @@
 # FFmpeg is compiled here instead of installed from apt. The distribution
 # packages enable every optional library (LLVM/Mesa via libplacebo, speech
 # synthesis, SDL, x265, ...), which made the image over 500 MB; Lex needs only
-# FFmpeg's built-in components plus x264, dav1d, zimg, chromaprint and libdrm.
+# FFmpeg's built-in components plus x264, dav1d, zimg, chromaprint, libdrm and
+# GnuTLS (https, for Live TV channels from the internet).
 # On arm64 the source carries the Raspberry Pi archive's patch, which adds the
 # Pi's hardware HEVC decoder (-hwaccel drm). Build with --build-arg
 # RPI_FFMPEG=no for plain upstream FFmpeg on other arm64 boards.
@@ -54,7 +55,7 @@ RUN set -eux; \
       toolchain="gcc libc6-dev crossbuild-essential-$TARGETARCH"; \
       cross="--enable-cross-compile --cross-prefix=$triplet- --target-os=linux"; \
     fi; \
-    devs="libx264-dev libdav1d-dev libzimg-dev libchromaprint-dev libdrm-dev zlib1g-dev libbz2-dev liblzma-dev"; \
+    devs="libx264-dev libdav1d-dev libzimg-dev libchromaprint-dev libdrm-dev libgnutls28-dev zlib1g-dev libbz2-dev liblzma-dev"; \
     if [ "$rpi" = "yes" ]; then devs="$devs libudev-dev"; fi; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl xz-utils make patch pkgconf $toolchain; \
@@ -83,7 +84,7 @@ RUN set -eux; \
       --disable-indevs --enable-indev=lavfi --disable-outdevs \
       --enable-pthreads --enable-zlib --enable-bzlib --enable-lzma --enable-iconv \
       --enable-v4l2-m2m --enable-libdrm \
-      --enable-libx264 --enable-libdav1d --enable-libzimg --enable-chromaprint \
+      --enable-libx264 --enable-libdav1d --enable-libzimg --enable-chromaprint --enable-gnutls \
       $rpi_flags; \
     make -j"$(nproc)"; \
     make install DESTDIR=/out; \
@@ -104,7 +105,7 @@ COPY docker/raspberrypi-archive-*.pgp /usr/share/keyrings/
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates tzdata \
-      libx264-164 libdav1d7 libzimg2 libchromaprint1 libdrm2 libudev1 libbz2-1.0 liblzma5 zlib1g; \
+      libx264-164 libdav1d7 libzimg2 libchromaprint1 libdrm2 libgnutls30t64 libudev1 libbz2-1.0 liblzma5 zlib1g; \
     if [ "$TARGETARCH" = "arm64" ] && [ "$RPI_FFMPEG" = "yes" ]; then \
       echo "deb [signed-by=/usr/share/keyrings/raspberrypi-archive-keyring.pgp,/usr/share/keyrings/raspberrypi-archive-automatic.pgp] https://archive.raspberrypi.com/debian trixie main" > /etc/apt/sources.list.d/raspberrypi.list; \
       apt-get update; \
@@ -115,7 +116,13 @@ RUN set -eux; \
     usermod -aG video lex; \
     mkdir -p /data && chmod 0700 /data && chown lex:lex /data
 COPY --from=ffmpeg /out/usr/local/ /usr/local/
-RUN ldconfig && ffmpeg -hide_banner -version >/dev/null && ffprobe -hide_banner -version >/dev/null
+# Live TV reads https streams (HLS, often with AES keys): fail the build
+# without what that needs.
+RUN ldconfig && ffmpeg -hide_banner -version >/dev/null && ffprobe -hide_banner -version >/dev/null \
+    && ffmpeg -hide_banner -protocols 2>/dev/null | grep -qx '  https' \
+    && ffmpeg -hide_banner -protocols 2>/dev/null | grep -qx '  crypto' \
+    && ffmpeg -hide_banner -bsfs 2>/dev/null | grep -qx 'aac_adtstoasc' \
+    && ffmpeg -hide_banner -demuxers 2>/dev/null | grep -q ' hls '
 COPY --from=build /out/lex /usr/local/bin/lex
 ENV LEX_ADDR=:8420 LEX_DATA=/data GOMEMLIMIT=96MiB GOGC=50
 USER lex
