@@ -143,6 +143,7 @@ func (s *Server) Handler() (http.Handler, error) {
 	mux.Handle("GET /api/tv", u(s.liveTV(s.tvGuide)))
 	mux.Handle("GET /api/tv/{id}", u(s.liveTV(s.tvChannel)))
 	mux.Handle("GET /api/tv/{id}/stream", u(s.liveTV(s.tvStream)))
+	mux.Handle("GET /api/tv/{id}/stream/info", u(s.liveTV(s.tvStreamInfo)))
 	mux.Handle("POST /api/playback/plan", u(s.plan))
 	mux.Handle("POST /api/items/{id}/compat", u(s.itemCompat))
 	mux.Handle("POST /api/playback/progress", u(s.progress))

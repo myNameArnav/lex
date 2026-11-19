@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"lex/internal/proc"
@@ -105,7 +107,15 @@ type streamProbe struct {
 	Audio   string `json:"audio"`
 	Width   int    `json:"width"`
 	Height  int    `json:"height"`
-	at      time.Time
+	// For the stats panel.
+	VideoProfile string  `json:"-"`
+	AudioProfile string  `json:"-"`
+	FPS          float64 `json:"-"`
+	Interlaced   bool    `json:"-"`
+	SampleRate   int     `json:"-"`
+	Channels     int     `json:"-"`
+	Bitrate      int     `json:"-"` // the HLS variant's, bit/s; 0 unknown
+	at           time.Time
 }
 
 var (
@@ -143,7 +153,7 @@ func (s *Server) probeStream(ctx context.Context, st store.TVStream) (streamProb
 	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
-	args := append([]string{"-v", "error", "-show_entries", "program=program_id:program_tags=variant_bitrate:stream=index,codec_type,codec_name,width,height", "-of", "json"}, inputArgs(st)...)
+	args := append([]string{"-v", "error", "-show_entries", "program=program_id:program_tags=variant_bitrate:stream=index,codec_type,codec_name,profile,width,height,r_frame_rate,field_order,sample_rate,channels", "-of", "json"}, inputArgs(st)...)
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, s.FF.Probe, args...)
 	cmd.Stderr = &stderr
@@ -159,10 +169,15 @@ func (s *Server) probeStream(ctx context.Context, st store.TVStream) (streamProb
 		return streamProbe{}, errors.New(msg)
 	}
 	type pstream struct {
-		CodecType string `json:"codec_type"`
-		CodecName string `json:"codec_name"`
-		Width     int    `json:"width"`
-		Height    int    `json:"height"`
+		CodecType  string `json:"codec_type"`
+		CodecName  string `json:"codec_name"`
+		Profile    string `json:"profile"`
+		Width      int    `json:"width"`
+		Height     int    `json:"height"`
+		FrameRate  string `json:"r_frame_rate"`
+		FieldOrder string `json:"field_order"`
+		SampleRate string `json:"sample_rate"`
+		Channels   int    `json:"channels"`
 	}
 	var r struct {
 		Programs []struct {
@@ -204,12 +219,24 @@ func (s *Server) probeStream(ctx context.Context, st store.TVStream) (streamProb
 	if len(r.Programs) > 1 && best >= 0 {
 		p.Program, streams = r.Programs[best].ID, r.Programs[best].Streams
 	}
+	if best >= 0 {
+		p.Bitrate = rate(best)
+	}
 	for _, ps := range streams {
 		switch {
 		case ps.CodecType == "video" && p.Video == "":
-			p.Video, p.Width, p.Height = ps.CodecName, ps.Width, ps.Height
+			p.Video, p.Width, p.Height, p.VideoProfile = ps.CodecName, ps.Width, ps.Height, ps.Profile
+			p.Interlaced = ps.FieldOrder != "" && ps.FieldOrder != "progressive" && ps.FieldOrder != "unknown"
+			if a, b, ok := strings.Cut(ps.FrameRate, "/"); ok {
+				n, _ := strconv.ParseFloat(a, 64)
+				d, _ := strconv.ParseFloat(b, 64)
+				if d > 0 {
+					p.FPS = n / d
+				}
+			}
 		case ps.CodecType == "audio" && p.Audio == "":
-			p.Audio = ps.CodecName
+			p.Audio, p.AudioProfile, p.Channels = ps.CodecName, ps.Profile, ps.Channels
+			p.SampleRate, _ = strconv.Atoi(ps.SampleRate)
 		}
 	}
 	if p.Video == "" && p.Audio == "" {
@@ -330,7 +357,7 @@ func (s *Server) tvStream(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	cmd := exec.CommandContext(ctx, s.FF.Path, args...)
-	var stderr bytes.Buffer
+	var stderr lockedBuffer
 	cmd.Stderr = &stderr
 	out, err := cmd.StdoutPipe()
 	if err != nil {
@@ -350,7 +377,17 @@ func (s *Server) tvStream(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Log.Infof("Live TV: %s watching %s (%s)", userOf(r).Name, st.Name, method)
 	start := time.Now()
+	ls := &liveSend{user: userOf(r).ID, channel: ch.ID, start: start, probe: p, convert: !copyVideo, stderr: &stderr}
+	key := liveKey(ls.user, ch.ID, r.URL.Query().Get("t"))
+	liveSends.Lock()
+	liveSends.m[key] = ls
+	liveSends.Unlock()
 	defer func() {
+		liveSends.Lock()
+		if liveSends.m[key] == ls {
+			delete(liveSends.m, key)
+		}
+		liveSends.Unlock()
 		s.Log.Infof("Live TV: %s stopped %s after %s", userOf(r).Name, st.Name, time.Since(start).Round(time.Second))
 	}()
 
@@ -376,6 +413,7 @@ func (s *Server) tvStream(w http.ResponseWriter, r *http.Request) {
 		if _, err := w.Write(buf[:n]); err != nil {
 			break
 		}
+		ls.bytes.Add(int64(n))
 		if flusher != nil {
 			flusher.Flush()
 		}
@@ -390,6 +428,100 @@ func (s *Server) tvStream(w http.ResponseWriter, r *http.Request) {
 	if msg := strings.TrimSpace(lastLine(stderr.String())); msg != "" && !stopped {
 		s.Log.Warnf("Live TV: %s ended: %s", st.Name, msg)
 	}
+}
+
+// liveSend is a live channel being sent to a player, for its stats.
+type liveSend struct {
+	user    int64
+	channel string
+	start   time.Time
+	probe   streamProbe
+	convert bool
+	bytes   atomic.Int64
+	stderr  *lockedBuffer
+}
+
+// liveSends are the streams being sent, by liveKey: the player's request
+// names its stream with ?t=, which the stats ask about.
+var liveSends = struct {
+	sync.Mutex
+	m map[string]*liveSend
+}{m: map[string]*liveSend{}}
+
+func liveKey(user int64, channel, t string) string { return fmt.Sprint(user, "/", channel, "/", t) }
+
+// lockedBuffer is ffmpeg's stderr, read while ffmpeg writes it.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	// Only the last of it matters; a stream that warns all day can't grow it.
+	if l.b.Len() > 64<<10 {
+		rest := append([]byte(nil), l.b.Bytes()[l.b.Len()-8<<10:]...)
+		l.b.Reset()
+		l.b.Write(rest)
+	}
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// tvStreamInfo is the stats panel's view of a live channel playing here
+// (?t= names the player's request): what the stream holds, what the server
+// does with it, and how much it has sent. Without a stream being sent, the
+// probe alone.
+func (s *Server) tvStreamInfo(w http.ResponseWriter, r *http.Request) {
+	ch, ok, err := s.TV.Channel(r.PathValue("id"))
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if !ok || ch.Stream == nil {
+		writeErr(w, 404, "no such live channel")
+		return
+	}
+	out := map[string]any{"host": streamHost(ch.Stream.URL), "playing": false}
+	liveSends.Lock()
+	ls := liveSends.m[liveKey(userOf(r).ID, ch.ID, r.URL.Query().Get("t"))]
+	liveSends.Unlock()
+	var p streamProbe
+	if ls != nil {
+		p = ls.probe
+		out["playing"] = true
+		out["bytes"] = ls.bytes.Load()
+		out["seconds"] = time.Since(ls.start).Seconds()
+		out["convert"] = ls.convert
+		if msg := strings.TrimSpace(lastLine(ls.stderr.String())); msg != "" {
+			out["warning"] = msg
+		}
+	} else {
+		if p, err = s.probeStream(r.Context(), *ch.Stream); err != nil {
+			writeErr(w, 502, "Couldn’t open the stream: "+err.Error())
+			return
+		}
+		out["convert"] = p.Video != "" && p.Video != "h264"
+	}
+	out["video"], out["audio"], out["width"], out["height"] = p.Video, p.Audio, p.Width, p.Height
+	out["videoProfile"], out["audioProfile"], out["fps"], out["interlaced"] = p.VideoProfile, p.AudioProfile, p.FPS, p.Interlaced
+	out["sampleRate"], out["channels"], out["bitrate"] = p.SampleRate, p.Channels, p.Bitrate
+	writeJSON(w, out)
+}
+
+// streamHost is the host a stream comes from, without its path (which
+// may hold a token).
+func streamHost(u string) string {
+	if pu, err := url.Parse(u); err == nil {
+		return pu.Host
+	}
+	return ""
 }
 
 // tvStreamProbe checks a stream before it's saved: whether it opens, and

@@ -1005,6 +1005,23 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tv-available { align-items: center; }
 .tv-available[hidden] { display: none; }
 .tv-down svg { transform: rotate(180deg); }
+/* The lineup's filter: name words, common words as chips, bulk on/off. */
+.tv-filter { display: grid; gap: 10px; margin: 4px 0 6px; }
+.tv-filter[hidden] { display: none; }
+.tv-filter-top .tv-filter-q { flex: 1 1 260px; min-width: 0; }
+.tv-filter-bulk { align-items: center; }
+.tv-filter-bulk .btn[hidden] { display: none; }
+.tv-filter-words { display: flex; flex-wrap: wrap; gap: 6px; }
+.tv-word { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 20px; background: var(--bg3); color: var(--text2); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.tv-word .n { color: var(--text3); font-weight: 500; font-variant-numeric: tabular-nums; }
+.tv-word:hover { color: var(--text); }
+.tv-word.want { background: var(--bg4); color: var(--text); border-color: var(--text2); }
+.tv-word.not { color: var(--text3); border-style: dashed; }
+.tv-row-none { padding: 14px 0; border-bottom: 1px solid var(--line); }
+/* The guide's search. */
+.tv-search-row { display: flex; margin: 14px 0 4px; }
+.tv-search-row .tv-search { flex: 0 1 360px; min-width: 0; }
+.tv-no-match { margin: 18px 0; }
 @media (max-width: 600px) {
   .tv-row { grid-template-columns: 28px minmax(0, 1fr); row-gap: 6px; }
   .tv-row-actions { grid-column: 2; }
@@ -1424,7 +1441,7 @@ kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px soli
 }
 /* Live TV grid guide: channels down, time across. The box scrolls both
    ways so the channel column and the time header can stick. */
-.tvg { --ch: 168px; margin-top: 22px; max-height: calc(100vh - 220px); max-height: calc(100dvh - 220px); min-height: 320px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg2); }
+.tvg { --ch: 200px; margin-top: 22px; max-height: calc(100vh - 220px); max-height: calc(100dvh - 220px); min-height: 320px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg2); }
 .tvg-inner { position: relative; }
 .tvg-head { position: sticky; top: 0; z-index: 3; display: flex; height: 40px; background: var(--bg2); border-bottom: 1px solid var(--line); }
 .tvg-corner { position: sticky; left: 0; z-index: 4; flex: none; width: var(--ch); display: flex; align-items: center; padding: 0 14px; background: var(--bg2); border-right: 1px solid var(--line); color: var(--text2); font-size: 13px; font-weight: 700; }
@@ -1434,14 +1451,16 @@ kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px soli
 .tvg-ch { position: sticky; left: 0; z-index: 2; flex: none; width: var(--ch); display: flex; align-items: center; gap: 10px; padding: 0 14px; background: var(--bg2); border: 0; border-right: 1px solid var(--line); color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .tvg-ch b { font-size: 18px; font-weight: 800; color: var(--text2); font-variant-numeric: tabular-nums; min-width: 1.6em; }
 .tvg-ch img { width: 28px; height: 28px; object-fit: contain; flex: none; }
-.tvg-ch span { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Long names ("STAR SPORTS 1 HINDI HD") take two lines rather than an ellipsis. */
+.tvg-ch span { font-size: 13.5px; font-weight: 600; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; }
 .tvg-track { position: relative; flex: none; }
 .tvg-prog { position: absolute; top: 4px; bottom: 4px; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 0 10px; overflow: hidden; background: var(--bg3); border: 0; border-radius: 6px; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .tvg-prog.now { background: var(--bg4); }
 .tvg-prog.past { color: var(--text3); }
 .tvg-t { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tvg-s { font-size: 12px; color: var(--text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tvg-bar { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); }
+/* How far into the program: quiet grey, so the now line is the guide's one color. */
+.tvg-bar { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--text3); opacity: .7; }
 .tvg-now { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--accent); z-index: 1; pointer-events: none; }
 .tvg-ch:focus-visible, .tvg-prog:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 @media (hover: hover) {
@@ -1461,7 +1480,7 @@ kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px soli
 .player.p-tv .p-transport > button:not(:first-child), .player.p-tv .p-ends { display: none; }
 .player.p-tv .p-end { pointer-events: none; }
 .player.p-tv .p-time.no-end > [aria-hidden], .player.p-tv .p-time.no-end .p-end { display: none; }
-.player.p-stream .p-method { visibility: hidden; }
+.player.p-stream .p-cc { display: none; }
 .player .p-chans { flex: none; border: 1px solid rgba(255,255,255,.25); border-radius: 4px; padding: 3px 9px; font: inherit; font-size: 12px; font-weight: 700; background: rgba(0,0,0,.3); color: #fff; cursor: pointer; }
 .player .p-chans[aria-expanded="true"] { background: rgba(255,255,255,.18); }
 .p-menu .pm-chan-n { flex: none; min-width: 2em; font-weight: 800; font-variant-numeric: tabular-nums; color: rgba(255,255,255,.6); }

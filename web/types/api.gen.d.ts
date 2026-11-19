@@ -997,6 +997,7 @@ export type ApiRoutes = [
   ["GET", `/api/files/${string}/hls/index.m3u8`, any, any],
   ["GET", `/api/files/${string}/hls/init.mp4`, any, any],
   ["POST", `/api/items/${string}/intro/reset`, { ok: boolean; }, any],
+  ["GET", `/api/tv/${string}/stream/info`, { host: string; playing: boolean; bytes?: number; seconds?: number; convert?: boolean; warning?: string; video?: string; audio?: string; width?: number; height?: number; videoProfile?: string; audioProfile?: string; fps?: number; interlaced?: boolean; sampleRate?: number; channels?: number; bitrate?: number; }, any],
   ["GET", `/api/files/${string}/fonts/${string}`, any, any],
   ["DELETE", `/api/files/${string}/subs/${string}`, { ok: boolean; }, any],
   ["GET", `/api/files/${string}/subs/${string}`, any, any],
