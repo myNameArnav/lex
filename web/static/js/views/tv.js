@@ -7,6 +7,7 @@ import { api, img } from '../api.js';
 import { openPlayer, isPlayerOpen } from '../player-loader.js';
 import { state, renderNav, refreshSoft, refreshLater } from '../app.js';
 import { placeholder, progressBar } from './cards.js';
+import { matcher } from '../channel-filter.js';
 
 /** @typedef {import('../../../types/api.gen').Item} Item */
 /** @typedef {{ id: string, number: number, name: string }} ChannelRef */
@@ -59,6 +60,24 @@ const nothing = () => emptyState({ level: 'h2', title: 'Nothing to air yet', tex
 const intro = () => [h('h1', { class: 'page-title' }, 'Live TV'),
   h('p', { class: 'muted', style: { margin: 0 } }, 'Channels that play your library at random, like TV, and live channels from the internet.')];
 
+// The search: kept while the guide refreshes, and for coming back to it.
+let query = '';
+
+// searchBox filters the channels by name or number (see channel-filter.js);
+// onChange redraws. Next channel then steps through the matches only.
+function searchBox(total, onChange) {
+  const input = h('input', { type: 'search', class: 'tv-search', value: query, placeholder: 'Search channels', 'aria-label': 'Search channels by name or number',
+    title: 'Words in the channel name, or its number. Put a minus in front of a word to leave those out: -HD', autocomplete: 'off', spellcheck: 'false',
+    dataset: { focusKey: 'tv-search' },
+    // A refresh focuses it again: keep typing at the end.
+    onfocus: (e) => { const n = e.target.value.length; e.target.setSelectionRange(n, n); },
+    oninput: (e) => { query = e.target.value; onChange(); },
+    onkeydown: (e) => { if (e.key === 'Escape' && query) { e.preventDefault(); e.stopPropagation(); input.value = query = ''; onChange(); } } });
+  return total > 8 ? h('div', { class: 'tv-search-row' }, input) : null;
+}
+
+const noMatch = () => h('p', { class: 'muted tv-no-match' }, `No channels match “${query.trim()}”.`);
+
 export async function tvView(ctx) {
   if (!state.caps.liveTv) return off();
   // The grid needs room; a phone gets the list.
@@ -73,9 +92,22 @@ async function listView(ctx) {
   const skew = Date.now() - data.serverTime;
   const wrap = h('div', { class: 'page' }, ...intro());
   if (!data.channels.length) { wrap.appendChild(nothing()); return wrap; }
-  const channels = data.channels.map(({ id, number, name }) => ({ id, number, name }));
+  const list = h('div');
+  const draw = () => {
+    const m = matcher(query);
+    const shown = data.channels.filter(m);
+    const channels = shown.map(({ id, number, name }) => ({ id, number, name }));
+    list.replaceChildren(shown.length ? guideList(shown, channels, skew) : noMatch());
+  };
+  wrap.append(searchBox(data.channels.length, draw) || '', list);
+  draw();
+  refreshLater(ctx, 60000);
+  return wrap;
+}
+
+function guideList(shown, channels, skew) {
   const now = Date.now() - skew;
-  wrap.appendChild(h('ol', { class: 'tv-guide' }, data.channels.map((ch) => {
+  return h('ol', { class: 'tv-guide' }, shown.map((ch) => {
     const [cur, ...later] = ch.programs;
     const it = cur.item;
     const left = Math.max(1, Math.round((cur.end - now) / MIN));
@@ -91,9 +123,7 @@ async function listView(ctx) {
           h('div', { class: 't' }, programHead(it)), h('div', { class: 's' }, programSub(it)))),
       h('ul', { class: 'tv-later', 'aria-label': `Later on ${ch.name}` }, later.map((p) => h('li', null,
         h('span', { class: 'tv-time' }, fmtClock(p.start)), h('span', { class: 'tv-title' }, programHead(p.item), p.item.kind === 'episode' ? h('span', { class: 'muted' }, ` · ${fmtEpisode(p.item)}`) : null)))));
-  })));
-  refreshLater(ctx, 60000);
-  return wrap;
+  }));
 }
 
 // programDialog: a program's details, from the grid. One on now tunes in;
@@ -137,22 +167,31 @@ async function gridView(ctx) {
     const d = await guide(`/api/tv?from=${start}&to=${start + HOURS * 3600000}`);
     if (!d) return false;
     data = d; from = d.from; skew = Date.now() - d.serverTime;
-    channels = d.channels.map(({ id, number, name }) => ({ id, number, name }));
     return true;
   };
   if (!await load()) return off();
   if (!data.channels.length) { wrap.appendChild(nothing()); return wrap; }
+  // Searching keeps the time in view.
+  const search = searchBox(data.channels.length, () => {
+    const at = scroller?.scrollLeft;
+    draw();
+    if (scroller) scroller.scrollLeft = at ?? Math.max(0, x(Date.now() - skew) - 3 * PX_PER_MIN * 10);
+  });
+  if (search) holder.before(search);
 
   /** @type {HTMLElement} */
   let scroller, nowLine;
   const draw = () => {
     const now = Date.now() - skew;
     const width = x(data.to);
+    const shown = data.channels.filter(matcher(query));
+    channels = shown.map(({ id, number, name }) => ({ id, number, name }));
+    if (!shown.length) { scroller = null; holder.replaceChildren(noMatch()); return; }
     const head = h('div', { class: 'tvg-head', role: 'row' },
       h('div', { class: 'tvg-corner', role: 'columnheader' }, new Date(from).toLocaleDateString([], { weekday: 'long' })),
       h('div', { class: 'tvg-times', style: { width: `${width}px` } },
         Array.from({ length: (data.to - from) / SLOT }, (_, i) => h('span', { class: 'tvg-tick', role: 'columnheader', style: { left: `${x(from + i * SLOT)}px` } }, fmtClock(from + i * SLOT)))));
-    const rows = data.channels.map((ch) => h('div', { class: 'tvg-row', role: 'row' },
+    const rows = shown.map((ch) => h('div', { class: 'tvg-row', role: 'row' },
       h('button', { type: 'button', class: 'tvg-ch', role: 'rowheader', tabindex: '-1', 'aria-label': `Tune in to channel ${ch.number}, ${ch.name}`, dataset: { focusKey: `tvg-ch-${ch.id}` }, onclick: () => playChannel(ch.id, channels) },
         h('b', null, ch.number), ch.logo ? lazyImg(ch.logo, '') : null, h('span', null, ch.name)),
       h('div', { class: 'tvg-track', style: { width: `${width}px` } }, ch.programs.map((p) => {
@@ -233,7 +272,7 @@ async function gridView(ctx) {
 
   draw();
   // Start at now, a little after the channel column.
-  requestAnimationFrame(() => { scroller.scrollLeft = Math.max(0, x(Date.now() - skew) - 3 * PX_PER_MIN * 10); });
+  requestAnimationFrame(() => { if (scroller) scroller.scrollLeft = Math.max(0, x(Date.now() - skew) - 3 * PX_PER_MIN * 10); });
 
   const tick = setInterval(async () => {
     if (!ctx.isCurrent() || !wrap.isConnected) { clearInterval(tick); return; }
@@ -241,17 +280,19 @@ async function gridView(ctx) {
     const now = Date.now() - skew;
     if (now >= from + SLOT) {
       // A new half hour: reload, keeping the time in view and the focus.
-      const shift = scroller.scrollLeft, top = scroller.scrollTop, old = from;
+      const shift = scroller?.scrollLeft || 0, top = scroller?.scrollTop || 0, old = from;
       const had = /** @type {HTMLElement} */ (document.activeElement)?.dataset?.focusKey;
       if (!await load()) { refreshSoft(); return; }
       if (!wrap.isConnected) return;
       draw();
+      if (!scroller) return;
       // The grid now starts later: the same time sits further left.
       scroller.scrollLeft = Math.max(0, shift - ((from - old) / MIN) * PX_PER_MIN);
       scroller.scrollTop = top;
-      if (had) go(/** @type {HTMLElement} */ (scroller.querySelector(`[data-focus-key="${CSS.escape(had)}"]`)));
+      if (had && had !== 'tv-search') go(/** @type {HTMLElement} */ (scroller.querySelector(`[data-focus-key="${CSS.escape(had)}"]`)));
       return;
     }
+    if (!scroller) return;
     nowLine.style.left = `${CH_WIDTH + x(now)}px`;
     for (const b of /** @type {NodeListOf<HTMLElement>} */ (scroller.querySelectorAll('.tvg-prog'))) {
       const s = +b.dataset.start, e = +b.dataset.end;

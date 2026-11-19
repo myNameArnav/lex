@@ -8,6 +8,7 @@
 import { h, icons, toast, fmtProgram, fmtClock } from '../ui.js';
 import { api } from '../api.js';
 import { retryApi } from './retry.js';
+import { prefs } from '../prefs.js';
 
 export const liveTv = {
   // tune joins a channel at the program airing now (or at at, server Unix
@@ -52,10 +53,43 @@ export const liveTv = {
     this.renderTitle();
     this.nextBtn.classList.toggle('hidden', !(live.channels.length > 1));
     this.started = false;
-    // A new request each time: the server starts fetching it afresh.
-    v.src = `${live.stream.url}?t=${Date.now()}`;
+    // Stats start over with each channel.
+    this.stalls = { count: 0, secs: 0, since: 0 };
+    this.bufHist = [];
+    this.streamInfo = null;
+    this.methodEl.textContent = 'Live stream';
+    this.methodEl.className = 'p-method hide-mobile stream';
+    this.methodEl.title = 'Stats for nerds (i)';
+    this.methodEl.setAttribute('aria-label', 'Live stream. Stats for nerds (i)');
+    // A new request each time: the server starts fetching it afresh. t
+    // names it, for the stats to ask about.
+    live.streamT = Date.now();
+    v.src = `${live.stream.url}?t=${live.streamT}`;
     v.play().catch(() => { if (!this.closed) { this.playBtn.innerHTML = icons.play; this.showSpinner(false); } });
     this.setupMediaSession();
+    if (prefs.get('showStats') && !this.statsEl) this.toggleStats();
+    else if (this.statsEl) this.renderStats(this.clientStats());
+  },
+
+  // pollStreamInfo asks the server about the stream playing (for the
+  // stats), at most every two seconds; the rate is what it sent between two
+  // answers.
+  pollStreamInfo() {
+    const live = this.live;
+    if (!live?.stream || this.streamInfoBusy || performance.now() - (this.streamInfoAt || 0) < 2000) return;
+    this.streamInfoBusy = true;
+    this.streamInfoAt = performance.now();
+    const t = live.streamT, id = live.channelId;
+    api(`/api/tv/${encodeURIComponent(id)}/stream/info?t=${t}`).then((r) => {
+      if (this.closed || !live.stream || live.streamT !== t || live.channelId !== id) return;
+      const prev = this.streamInfo;
+      const rate = prev?.playing && r.playing && r.seconds > prev.seconds ? ((r.bytes - prev.bytes) * 8) / (r.seconds - prev.seconds)
+        : r.seconds ? (r.bytes * 8) / r.seconds : 0;
+      this.streamInfo = { ...r, rate };
+      if (this.statsEl) this.renderStats(this.clientStats());
+    }).catch((e) => {
+      if (live.streamT === t) this.streamInfo = { ...(this.streamInfo || {}), error: e.message };
+    }).finally(() => { this.streamInfoBusy = false; });
   },
 
   // The stream failed or ended: say why (the server's answer to the same

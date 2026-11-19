@@ -108,6 +108,15 @@ func TestLiveStreamChannel(t *testing.T) {
 			t.Fatalf("%s: AAC profile %q (no config in the header?), %v", ch, out, err)
 		}
 	}
+	// The stats ask what the stream holds.
+	var info struct {
+		Video, Audio, Host string
+		Height             int
+		Playing            bool
+	}
+	if code := getJSON(t, h, viewer, "/api/tv/"+news+"/stream/info?t=1", &info); code != 200 || info.Video != "h264" || info.Audio != "aac" || info.Height != 180 || info.Playing || !strings.HasPrefix(origin.URL, "http://"+info.Host) {
+		t.Fatalf("info: %d %+v", code, info)
+	}
 	if hits == 0 {
 		t.Fatal("the stream was never fetched")
 	}

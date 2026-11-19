@@ -7,14 +7,14 @@
 
 import { fxLabel } from '../audio-fx.js';
 import { prefs } from '../prefs.js';
-import { h, icons, METHOD_LABEL, fmtTime, reasonLabel, fmtBitrate, fmtBytes, channelName, langName, clear, toast } from '../ui.js';
+import { h, icons, METHOD_LABEL, fmtTime, reasonLabel, fmtBitrate, fmtBytes, channelName, langName, clear, toast, fmtProgram, fmtClock } from '../ui.js';
 import { secs, plural, copied } from './format.js';
 import { diskLevel } from '../buffering.js';
 
 export const stats = {
   toggleStats() {
     if (this.statsEl) { this.statsEl.remove(); this.statsEl = null; prefs.set('showStats', false); this.statsChanged(); return; }
-    if (!this.plan) return;
+    if (!this.plan && !this.live?.stream) return;
     prefs.set('showStats', true);
     const stop = (on) => (e) => { e.stopPropagation(); on(e); };
     this.statsSum = h('span', { class: 'ps-sum' });
@@ -53,6 +53,7 @@ export const stats = {
   // Everything the stats panel shows, as data: rendered into the panel and
   // flattened to text by the Copy button. lvl is '' | 'warn' | 'bad'.
   statsModel(cs) {
+    if (this.live?.stream) return this.streamStatsModel(cs);
     const p = this.plan, f = this.file, info = f?.info || {}, v = this.video;
     const vs = (info.streams || []).find((s) => s.type === 'video');
     const as = (info.streams || []).find((s) => s.index === p.audio);
@@ -179,11 +180,95 @@ export const stats = {
     return { lvl, status, summary, sections, es, tiles, issues, method: `${method} · ${p.remote ? 'remote' : 'local'}`, why };
   },
 
+  // A live channel from the internet: what the provider sends, what the
+  // server does with it, and how it arrives. No session, no seeking: the
+  // server's answers come from pollStreamInfo.
+  streamStatsModel(cs) {
+    const live = this.live, v = this.video, si = this.streamInfo || {};
+    const sections = [];
+    let rows;
+    const sec = (title) => { rows = []; sections.push({ title, rows, sum: '' }); };
+    const sum = (text) => { sections[sections.length - 1].sum = text; };
+    const r = (k, val, sub = '', lvl = '', full = '') => rows.push({ k, v: val, sub, lvl, full });
+    const name = (c) => ({ h264: 'H.264', hevc: 'HEVC', mpeg2video: 'MPEG-2', aac: 'AAC', mp2: 'MP2', ac3: 'AC-3', eac3: 'E-AC-3', mp3: 'MP3' })[c] || (c || '').toUpperCase();
+
+    // A live buffer is a few seconds by nature: only nearly empty is a warning.
+    const bufLvl = cs.buffering ? 'bad' : this.started && cs.bufferAhead < 1 ? 'warn' : '';
+    const dropPct = cs.totalFrames ? (cs.droppedFrames / cs.totalFrames) * 100 : 0;
+    const dropLvl = cs.totalFrames < 100 ? '' : dropPct > 5 ? 'bad' : dropPct > 1 ? 'warn' : '';
+    const lvls = [bufLvl, dropLvl];
+    const lvl = lvls.includes('bad') ? 'bad' : lvls.includes('warn') ? 'warn' : '';
+    const status = cs.buffering ? 'Buffering' : lvl === 'bad' ? 'Error' : lvl === 'warn' ? 'Degraded' : 'Healthy';
+    const summary = `${status} · ${secs(cs.bufferAhead)} buffered · ${plural(cs.bufferEvents, 'stall')} · ${cs.droppedFrames} dropped`;
+    const playingFor = si.playing ? fmtTime(si.seconds) : '';
+
+    sec('Channel');
+    sum(`${live.channel?.name || ''}${playingFor ? ` · ${playingFor}` : ''}`);
+    r('Channel', `${live.channel?.number ? `${live.channel.number} · ` : ''}${live.channel?.name || ''}`);
+    if (live.now) r('On now', fmtProgram(live.now.item), `until ${fmtClock(live.now.end)}`);
+    if (si.host) r('From', si.host, 'through the server', '', si.host);
+    r('Container', 'live stream → fragmented MP4', 'progressive, no seeking');
+    if (playingFor) r('Playing for', playingFor);
+
+    sec('Buffer & network');
+    sum(`${secs(cs.bufferAhead)} ahead${si.rate ? ` · ${fmtBitrate(si.rate)}` : ''}`);
+    r('Ahead', secs(cs.bufferAhead), 'browser managed', bufLvl);
+    // The server sends as fast as the browser reads: a burst at the start
+    // (the provider's backlog), then the channel's own rate, or nothing while
+    // the browser's buffer is full.
+    if (si.playing) r('Server rate', si.rate ? fmtBitrate(si.rate) : 'idle', si.rate ? 'to this player, last few seconds' : 'the browser has enough for now');
+    if (si.bytes != null) r('Sent', fmtBytes(si.bytes), si.seconds ? `average ${fmtBitrate((si.bytes * 8) / si.seconds)}` : '');
+    r('Stalls', String(cs.bufferEvents), `${cs.bufferSeconds.toFixed(1)}s total${cs.buffering ? ' · buffering now' : ''}`, cs.buffering ? 'bad' : cs.bufferEvents ? 'warn' : '');
+
+    sec('Video');
+    if (si.video) {
+      sum(`${name(si.video)} ${si.height ? `${si.height}${si.interlaced ? 'i' : 'p'}` : ''} → ${si.convert ? 'converted' : 'copied'}`.replace(/\s+/g, ' '));
+      r('Source', `${name(si.video)} ${si.videoProfile || ''} ${si.width && si.height ? `${si.width}x${si.height}` : ''}`.replace(/\s+/g, ' ').trim(),
+        [si.fps ? `${si.fps.toFixed(3).replace(/\.?0+$/, '')}fps` : '', si.interlaced ? 'interlaced' : ''].filter(Boolean).join(' · '));
+      r('Output', si.convert ? 'H.264, converted on the server' : 'copied', si.convert ? 'takes server CPU' : '');
+    } else if (si.audio) r('Source', 'none', 'audio only');
+    if (v.videoWidth) {
+      const scale = Math.min(v.clientWidth / v.videoWidth, v.clientHeight / v.videoHeight) * window.devicePixelRatio;
+      r('Decoded', `${v.videoWidth}x${v.videoHeight}`, `${Math.round(v.videoWidth * scale)}x${Math.round(v.videoHeight * scale)} on screen (${scale.toFixed(1)}x)`);
+    }
+    r('Dropped', plural(cs.droppedFrames, 'frame'), `${cs.totalFrames} decoded · ${dropPct.toFixed(2)}%`, dropLvl);
+
+    sec('Audio');
+    if (si.audio) {
+      const copy = si.audio === 'aac';
+      sum(`${name(si.audio)} ${channelName(si.channels)} → ${copy ? 'copied' : 'AAC stereo'}`);
+      r('Source', `${name(si.audio)}${si.audioProfile ? ` ${si.audioProfile}` : ''} ${channelName(si.channels)}`.trim(), si.sampleRate ? `${si.sampleRate / 1000}kHz` : '');
+      r('Output', copy ? 'copied' : 'AAC stereo, converted on the server');
+    } else if (si.video) r('Source', 'none', 'no sound in the stream');
+    if (this.fx.active) r('Effects', fxLabel(this.fx.state), 'in the browser');
+
+    if (si.warning || si.error) {
+      sec('Server (ffmpeg)');
+      sum(si.error ? 'couldn’t ask' : 'has a message');
+      if (si.warning) r('Last message', si.warning, '', 'warn', si.warning);
+      if (si.error) r('Stats', si.error, '', 'warn', si.error);
+    }
+
+    const tiles = [
+      { k: 'Buffer', v: secs(cs.bufferAhead), sub: 'ahead', lvl: bufLvl },
+      { k: 'Server rate', v: si.rate ? fmtBitrate(si.rate) : si.playing ? 'idle' : '…', sub: si.bytes != null ? fmtBytes(si.bytes) : 'to this player' },
+      { k: 'Stalls', v: String(cs.bufferEvents), sub: `${cs.bufferSeconds.toFixed(1)}s total`, lvl: cs.buffering ? 'bad' : cs.bufferEvents ? 'warn' : '' },
+      { k: 'Dropped', v: `${dropPct.toFixed(dropPct && dropPct < 1 ? 2 : 0)}%`, sub: plural(cs.droppedFrames, 'frame'), lvl: dropLvl },
+    ];
+    const issues = [];
+    if (cs.buffering) issues.push({ lvl: 'bad', text: 'Buffering: waiting for the channel’s next pieces.' });
+    else if (bufLvl) issues.push({ lvl: 'warn', text: 'The buffer is nearly empty: the channel arrives barely in time.' });
+    if (dropLvl) issues.push({ lvl: dropLvl, text: `This device drops ${dropPct.toFixed(1)}% of frames: it is struggling to decode or draw the video.` });
+    const method = `Live stream · ${si.convert ? 'video converted' : si.video ? 'video copied' : 'through the server'}`;
+    return { lvl, status, summary, sections, es: null, tiles, issues, method, why: '' };
+  },
+
   // The panel opens on a summary: what's wrong (if anything), the buffer
   // graph, four headline numbers and how it plays. Each section of detail
   // is one line until opened; which ones are open is remembered.
   renderStats(cs) {
-    if (!this.plan) return;
+    if (this.live?.stream) this.pollStreamInfo();
+    else if (!this.plan) return;
     const m = this.statsModel(cs);
     // Expanded, the tiles carry the numbers; collapsed, the header does.
     if (this.statsSum.dataset.v !== m.summary) {

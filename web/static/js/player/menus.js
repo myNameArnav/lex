@@ -112,6 +112,13 @@ export const menus = {
       m.append(h('div', { class: 'pm-list', role: 'radiogroup', 'aria-label': title }, items.filter((it) => !it.action).map((it) => opt(it, 'radio'))));
       for (const it of items.filter((x) => x.action)) m.append(opt(it, null));
     };
+    // A live stream has no file, tracks, speed, quality, method or chapters
+    // to choose (the server sends it as it comes): just the stats.
+    if (this.live?.stream) {
+      m.append(h('div', { class: 'pm-title' }, 'Settings'));
+      m.append(sw('Stats for nerds', !!this.statsEl, () => this.toggleStats(), 'Shortcut: I'));
+      return;
+    }
     const auds = (this.file.info?.streams || []).filter((s) => s.type === 'audio');
     const styleCustom = () => Object.keys(SUB_STYLE_DEFAULTS).some((k) => k !== 'subSize' && k !== 'subPos' && String(prefs.get(k)) !== String(SUB_STYLE_DEFAULTS[k]));
     // Subtitle timing: nudges either way, and the offset itself resets it.

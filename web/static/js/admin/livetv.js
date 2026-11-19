@@ -7,6 +7,7 @@ import { api } from '../api.js';
 import { state, renderNav } from '../app.js';
 import { heading, field, select, toggleRow, formActions, formErrors, submitInline } from './forms.js';
 import { streamDialog, sourceDialog, browseDialog, sourceRow, host } from './livetv-streams.js';
+import { matcher, commonWords, toggleWord, wordState } from '../channel-filter.js';
 
 /** @typedef {import('../../../types/api.gen').tvLineup} Lineup */
 /** @typedef {import('../../../types/api.gen').tvLineupChannel} LineupChannel */
@@ -198,12 +199,64 @@ export async function liveTvSection() {
 
   const list = h('ol', { class: 'tv-lineup', 'aria-label': 'Channels' });
   const empty = h('p', { class: 'muted', style: { margin: 0 } }, 'No channels yet.');
+
+  // The filter: words in the name ("HD", or "-HD" to leave those out), the
+  // common words as one-click chips, on/off, and switching every channel
+  // shown on or off at once.
+  let q = '', showing = 'all';
+  const filterInput = h('input', { type: 'search', class: 'tv-filter-q', placeholder: 'Filter: HD, or -HD to leave those out', 'aria-label': 'Filter channels by name', autocomplete: 'off', spellcheck: 'false',
+    oninput: (e) => { q = e.target.value; draw(); },
+    onkeydown: (e) => { if (e.key === 'Escape' && q) { e.preventDefault(); e.stopPropagation(); filterInput.value = q = ''; draw(); } } });
+  const showSel = select(showing, [['all', 'On and off'], ['on', 'On only'], ['off', 'Off only']], (v) => { showing = v; draw(); });
+  showSel.setAttribute('aria-label', 'Show channels that are');
+  const chips = h('div', { class: 'tv-filter-words', role: 'group', 'aria-label': 'Common words: click to keep, again to leave out, again to clear' });
+  const count = h('span', { class: 'muted small', role: 'status' });
+  const bulkOn = h('button', { type: 'button', class: 'btn sm', onclick: () => setShown(true) });
+  const bulkOff = h('button', { type: 'button', class: 'btn sm', onclick: () => setShown(false) });
+  const clearBtn = h('button', { type: 'button', class: 'btn sm ghost', onclick: () => { filterInput.value = q = ''; showing = 'all'; showSel.value = 'all'; draw(); filterInput.focus(); } }, 'Clear filter');
+  const filterBar = h('div', { class: 'tv-filter' },
+    h('div', { class: 'row wrap tv-filter-top' }, filterInput, showSel),
+    chips,
+    h('div', { class: 'row wrap tv-filter-bulk' }, count, h('div', { class: 'spacer' }), clearBtn, bulkOff, bulkOn));
+  const filtering = () => !!q.trim() || showing !== 'all';
+  const shownChannels = () => {
+    const m = matcher(q);
+    return lineup.channels.filter((c) => m(c) && (showing === 'all' || (showing === 'on') === !c.off));
+  };
+  const drawChips = () => {
+    chips.replaceChildren(...commonWords(lineup.channels).map(({ word, label, count: n }) => {
+      const st = wordState(q, word);
+      return h('button', { type: 'button', class: `tv-word ${st}`, 'aria-pressed': st ? 'true' : 'false', dataset: { focusKey: `word-${word}` },
+        title: st === 'want' ? `Only channels with “${label}”. Click to leave them out instead.` : st === 'not' ? `Leaving out channels with “${label}”. Click to clear.` : `Only channels with “${label}”`,
+        onclick: () => { q = toggleWord(q, label); filterInput.value = q; draw(); } },
+      st === 'not' ? h('s', null, label) : label, h('span', { class: 'n' }, n));
+    }));
+  };
+  // setShown switches every channel the filter shows on or off.
+  const setShown = (on) => {
+    const ids = new Set(shownChannels().map((c) => c.id));
+    const chs = lineup.channels.map((c) => (ids.has(c.id) ? { ...c, off: !on } : c));
+    save({ ...lineup, channels: chs }, { off: chs.filter((c) => c.off).map((c) => c.id) }, `${plural(ids.size, 'channel')} turned ${on ? 'on' : 'off'}`);
+  };
+
   // draw redraws the list, keeping focus on the control that had it (by its
   // focus key), or on focus (a key) when given.
   const draw = (focus) => {
     const had = focus || /** @type {HTMLElement} */ (document.activeElement)?.dataset?.focusKey;
     const last = lineup.channels.length - 1;
-    list.replaceChildren(...lineup.channels.map((ch, i) => {
+    const shown = shownChannels();
+    const f = filtering();
+    filterBar.hidden = lineup.channels.length < 2;
+    count.textContent = f ? `Showing ${shown.length} of ${plural(lineup.channels.length, 'channel')}` : plural(lineup.channels.length, 'channel');
+    const onN = shown.filter((c) => !c.off).length;
+    bulkOn.textContent = `Turn on ${f ? shown.length : 'all'}`;
+    bulkOff.textContent = `Turn off ${f ? shown.length : 'all'}`;
+    bulkOn.disabled = onN === shown.length;
+    bulkOff.disabled = onN === 0;
+    clearBtn.hidden = !f;
+    drawChips();
+    list.replaceChildren(...shown.map((ch) => {
+      const i = lineup.channels.indexOf(ch);
       const key = ch.id;
       const nothing = !ch.titles && ch.source !== 'stream';
       return h('li', { class: `tv-row${ch.off ? ' off' : ''}` },
@@ -212,14 +265,16 @@ export async function liveTvSection() {
           h('div', { class: 'tv-row-name' }, h('span', { class: 'sr-only' }, `Channel ${ch.number}, `), ch.name),
           h('div', { class: 'tv-row-sub' }, summary(ch), ch.source === 'stream' ? null : [' · ', nothing ? h('span', { class: 'warn' }, 'nothing to air') : plural(ch.titles, 'title')])),
         h('div', { class: 'tv-row-actions' },
-          h('button', { type: 'button', class: 'btn icon ghost sm', 'aria-label': `Move ${ch.name} up`, title: 'Move up', disabled: i === 0, dataset: { focusKey: `up-${key}` }, html: icons.up, onclick: () => move(i, -1) }),
-          h('button', { type: 'button', class: 'btn icon ghost sm tv-down', 'aria-label': `Move ${ch.name} down`, title: 'Move down', disabled: i === last, dataset: { focusKey: `down-${key}` }, html: icons.up, onclick: () => move(i, 1) }),
+          // Moving by one among hidden channels would look like nothing happened.
+          f ? null : h('button', { type: 'button', class: 'btn icon ghost sm', 'aria-label': `Move ${ch.name} up`, title: 'Move up', disabled: i === 0, dataset: { focusKey: `up-${key}` }, html: icons.up, onclick: () => move(i, -1) }),
+          f ? null : h('button', { type: 'button', class: 'btn icon ghost sm tv-down', 'aria-label': `Move ${ch.name} down`, title: 'Move down', disabled: i === last, dataset: { focusKey: `down-${key}` }, html: icons.up, onclick: () => move(i, 1) }),
           ch.custom || ch.stream ? h('button', { type: 'button', class: 'btn sm', 'aria-label': `Edit ${ch.name}`, dataset: { focusKey: `edit-${key}` }, onclick: () => edit(ch) }, 'Edit')
             : h('button', { type: 'button', class: 'btn sm tv-row-remove', 'aria-label': `Remove ${ch.name}`, title: 'Remove from the lineup (it can be added again)', dataset: { focusKey: `remove-${key}` }, onclick: () => removeAuto(ch) }, 'Remove'),
           // A label, so clicking the switch's track toggles it.
           (() => { const t = toggle(!ch.off, (on) => setOff(ch.id, !on), `${ch.name} on Live TV`); /** @type {HTMLElement} */ (t.firstChild).dataset.focusKey = `on-${key}`; return h('label', { class: 'tv-row-switch', title: ch.off ? 'Off: not on the guide' : 'On the guide' }, t); })()));
     }));
-    let el = had && /** @type {HTMLElement | null} */ (list.querySelector(`[data-focus-key="${CSS.escape(had)}"]`));
+    if (f && !shown.length) list.append(h('li', { class: 'tv-row-none muted' }, 'No channels match the filter.'));
+    let el = had && /** @type {HTMLElement | null} */ (filterBar.querySelector(`[data-focus-key="${CSS.escape(had)}"]`) || list.querySelector(`[data-focus-key="${CSS.escape(had)}"]`));
     // A move button that just got disabled (top or bottom): its pair.
     if (el?.matches(':disabled')) el = /** @type {HTMLElement | null} */ (el.parentElement.querySelector('button:not(:disabled)'));
     el?.focus();
@@ -300,14 +355,14 @@ export async function liveTvSection() {
   drawAvailable();
   const [srcTitle, srcHelp] = heading('Playlists', 'IPTV playlists (M3U) to pick live channels from, with their guides (XMLTV). Live channels play through the server, which converts video the browser can’t play.');
 
-  const [channelsTitle, channelsHelp] = heading('Channels', 'Channel numbers follow this order. Turning a channel off takes it off the guide; it keeps its number. Add a channel for everything, a library or a common genre, or your own to pick titles or filter by library, genre and type. Nothing is on Live TV until you add it.');
+  const [channelsTitle, channelsHelp] = heading('Channels', 'Channel numbers follow this order. Turning a channel off takes it off the guide; it keeps its number. Filter by name to turn many on or off at once. Add a channel for everything, a library or a common genre, or your own to pick titles or filter by library, genre and type. Nothing is on Live TV until you add it.');
   return h('div', { class: 'form' },
     h('div', { class: 'form-section' },
       heading('Live TV', 'Channels that play the library at random, like broadcast TV. Everyone tuned to a channel sees the same program, and each day’s schedule is fixed at midnight. Live TV saves no resume points or watched marks.'),
       enable),
     h('div', { class: 'form-section' },
       channelsTitle, channelsHelp,
-      empty, list, available, h('div', { class: 'row wrap' }, add, addStream)),
+      empty, filterBar, list, available, h('div', { class: 'row wrap' }, add, addStream)),
     h('div', { class: 'form-section' }, srcTitle, srcHelp,
       noSources, guideNote, sources, h('div', null, addSource)));
 }

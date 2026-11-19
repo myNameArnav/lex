@@ -140,7 +140,8 @@ export class Player {
     this.liveBtn = this.live ? h('button', { class: 'p-live', type: 'button', title: 'Back to what’s on now', onclick: (e) => { e.stopPropagation(); this.goLive(); } }, 'LIVE') : null;
     this.chanBtn = this.live ? h('button', { class: 'p-chans', type: 'button', title: 'Channels (t)', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', onclick: (e) => { e.stopPropagation(); this.toggleMenu('channels'); } }, 'Channels') : null;
     this.fsBtn = b('fullscreen', 'Fullscreen (f)', () => this.toggleFullscreen());
-    this.ccBtn = b('cc', 'Subtitles & audio (c)', (e) => this.toggleMenu('tracks'));
+    // A live stream has one audio track and no subtitles: no menu for them (CSS hides it).
+    this.ccBtn = b('cc', 'Subtitles & audio (c)', (e) => this.toggleMenu('tracks'), 'p-cc');
     this.gearBtn = b('gear', 'Settings', () => this.toggleMenu('settings'));
     for (const btn of [this.ccBtn, this.gearBtn]) { btn.setAttribute('aria-haspopup', 'dialog'); btn.setAttribute('aria-expanded', 'false'); }
     this.pipBtn = document.pictureInPictureEnabled ? b('pip', 'Picture in picture', () => this.togglePip(), 'hide-mobile') : null;
@@ -962,7 +963,7 @@ export class Player {
       arrowup: () => { v.volume = Math.min(1, v.volume + 0.05); v.muted = false; this.osdVolume(); },
       arrowdown: () => { v.volume = Math.max(0, v.volume - 0.05); this.osdVolume(); },
       f: () => this.toggleFullscreen(), m: () => { this.toggleMute(); this.osdVolume(); },
-      i: () => this.toggleStats(), c: () => this.toggleMenu('tracks'),
+      i: () => this.toggleStats(), c: () => { if (!this.live?.stream) this.toggleMenu('tracks'); },
       n: () => this.playNext(), s: () => this.skipBtn?.click(),
       pageup: () => (this.live ? this.switchChannel(1) : this.jumpChapter(1)), pagedown: () => (this.live ? this.switchChannel(-1) : this.jumpChapter(-1)),
       g: () => this.nudgeSubs(-0.1), h: () => this.nudgeSubs(0.1),
