@@ -26,7 +26,7 @@ export async function cacheSection(ctx) {
       h('dl', { class: 'kv' },
         h('dt', null, 'Folder'), h('dd', { class: 'mono' }, st.dir),
         h('dt', null, 'Reads'), h('dd', null, `${st.hits} from cache · ${st.misses} from library disk (since start)`),
-        h('dt', null, 'Copying'), h('dd', null, st.current ? `${st.current.name} — ${Math.round((st.current.done / st.current.size) * 100)}% of ${fmtBytes(st.current.size)} at ${fmtBytes(st.current.speed)}/s (${st.current.reason})` : 'nothing'),
+        h('dt', null, 'Copying'), h('dd', null, st.current ? `${st.current.name}: ${Math.round((st.current.done / st.current.size) * 100)}% of ${fmtBytes(st.current.size)} at ${fmtBytes(st.current.speed)}/s (${st.current.reason})` : 'nothing'),
         h('dt', null, 'Queue'), h('dd', null, st.queued.length ? st.queued.map((j) => j.name).join(', ') : 'empty'),
         st.lastError ? [h('dt', null, 'Last error'), h('dd', { class: 'bad' }, st.lastError)] : null));
     // The list (and its buttons) is rebuilt only when it changes, or once a
@@ -51,7 +51,7 @@ export async function cacheSection(ctx) {
   };
   const refresh = () => render().catch(() => {});
   const form = await configForm(({ draft, num, text, tg }) => [
-    h('div', { class: 'form-section' }, heading('SSD cache', 'Keeps copies of media on a fast disk (e.g. the SSD) so playback — and seeking — reads from it instead of the hard drive, which can then stay asleep. Files are copied in the background at a capped speed; the least recently watched are evicted first.'),
+    h('div', { class: 'form-section' }, heading('SSD cache', 'Keeps copies of media on a fast disk (e.g. the SSD) so playback and seeking read from it instead of the hard drive, which can then stay asleep. Files are copied in the background at a capped speed; the least recently watched are evicted first.'),
       tg('cacheEnabled', 'Enable SSD cache'),
       field('Cache folder', text('cacheDir', { placeholder: 'default: <data folder>/cache' }), 'A "lex-cache" folder is created inside it. Leave empty to use lex\'s data folder (on the SSD here).'),
       h('div', { class: 'form-grid' },
@@ -200,7 +200,7 @@ export async function aboutSection() {
       h('dt', null, 'V4L2 device'), h('dd', null, f.v4l2Device ? 'present' : 'not present (hardware encoding unavailable)'),
       h('dt', null, 'Tone mapping'), h('dd', null, f.hasZscale && f.hasTonemap ? 'available' : 'unavailable'))),
     h('div', { class: 'form-section' }, h('h2', null, 'Caches'),
-      h('div', { class: 'toggle-row' }, h('div', { class: 'lbl' }, h('b', null, 'Artwork'), h('span', { class: 'help' }, `${fmtBytes(i.imageCache)} — re-downloaded on demand`)), h('button', { class: 'btn sm', 'aria-label': 'Clear artwork cache', dataset: { focusKey: 'clear-images' }, onclick: async (e) => { if (await run(e.currentTarget, () => api('/api/admin/cache/clear', { method: 'POST', body: { kind: 'images' } }), 'Artwork cache cleared')) refreshSoft(); } }, 'Clear')),
-      h('div', { class: 'toggle-row' }, h('div', { class: 'lbl' }, h('b', null, 'Subtitles'), h('span', { class: 'help' }, `${fmtBytes(i.subsCache)} — extracted WebVTT`)), h('button', { class: 'btn sm', 'aria-label': 'Clear subtitle cache', dataset: { focusKey: 'clear-subs' }, onclick: async (e) => { if (await run(e.currentTarget, () => api('/api/admin/cache/clear', { method: 'POST', body: { kind: 'subs' } }), 'Subtitle cache cleared')) refreshSoft(); } }, 'Clear')),
-      h('div', { class: 'toggle-row' }, h('div', { class: 'lbl' }, h('b', null, 'Seek previews'), h('span', { class: 'help' }, `${fmtBytes(i.trickplay)} — trickplay thumbnails, removed with their media`)))));
+      h('div', { class: 'toggle-row' }, h('div', { class: 'lbl' }, h('b', null, 'Artwork'), h('span', { class: 'help' }, `${fmtBytes(i.imageCache)}, re-downloaded on demand`)), h('button', { class: 'btn sm', 'aria-label': 'Clear artwork cache', dataset: { focusKey: 'clear-images' }, onclick: async (e) => { if (await run(e.currentTarget, () => api('/api/admin/cache/clear', { method: 'POST', body: { kind: 'images' } }), 'Artwork cache cleared')) refreshSoft(); } }, 'Clear')),
+      h('div', { class: 'toggle-row' }, h('div', { class: 'lbl' }, h('b', null, 'Subtitles'), h('span', { class: 'help' }, `${fmtBytes(i.subsCache)} of extracted WebVTT`)), h('button', { class: 'btn sm', 'aria-label': 'Clear subtitle cache', dataset: { focusKey: 'clear-subs' }, onclick: async (e) => { if (await run(e.currentTarget, () => api('/api/admin/cache/clear', { method: 'POST', body: { kind: 'subs' } }), 'Subtitle cache cleared')) refreshSoft(); } }, 'Clear')),
+      h('div', { class: 'toggle-row' }, h('div', { class: 'lbl' }, h('b', null, 'Seek previews'), h('span', { class: 'help' }, `${fmtBytes(i.trickplay)} of trickplay thumbnails, removed with their media`)))));
 }

@@ -19,7 +19,7 @@ function libraryNote(l) {
     return h('div', { class: `help${l.itemCount ? '' : ' warn'}` },
       `${n} file${n === 1 ? ' in these folders is' : 's in these folders are'} already in librar${els.length === 1 ? 'y' : 'ies'} ${where} and ${n === 1 ? 'isn’t' : 'aren’t'} shown here: a file can only be in one library.`);
   }
-  return l.lastScan && !l.itemCount ? h('div', { class: 'help warn' }, 'No media found — check the folder and the type.') : null;
+  return l.lastScan && !l.itemCount ? h('div', { class: 'help warn' }, 'No media found. Check the folder and the type.') : null;
 }
 
 // The list shows each library's scan progress while the scanner works on it
@@ -65,7 +65,7 @@ export async function librariesSection(ctx) {
           refreshSoft();
         } }, 'Remove'))));
   }
-  box.appendChild(h('div', { class: 'help' }, 'Types: Movies (one movie per folder or file), TV Shows (Show/Season N/episodes), Mixed (auto-detects episodes by S01E01 or Season folders — good for anime folders with both series and films).'));
+  box.appendChild(h('div', { class: 'help' }, 'Types: Movies (one movie per folder or file), TV Shows (Show/Season N/episodes), Mixed (auto-detects episodes by S01E01 or Season folders, which suits anime folders with both series and films).'));
   box.appendChild(scanForm);
   const show = (s) => {
     for (const [name, { meta, live }] of status) {
