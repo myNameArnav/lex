@@ -1441,7 +1441,7 @@ kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px soli
 }
 /* Live TV grid guide: channels down, time across. The box scrolls both
    ways so the channel column and the time header can stick. */
-.tvg { --ch: 168px; margin-top: 22px; max-height: calc(100vh - 220px); max-height: calc(100dvh - 220px); min-height: 320px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg2); }
+.tvg { --ch: 200px; margin-top: 22px; max-height: calc(100vh - 220px); max-height: calc(100dvh - 220px); min-height: 320px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg2); }
 .tvg-inner { position: relative; }
 .tvg-head { position: sticky; top: 0; z-index: 3; display: flex; height: 40px; background: var(--bg2); border-bottom: 1px solid var(--line); }
 .tvg-corner { position: sticky; left: 0; z-index: 4; flex: none; width: var(--ch); display: flex; align-items: center; padding: 0 14px; background: var(--bg2); border-right: 1px solid var(--line); color: var(--text2); font-size: 13px; font-weight: 700; }
@@ -1451,7 +1451,8 @@ kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px soli
 .tvg-ch { position: sticky; left: 0; z-index: 2; flex: none; width: var(--ch); display: flex; align-items: center; gap: 10px; padding: 0 14px; background: var(--bg2); border: 0; border-right: 1px solid var(--line); color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .tvg-ch b { font-size: 18px; font-weight: 800; color: var(--text2); font-variant-numeric: tabular-nums; min-width: 1.6em; }
 .tvg-ch img { width: 28px; height: 28px; object-fit: contain; flex: none; }
-.tvg-ch span { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Long names ("STAR SPORTS 1 HINDI HD") take two lines rather than an ellipsis. */
+.tvg-ch span { font-size: 13.5px; font-weight: 600; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; }
 .tvg-track { position: relative; flex: none; }
 .tvg-prog { position: absolute; top: 4px; bottom: 4px; display: flex; flex-direction: column; justify-content: center; gap: 2px; padding: 0 10px; overflow: hidden; background: var(--bg3); border: 0; border-radius: 6px; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .tvg-prog.now { background: var(--bg4); }

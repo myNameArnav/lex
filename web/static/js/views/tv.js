@@ -16,7 +16,7 @@ const MIN = 60000;
 const SLOT = 30 * MIN; // the grid's columns
 const HOURS = 12; // how far the grid looks ahead
 const PX_PER_MIN = 7; // 30 minutes = 210px
-const CH_WIDTH = 168; // the channel column
+const CH_WIDTH = 200; // the channel column (--ch in app.css)
 
 // playChannel tunes into a Live TV channel; channels are what Next and
 // Page Up/Down switch through.
@@ -192,7 +192,7 @@ async function gridView(ctx) {
       h('div', { class: 'tvg-times', style: { width: `${width}px` } },
         Array.from({ length: (data.to - from) / SLOT }, (_, i) => h('span', { class: 'tvg-tick', role: 'columnheader', style: { left: `${x(from + i * SLOT)}px` } }, fmtClock(from + i * SLOT)))));
     const rows = shown.map((ch) => h('div', { class: 'tvg-row', role: 'row' },
-      h('button', { type: 'button', class: 'tvg-ch', role: 'rowheader', tabindex: '-1', 'aria-label': `Tune in to channel ${ch.number}, ${ch.name}`, dataset: { focusKey: `tvg-ch-${ch.id}` }, onclick: () => playChannel(ch.id, channels) },
+      h('button', { type: 'button', class: 'tvg-ch', role: 'rowheader', tabindex: '-1', title: ch.name, 'aria-label': `Tune in to channel ${ch.number}, ${ch.name}`, dataset: { focusKey: `tvg-ch-${ch.id}` }, onclick: () => playChannel(ch.id, channels) },
         h('b', null, ch.number), ch.logo ? lazyImg(ch.logo, '') : null, h('span', null, ch.name)),
       h('div', { class: 'tvg-track', style: { width: `${width}px` } }, ch.programs.map((p) => {
         const l = Math.max(0, x(p.start)), r = Math.min(width, x(p.end));
