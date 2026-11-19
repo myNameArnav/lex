@@ -142,7 +142,7 @@ function channelDialog(ch, genres, { onSaved, onRemoved }) {
         return;
       }
       preview.replaceChildren(
-        h('p', null, h('b', null, plural(r.titles, 'title')), r.programs.length ? h('span', { class: 'muted' }, ' · on today from now:') : h('span', { class: 'muted' }, ' · nothing more today')),
+        h('p', null, h('b', null, plural(r.titles, 'title')), r.programs.length ? h('span', { class: 'muted' }, ' · coming up:') : h('span', { class: 'muted' }, ' · nothing coming up')),
         h('ol', { class: 'tv-preview-list' }, r.programs.map((p) => h('li', null, h('span', { class: 'tv-time' }, fmtClock(p.start)), h('span', { class: 'tv-title' }, fmtProgram(p.item))))));
     }, 300);
   };

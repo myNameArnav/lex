@@ -671,7 +671,8 @@ test('Live TV offers Go live when behind, which seeks to the live point', async 
   const start = Date.now() - 100_000;
   liveFixture(player, { start, end: start + 3_600_000 });
   const seeks = [];
-  player.seekTo = (t) => seeks.push(t);
+  const seekTo = player.seekTo.bind(player);
+  player.seekTo = (t) => { seeks.push(t); seekTo(t); };
   video.currentTime = 95;
   player.checkLive();
   assert.equal(player.liveBtn.textContent, 'LIVE');
@@ -679,8 +680,19 @@ test('Live TV offers Go live when behind, which seeks to the live point', async 
   player.checkLive();
   assert.equal(player.liveBtn.textContent, 'Go live');
   player.goLive();
-  assert.equal(seeks.length, 1);
-  assert.ok(Math.abs(seeks[0] - 100) < 2, `seeked to ${seeks[0]}`);
+  assert.ok(Math.abs(video.currentTime - 100) < 2, `went to ${video.currentTime}`);
+  // The viewer can't move along a live program: Go live is the only jump.
+  assert.equal(seeks.length, 0);
+});
+
+test('Live TV ignores seeking and skipping', async () => {
+  const { player, video } = await fixture();
+  const start = Date.now() - 100_000;
+  liveFixture(player, { start, end: start + 3_600_000 });
+  video.currentTime = 95;
+  player.seekTo(10);
+  player.skip(30);
+  assert.equal(video.currentTime, 95);
 });
 
 test('Live TV channel switching wraps around and Next means next channel', async () => {

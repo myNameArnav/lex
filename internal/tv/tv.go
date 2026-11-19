@@ -245,18 +245,21 @@ func countTitles(pool []store.Airable) int {
 }
 
 // Preview schedules an admin's channel as it would air if saved now (id is
-// its channel id, so an unchanged channel previews what it airs today): how
-// many titles it has and up to n programs from t on. Nothing is kept.
+// its channel id, so an unchanged channel previews what it airs): how many
+// titles it has and up to n programs from t on, into tomorrow if need be.
+// Nothing is kept.
 func (g *Guide) Preview(id string, f store.AirFilter, t time.Time, n int) (int, []Program, error) {
 	pool, err := g.St.Airables(f)
 	if err != nil {
 		return 0, nil, err
 	}
-	day := midnight(t)
+	// Today's schedule from t, then tomorrow's (late in the evening).
 	var out []Program
-	for _, p := range Schedule(pool, seed(id+"|"+day.Format("2006-01-02")), day, nextMidnight(day)) {
-		if p.End.After(t) && len(out) < n {
-			out = append(out, p)
+	for day, i := midnight(t), 0; i < 2 && len(out) < n; day, i = nextMidnight(day), i+1 {
+		for _, p := range Schedule(pool, seed(id+"|"+day.Format("2006-01-02")), day, nextMidnight(day)) {
+			if p.End.After(t) && len(out) < n {
+				out = append(out, p)
+			}
 		}
 	}
 	return countTitles(pool), out, nil
