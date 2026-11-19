@@ -49,7 +49,8 @@ Volume=/var/lib/lex:/data
 Environment=LEX_DATA=/data
 Environment=LEX_ADDR=127.0.0.1:8420
 Environment=TZ=Etc/UTC
-HealthCmd=lex -healthcheck
+# Exec form: the image has no shell, and a plain string runs via /bin/sh.
+HealthCmd=["lex","-healthcheck"]
 HealthInterval=60s
 
 [Service]
