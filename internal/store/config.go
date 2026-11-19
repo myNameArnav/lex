@@ -90,9 +90,9 @@ type Config struct {
 	TVChannels []TVChannel `json:"tvChannels"`
 	TVOrder    []string    `json:"tvOrder"`
 	TVHidden   []string    `json:"tvHidden"`
-	// TVRemoved are automatic channels taken out of the lineup altogether
-	// (they come back when restored).
-	TVRemoved []string `json:"tvRemoved"`
+	// TVAutomatic are the automatic channels the admin added to the lineup
+	// ("all", "lib-1", "genre-Drama"): none are on it until added.
+	TVAutomatic []string `json:"tvAutomatic"`
 	// TVStreams are live channels from the internet (IPTV), "stream-<id>"
 	// in the lineup; TVSources are the playlists (M3U) they can be picked
 	// from, with a guide (XMLTV) for them.
@@ -531,7 +531,7 @@ func (c *Config) normalizeTVChannels() {
 	}
 	c.TVSources = sources
 	c.TVOrder, c.TVHidden = c.channelIDs(c.TVOrder), c.channelIDs(c.TVHidden)
-	c.TVRemoved = slices.DeleteFunc(c.channelIDs(c.TVRemoved), func(id string) bool {
+	c.TVAutomatic = slices.DeleteFunc(c.channelIDs(c.TVAutomatic), func(id string) bool {
 		return strings.HasPrefix(id, "custom-") || strings.HasPrefix(id, "stream-")
 	})
 }
@@ -629,7 +629,7 @@ func (s *Store) UpdateConfig(edit func(*Config) error) (Config, error) {
 	c := s.Config()
 	// Lists are shared with the cached config: edit copies.
 	c.TVChannels, c.TVOrder, c.TVHidden = slices.Clone(c.TVChannels), slices.Clone(c.TVOrder), slices.Clone(c.TVHidden)
-	c.TVStreams, c.TVSources, c.TVRemoved = slices.Clone(c.TVStreams), slices.Clone(c.TVSources), slices.Clone(c.TVRemoved)
+	c.TVStreams, c.TVSources, c.TVAutomatic = slices.Clone(c.TVStreams), slices.Clone(c.TVSources), slices.Clone(c.TVAutomatic)
 	if err := edit(&c); err != nil {
 		return s.Config(), err
 	}

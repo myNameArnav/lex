@@ -197,6 +197,7 @@ export async function liveTvSection() {
   });
 
   const list = h('ol', { class: 'tv-lineup', 'aria-label': 'Channels' });
+  const empty = h('p', { class: 'muted', style: { margin: 0 } }, 'No channels yet.');
   // draw redraws the list, keeping focus on the control that had it (by its
   // focus key), or on focus (a key) when given.
   const draw = (focus) => {
@@ -214,7 +215,7 @@ export async function liveTvSection() {
           h('button', { type: 'button', class: 'btn icon ghost sm', 'aria-label': `Move ${ch.name} up`, title: 'Move up', disabled: i === 0, dataset: { focusKey: `up-${key}` }, html: icons.up, onclick: () => move(i, -1) }),
           h('button', { type: 'button', class: 'btn icon ghost sm tv-down', 'aria-label': `Move ${ch.name} down`, title: 'Move down', disabled: i === last, dataset: { focusKey: `down-${key}` }, html: icons.up, onclick: () => move(i, 1) }),
           ch.custom || ch.stream ? h('button', { type: 'button', class: 'btn sm', 'aria-label': `Edit ${ch.name}`, dataset: { focusKey: `edit-${key}` }, onclick: () => edit(ch) }, 'Edit')
-            : h('button', { type: 'button', class: 'btn sm tv-row-remove', 'aria-label': `Remove ${ch.name}`, title: 'Remove from the lineup (it can be restored)', dataset: { focusKey: `remove-${key}` }, onclick: () => removeAuto(ch) }, 'Remove'),
+            : h('button', { type: 'button', class: 'btn sm tv-row-remove', 'aria-label': `Remove ${ch.name}`, title: 'Remove from the lineup (it can be added again)', dataset: { focusKey: `remove-${key}` }, onclick: () => removeAuto(ch) }, 'Remove'),
           // A label, so clicking the switch's track toggles it.
           (() => { const t = toggle(!ch.off, (on) => setOff(ch.id, !on), `${ch.name} on Live TV`); /** @type {HTMLElement} */ (t.firstChild).dataset.focusKey = `on-${key}`; return h('label', { class: 'tv-row-switch', title: ch.off ? 'Off: not on the guide' : 'On the guide' }, t); })()));
     }));
@@ -237,25 +238,28 @@ export async function liveTvSection() {
     chs.splice(i + by, 0, ch);
     save({ ...lineup, channels: chs.map((c, j) => ({ ...c, number: j + 1 })) }, { order: chs.map((c) => c.id) });
   };
-  // Automatic channels are removed from the lineup (the rest move up a
-  // number) and can be restored; the admin's own are removed in their dialog.
-  const removed = h('p', { class: 'muted small tv-removed', role: 'status' });
-  const setRemoved = (ids, okMsg) => run(null, async () => {
-    lineup = await api('/api/admin/tv', { method: 'PUT', body: { removed: ids } });
-    draw(); drawRemoved();
+  // Automatic channels (All, a library, a genre) are on the lineup only
+  // once added; removing one moves the rest up a number. The admin's own
+  // are removed in their dialog.
+  const available = h('div', { class: 'row wrap tv-available', role: 'group', 'aria-label': 'Add an automatic channel' });
+  const autoIds = () => lineup.channels.filter((c) => !c.custom && !c.stream).map((c) => c.id);
+  const setAutomatic = (ids, okMsg) => run(null, async () => {
+    lineup = await api('/api/admin/tv', { method: 'PUT', body: { automatic: ids } });
+    draw(); drawAvailable();
   }, okMsg);
   const removeAuto = (ch) => {
     const i = lineup.channels.indexOf(ch);
     const next = lineup.channels[i + 1] || lineup.channels[i - 1];
-    setRemoved([...lineup.removed.map((r) => r.id), ch.id], `Removed ${ch.name}`).then(() => {
+    setAutomatic(autoIds().filter((id) => id !== ch.id), `Removed ${ch.name}`).then(() => {
       /** @type {HTMLElement | null} */ (next && list.querySelector(`[data-focus-key="remove-${CSS.escape(next.id)}"], [data-focus-key="edit-${CSS.escape(next.id)}"]`))?.focus();
     });
   };
-  const drawRemoved = () => {
-    const n = lineup.removed.length;
-    removed.hidden = !n;
-    removed.replaceChildren(n ? `Removed: ${lineup.removed.map((r) => r.name).join(', ')}. ` : '',
-      n ? h('button', { type: 'button', class: 'btn sm ghost', onclick: () => setRemoved([], `Restored ${n} channel${n === 1 ? '' : 's'}`) }, n === 1 ? 'Restore it' : `Restore all ${n}`) : '');
+  const drawAvailable = () => {
+    available.hidden = !lineup.available.length;
+    available.replaceChildren(h('span', { class: 'muted small' }, 'Add from your library:'),
+      ...lineup.available.map((a) => h('button', { type: 'button', class: 'btn sm', 'aria-label': `Add the ${a.name} channel`, onclick: () => setAutomatic([...autoIds(), a.id], `Added ${a.name}`) },
+        h('span', { html: icons.plus }), a.name)));
+    empty.hidden = !!lineup.channels.length;
   };
   const setOff = (id, off) => {
     const chs = lineup.channels.map((c) => (c.id === id ? { ...c, off } : c));
@@ -293,18 +297,17 @@ export async function liveTvSection() {
   }) }, h('span', { html: icons.plus }), 'Add playlist');
   draw();
   drawSources();
-  drawRemoved();
+  drawAvailable();
   const [srcTitle, srcHelp] = heading('Playlists', 'IPTV playlists (M3U) to pick live channels from, with their guides (XMLTV). Live channels play through the server, which converts video the browser can’t play.');
 
-  const [channelsTitle, channelsHelp] = heading('Channels', 'Channel numbers follow this order. Turning a channel off takes it off the guide; it keeps its number. Lex adds a channel for everything, one per library and one per common genre (remove the ones you don’t want; they can be restored); add your own to pick titles or filter by library, genre and type.');
+  const [channelsTitle, channelsHelp] = heading('Channels', 'Channel numbers follow this order. Turning a channel off takes it off the guide; it keeps its number. Add a channel for everything, a library or a common genre, or your own to pick titles or filter by library, genre and type. Nothing is on Live TV until you add it.');
   return h('div', { class: 'form' },
     h('div', { class: 'form-section' },
       heading('Live TV', 'Channels that play the library at random, like broadcast TV. Everyone tuned to a channel sees the same program, and each day’s schedule is fixed at midnight. Live TV saves no resume points or watched marks.'),
       enable),
     h('div', { class: 'form-section' },
       channelsTitle, channelsHelp,
-      lineup.channels.length ? null : h('p', { class: 'muted' }, 'No channels yet: add a library, or a channel of your own.'),
-      list, removed, h('div', { class: 'row wrap' }, add, addStream)),
+      empty, list, available, h('div', { class: 'row wrap' }, add, addStream)),
     h('div', { class: 'form-section' }, srcTitle, srcHelp,
       noSources, guideNote, sources, h('div', null, addSource)));
 }

@@ -173,7 +173,7 @@ export interface Config {
   tvChannels: TVChannel[];
   tvOrder: string[];
   tvHidden: string[];
-  tvRemoved: string[];
+  tvAutomatic: string[];
   tvStreams: TVStream[];
   tvSources: TVSource[];
   cacheEnabled: boolean;
@@ -939,12 +939,18 @@ export interface serverCaps {
   transcode: boolean;
 }
 
+// api.tvAvailable
+export interface tvAvailable {
+  id: string;
+  name: string;
+}
+
 // api.tvLineup
 export interface tvLineup {
   enabled: boolean;
   channels: tvLineupChannel[];
   sources: TVSource[];
-  removed: tvRemoved[];
+  available: tvAvailable[];
   guideError?: string;
   saved?: string;
 }
@@ -966,13 +972,7 @@ export interface tvLineupEdit {
   enabled?: boolean | null;
   order?: string[];
   off?: string[];
-  removed?: string[];
-}
-
-// api.tvRemoved
-export interface tvRemoved {
-  id: string;
-  name: string;
+  automatic?: string[];
 }
 
 // [method, path, response, request body]; any where the handler doesn't

@@ -999,8 +999,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tv-row-actions { display: flex; align-items: center; gap: 6px; }
 .tv-row-switch { display: inline-flex; padding: 8px 0 8px 8px; cursor: pointer; }
 .tv-row-edit-gap { width: 52px; }
-.tv-removed { margin: 0; }
-.tv-removed .btn { vertical-align: baseline; }
+.tv-available { align-items: center; }
+.tv-available[hidden] { display: none; }
 .tv-down svg { transform: rotate(180deg); }
 @media (max-width: 600px) {
   .tv-row { grid-template-columns: 28px minmax(0, 1fr); row-gap: 6px; }

@@ -93,6 +93,7 @@ func TestStreamChannels(t *testing.T) {
 	}
 	c := st.Config()
 	c.TVStreams = []store.TVStream{{ID: "n", Name: "News", URL: "https://a.test/n.m3u8"}, {ID: "bad", Name: "Local", URL: "file:///etc/passwd"}}
+	c.TVAutomatic = []string{"lib-1"}
 	if _, err := st.SaveConfig(c); err != nil {
 		t.Fatal(err)
 	}

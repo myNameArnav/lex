@@ -80,22 +80,35 @@ func TestTVPlaylistFiles(t *testing.T) {
 	}
 }
 
-// Automatic channels can be taken out of the lineup and restored.
-func TestTVRemoveAutomatic(t *testing.T) {
+// Automatic channels aren't on the lineup until the admin adds them, and
+// can be taken off again.
+func TestTVAutomaticChannels(t *testing.T) {
 	s, h := securityServer(t)
 	tvLibrary(t, s)
+	c := s.St.Config()
+	c.TVAutomatic = nil
+	if _, err := s.St.SaveConfig(c); err != nil {
+		t.Fatal(err)
+	}
 	admin, _ := s.St.CreateUser("boss", "test-password-123", true)
 	token, _ := s.St.CreateToken(admin.ID, "Test", "127.0.0.1")
 	var l tvLineup
-	w := adminRequest(t, h, token, "PUT", "/api/admin/tv", `{"removed":["lib-1"]}`)
-	if err := json.Unmarshal(w.Body.Bytes(), &l); err != nil || len(l.Channels) != 0 || len(l.Removed) != 1 || l.Removed[0].Name != "Everything" {
-		t.Fatalf("removed: %d %s", w.Code, w.Body.String())
+	w := adminRequest(t, h, token, "GET", "/api/admin/tv", "")
+	if err := json.Unmarshal(w.Body.Bytes(), &l); err != nil || len(l.Channels) != 0 || len(l.Available) != 1 || l.Available[0].ID != "lib-1" || l.Available[0].Name != "Everything" {
+		t.Fatalf("by default: %d %s", w.Code, w.Body.String())
 	}
 	if code := getJSON(t, h, token, "/api/tv/lib-1", nil); code != 404 {
-		t.Fatalf("tuning a removed channel: %d", code)
+		t.Fatalf("tuning a channel not added: %d", code)
 	}
-	w = adminRequest(t, h, token, "PUT", "/api/admin/tv", `{"removed":[]}`)
-	if err := json.Unmarshal(w.Body.Bytes(), &l); err != nil || len(l.Channels) != 1 || len(l.Removed) != 0 {
-		t.Fatalf("restored: %d %s", w.Code, w.Body.String())
+	w = adminRequest(t, h, token, "PUT", "/api/admin/tv", `{"automatic":["lib-1"]}`)
+	if err := json.Unmarshal(w.Body.Bytes(), &l); err != nil || len(l.Channels) != 1 || l.Channels[0].ID != "lib-1" || len(l.Available) != 0 {
+		t.Fatalf("added: %d %s", w.Code, w.Body.String())
+	}
+	if code := getJSON(t, h, token, "/api/tv/lib-1", nil); code != 200 {
+		t.Fatalf("tuning an added channel: %d", code)
+	}
+	w = adminRequest(t, h, token, "PUT", "/api/admin/tv", `{"automatic":[]}`)
+	if err := json.Unmarshal(w.Body.Bytes(), &l); err != nil || len(l.Channels) != 0 || len(l.Available) != 1 {
+		t.Fatalf("removed: %d %s", w.Code, w.Body.String())
 	}
 }

@@ -474,6 +474,7 @@ func TestRestrictedUserLiveTV(t *testing.T) {
 		{ID: "fam", Name: "Family picks", Kind: "picked", Titles: []int64{familyMovie, familyShow}},
 		{ID: "mix", Name: "Mixed picks", Kind: "picked", Titles: []int64{familyMovie, privateMovie}},
 	}
+	c.TVAutomatic = []string{"all", "lib-1", "lib-2"}
 	if _, err := f.s.St.SaveConfig(c); err != nil {
 		t.Fatal(err)
 	}
