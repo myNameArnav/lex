@@ -671,6 +671,7 @@ a.person:focus-visible { outline-offset: 2px; }
 .modal-bg::backdrop { background: transparent; }
 .modal { width: 100%; max-width: 560px; max-height: 88vh; overflow: auto; background: var(--bg2); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
 .modal.wide { max-width: 820px; }
+.modal:focus { outline: none; } /* Chrome focuses a scrolling dialog body when it has nothing else to focus */
 .modal-head { display: flex; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg2); z-index: 1; }
 .modal-head h2 { margin: 0; font-size: 17px; flex: 1; }
 .modal-body { padding: 18px 20px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
@@ -1395,15 +1396,21 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 }
 
 /* keyboard shortcuts */
-kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; background: var(--bg3); color: var(--text); font: 600 12px/18px ui-monospace, Menlo, Consolas, monospace; text-align: center; }
+kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 6px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 6px; background: var(--bg3); color: var(--text); font: 500 12px/1 var(--font-body); white-space: nowrap; }
 .search-box .search-kbd { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text3); background: transparent; font-size: 11px; }
 .search-box input:focus ~ .search-kbd, .search-box input:not(:placeholder-shown) ~ .search-kbd { display: none; }
-.shortcuts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 18px 28px; }
-.shortcuts h3 { margin: 0 0 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text3); }
-.shortcuts dl { display: grid; grid-template-columns: max-content 1fr; gap: 7px 14px; margin: 0; align-items: center; font-size: 13.5px; }
-.shortcuts dd { margin: 0; color: var(--text2); }
+/* Sections flow into balanced columns; each row is the action, then its keys on the right. */
+.shortcuts { columns: 2 300px; column-gap: 36px; }
+.shortcuts section { break-inside: avoid; padding-bottom: 20px; }
+.shortcuts section:last-child { padding-bottom: 0; }
+.shortcuts h3 { margin: 0 0 4px; font-size: 14px; font-weight: 600; color: var(--text); }
+.shortcuts dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-auto-flow: row dense; margin: 0; font-size: 13.5px; }
+.shortcuts dt, .shortcuts dd { display: flex; align-items: center; min-height: 34px; border-bottom: 1px solid var(--line); }
+.shortcuts dt { grid-column: 2; justify-content: flex-end; padding-left: 16px; }
+.shortcuts dd { grid-column: 1; margin: 0; padding: 6px 0; color: var(--text2); line-height: 1.35; }
+.shortcuts dl > :nth-last-child(-n+2) { border-bottom: 0; }
 .shortcuts .keys { display: inline-flex; align-items: center; gap: 4px; }
-.shortcuts .join { color: var(--text3); font-size: 11px; }
+.shortcuts .join { color: var(--text3); font-size: 12px; padding: 0 2px; }
 .menu-note { padding: 6px 12px 4px; color: var(--text3); font-size: 11.5px; }
 
 .bar-item.link { width: calc(100% + 8px); background: none; border: 0; padding: 3px 4px; margin: 0 -4px; border-radius: 6px; color: inherit; font: inherit; text-align: left; cursor: pointer; }
