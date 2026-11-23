@@ -33,15 +33,22 @@ static int frag_us = 1000000;
 
 // Video DTS. Matroska stores presentation times only; with B-frames the
 // decode times have to be rebuilt. Frames are muxed LOOKAHEAD video frames
-// behind the reading, and each frame's DTS is the smallest PTS still
-// queued: its rank in presentation order. That's right as long as frames
-// reorder less than LOOKAHEAD deep (H.264 and HEVC allow 16), however the
-// depth changes through the file. dts_lead keeps DTS before PTS; the
-// muxer's negative composition offsets take it out again.
+// behind the reading, and the nth frame muxed gets the nth smallest PTS as
+// its DTS: pending holds the PTS of every video frame read and not yet
+// given out, and each muxed frame takes the smallest. So decode times step
+// evenly, one frame duration apiece, as in an encoder's own output (taking
+// the smallest PTS still queued instead gave runs of 1-tick steps, which
+// players that time frames by their sample duration, like Ladybird, drop).
+// That's right as long as frames reorder less than LOOKAHEAD deep (H.264
+// and HEVC allow 16), however the depth changes through the file. dts_lead
+// keeps DTS before PTS; the muxer's negative composition offsets take it
+// out again.
 #define LOOKAHEAD 32
 #define MAX_QUEUE 1024
 static int64_t frame_dur, dts_lead, last_dts;
 static AVPacket *queue[MAX_QUEUE];
+static int64_t pending[MAX_QUEUE];
+static int npending;
 static int qhead, qlen, qvideo, qeof, keyed;
 static AVPacket *pkt;
 
@@ -96,7 +103,7 @@ static int write_cb(void *opaque, const uint8_t *buf, int n) {
 
 static void clear_queue(void) {
   for (; qlen; qlen--, qhead = (qhead + 1) % MAX_QUEUE) av_packet_free(&queue[qhead]);
-  qhead = qvideo = qeof = 0;
+  qhead = qvideo = qeof = npending = 0;
 }
 
 static void close_output(void) {
@@ -211,6 +218,7 @@ static int refill(void) {
       }
       keyed = 1;
       qvideo++;
+      pending[npending++] = p->pts;
     }
     queue[(qhead + qlen++) % MAX_QUEUE] = p;
   }
@@ -243,9 +251,12 @@ static void measure(void) {
 
 static int64_t video_dts(int64_t pts) {
   int64_t first = pts;
-  for (int i = 0; i < qlen; i++) {
-    AVPacket *p = queue[(qhead + i) % MAX_QUEUE];
-    if (p->stream_index == vin && p->pts < first) first = p->pts;
+  int at = -1;
+  for (int i = 0; i < npending; i++)
+    if (at < 0 || pending[i] < pending[at]) at = i;
+  if (at >= 0) {
+    first = pending[at];
+    pending[at] = pending[--npending];
   }
   int64_t dts = first - dts_lead;
   if (last_dts != AV_NOPTS_VALUE && dts <= last_dts) dts = last_dts + 1;
