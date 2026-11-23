@@ -6,12 +6,12 @@ Contributors only need [contributing](../CONTRIBUTING.md).
 ## Releases
 
 The version number lives in `internal/version/VERSION`; builds add the commit
-they came from (`lex -version` prints e.g. `lex 0.0.30 (1507120)`, also shown
+they came from (`lex -version` prints e.g. `lex 0.0.31 (1507120)`, also shown
 in Settings → About and the account menu). To release, bump that file, commit,
 and push a matching tag:
 
 ```sh
-git tag -a v0.0.30 -m "lex v0.0.30" && git push origin v0.0.30
+git tag -a v0.0.31 -m "lex v0.0.31" && git push origin v0.0.31
 ```
 
 The container image workflow checks the tag against the file, publishes the
