@@ -92,3 +92,16 @@ func TestMeReportsCaps(t *testing.T) {
 	}
 	want(t, login.Caps, false, false, true)
 }
+func TestClientName(t *testing.T) {
+	for ua, want := range map[string]string{
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36":                    "Chrome on macOS",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Ladybird/2026.47.7 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36": "Ladybird on macOS",
+		"Mozilla/5.0 (X11; Linux x86_64) Ladybird/2026.47.7 AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36":                 "Ladybird on Linux",
+		"Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:145.0) Gecko/20100101 Firefox/145.0":                                                     "Firefox on macOS",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36 Edg/142.0.0.0":            "Edge on Windows",
+	} {
+		if got := clientName(ua); got != want {
+			t.Errorf("clientName(%q) = %q, want %q", ua, got, want)
+		}
+	}
+}
