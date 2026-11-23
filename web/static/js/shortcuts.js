@@ -32,8 +32,8 @@ const SECTIONS = [
     [['p'], 'Play or resume the title you are viewing'],
   ]],
   ['Player', [
-    [['Space'], 'Play / pause'], [['k'], 'Play / pause'],
-    [['←', '→'], 'Skip back / forward'], [['j', 'l'], 'Skip back / forward'],
+    [['Space', 'k'], 'Play / pause', 'or'],
+    [['←', 'j'], 'Skip back', 'or'], [['→', 'l'], 'Skip forward', 'or'],
     [['↑', '↓'], 'Volume'], [['m'], 'Mute'],
     [['0 – 9'], 'Jump to 0% – 90%'], [['Home', 'End'], 'Start / near the end'],
     [['f'], 'Fullscreen'], [['c'], 'Subtitles & audio'],
@@ -55,8 +55,9 @@ export function showShortcuts() {
   // The app's own keys don't work over the player, so it lists only its keys.
   /** @type {[string, Shortcut[]][]} */
   const sections = inPlayer ? [SECTIONS[3], ['General', [help]]] : SECTIONS;
-  // join: '+' held together, 'then' pressed in turn, '/' alternatives.
-  const keys = (ks, join = '/') => h('span', { class: 'keys' }, ks.map((k, i) => [i ? h('span', { class: 'join' }, join) : null, h('kbd', null, k)]));
+  // join: '+' held together, 'then' pressed in turn, 'or' either key, '/' one key per half of the label.
+  // Held keys sit side by side like the search box's hint; the rest get a word.
+  const keys = (ks, join = '/') => h('span', { class: 'keys' }, ks.map((k, i) => [i && join !== '+' ? h('span', { class: 'join' }, join) : null, h('kbd', null, k)]));
   const body = [
     !single && !inPlayer ? h('p', { class: 'help', style: { margin: 0 } }, 'Single-key shortcuts are off (Settings › Interface), so only Ctrl/⌘ shortcuts work outside the player.') : null,
     h('div', { class: 'shortcuts' }, sections.map(([title, rows]) => h('section', null,
