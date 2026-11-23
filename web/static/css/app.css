@@ -1238,17 +1238,24 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .sub-tags .tag.warn { background: rgba(242,179,61,.16); color: #f2c46a; }
 .sub-err { padding: 12px 14px; border-radius: 10px; background: var(--bad-soft); border: 1px solid var(--bad-soft); color: var(--bad-ink); }
 .sub-err a { color: inherit; font-weight: 600; text-decoration: underline; }
-.p-stats { position: absolute; top: calc(76px + var(--sat)); left: max(20px, var(--sal)); width: 380px; max-width: calc(100% - 40px); max-height: calc(100% - 190px); overflow: auto; background: rgba(0,0,0,.78); border: 1px solid rgba(255,255,255,.1); border-radius: 10px; padding: 8px 12px 10px; font: 11.5px/1.55 ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; z-index: 3; pointer-events: auto; transition: background .3s; }
+.p-stats { position: absolute; top: calc(76px + var(--sat)); left: max(20px, var(--sal)); width: 400px; max-width: calc(100% - 40px); max-height: calc(100% - 190px); overflow: auto; background: rgba(0,0,0,.78); border: 1px solid rgba(255,255,255,.1); border-radius: 10px; padding: 8px 12px 10px; font: 11.5px/1.55 ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; z-index: 3; pointer-events: auto; transition: background .3s; }
 .player.hide-ui .p-stats { background: rgba(0,0,0,.6); }
 .ps-head { display: flex; align-items: center; gap: 4px; margin: 0 -4px; }
-.ps-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; background: none; border: none; color: #fff; font: inherit; text-align: left; padding: 4px; border-radius: 6px; cursor: pointer; }
+.ps-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; white-space: nowrap; background: none; border: none; color: #fff; font: inherit; text-align: left; padding: 4px; border-radius: 6px; cursor: pointer; }
 @media (hover: hover) { .ps-toggle:hover, .ps-btn:hover { background: rgba(255,255,255,.1); } }
-.ps-sum { min-width: 0; }
+.ps-sum { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Moving the panel: the header and graph are its handles. */
+.ps-head, .ps-graph { touch-action: none; }
+.ps-graph { cursor: grab; }
+.p-stats.dragging, .p-stats.dragging * { cursor: grabbing; user-select: none; }
+.p-stats.dragging .ps-toggle:hover { background: none; }
+.p-stats.moved { max-height: calc(100% - 20px - var(--sat) - var(--sab)); }
+.ps-room { position: absolute; inset: calc(10px + var(--sat)) calc(10px + var(--sar)) calc(10px + var(--sab)) calc(10px + var(--sal)); visibility: hidden; pointer-events: none; }
 .ps-status { color: var(--good-ink); font-weight: 700; }
 .ps-status.warn { color: var(--accent); } .ps-status.bad { color: var(--bad-ink); }
 .ps-btn { flex: none; background: none; border: none; color: rgba(255,255,255,.75); font: inherit; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
-.ps-close { display: grid; place-items: center; padding: 4px; }
-.ps-close svg { width: 14px; height: 14px; }
+.ps-icon { display: grid; place-items: center; padding: 5px; }
+.ps-icon svg { width: 14px; height: 14px; }
 .ps-graph { margin: 6px 0 2px; }
 .ps-cap { color: rgba(255,255,255,.6); font-size: 10.5px; }
 .p-stats canvas { width: 100%; height: 40px; display: block; }
