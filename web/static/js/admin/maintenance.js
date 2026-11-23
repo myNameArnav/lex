@@ -1,6 +1,6 @@
 // Server upkeep pages: SSD cache, backups, tasks & logs, and About.
 
-import { h, clear, icons, toast, confirmDialog, fmtBytes, fmtDate, timeAgo, run, staleBanner } from '../ui.js';
+import { h, clear, toast, confirmDialog, fmtBytes, fmtDate, timeAgo, run, staleBanner } from '../ui.js';
 import { api } from '../api.js';
 import { refreshSoft } from '../app.js';
 import { meter } from './dashboard.js';
@@ -8,7 +8,7 @@ import { heading, field, configForm, actionsTh, keepFocus } from './forms.js';
 import { every } from './poll.js';
 
 function taskRow(label, running, text) {
-  return h('div', { class: 'task' }, running ? h('div', { class: 'spinner sm' }) : h('span', { class: 'good', html: icons.check, style: { width: '16px' } }), h('b', null, label), text);
+  return h('div', { class: 'task' }, running ? h('div', { class: 'spinner sm' }) : null, h('b', null, label), text);
 }
 
 export async function cacheSection(ctx) {

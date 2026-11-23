@@ -646,7 +646,7 @@ function liveFixture(player, { start, end, channels = [{ id: 'a', number: 1, nam
   const tuned = [];
   Object.assign(player, {
     live: { channelId: channels[0].id, channels, now: { start, end, item: { id: 1 } }, skew: 0 },
-    liveBtn: { classList: classes(), textContent: 'LIVE', title: '' },
+    liveBtn: { classList: classes(), textContent: 'Live', title: '' },
     started: true, resetForNext() {}, tune: async (id, at = 0) => { tuned.push([id, at]); },
   });
   return tuned;
@@ -675,7 +675,7 @@ test('Live TV offers Go live when behind, which seeks to the live point', async 
   player.seekTo = (t) => { seeks.push(t); seekTo(t); };
   video.currentTime = 95;
   player.checkLive();
-  assert.equal(player.liveBtn.textContent, 'LIVE');
+  assert.equal(player.liveBtn.textContent, 'Live');
   video.currentTime = 30;
   player.checkLive();
   assert.equal(player.liveBtn.textContent, 'Go live');

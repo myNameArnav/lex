@@ -187,9 +187,9 @@ export function fmtEpisode(it) {
   return `S${it.season ?? 0} E${it.episode}${it.episodeEnd ? `–${it.episodeEnd}` : ''}`;
 }
 
-// fmtProgram: a movie or episode as one line, e.g. "Show · S1 E2 — Pilot".
+// fmtProgram: a movie or episode as one line, e.g. "Show · S1 E2 · Pilot".
 export function fmtProgram(it) {
-  return it.kind === 'episode' ? `${it.showTitle || ''} · ${fmtEpisode(it)} — ${it.title}` : it.title;
+  return it.kind === 'episode' ? `${it.showTitle || ''} · ${fmtEpisode(it)} · ${it.title}` : it.title;
 }
 
 // fmtClock: a time of day (Unix ms) in the viewer's locale, e.g. "9:30 PM".
@@ -299,7 +299,7 @@ export function toast(msg, kind = '', { key, ms } = {}) {
   t._msg = msg;
   t.className = `toast ${kind}`;
   if (kind === 'error') t.setAttribute('role', 'alert'); else t.removeAttribute('role');
-  const ic = kind === 'ok' ? icons.check : kind === 'error' ? icons.alert : null;
+  const ic = kind === 'ok' ? icons.check : kind === 'error' ? icons.alertCircle : null;
   t.replaceChildren(...[h('span', null, msg), ic && h('span', { class: 'toast-ic', 'aria-hidden': 'true', html: ic })].filter(Boolean)); // the icon shows first (CSS order)
   if (kind === 'error') t.appendChild(h('button', { class: 'toast-x', type: 'button', 'aria-label': 'Dismiss', html: icons.close, onclick: () => dropToast(t) }));
   t._timer = setTimeout(() => dropToast(t), dur);
@@ -436,7 +436,7 @@ export function staleBanner(target) {
     if (!failing.size) { el.replaceChildren(); return; }
     const times = [...failing.values()];
     const since = times.includes(null) ? null : Math.min(...times);
-    el.replaceChildren(h('div', { class: 'panel stale-banner small' }, since
+    el.replaceChildren(h('p', { class: 'stale-banner small' }, since
       ? `Can’t reach the server. Showing data from ${new Date(since).toLocaleTimeString()}. Retrying…`
       : 'Can’t reach the server. Retrying…'));
   };
@@ -608,6 +608,9 @@ export const icons = {
   broadcast: svg('<circle cx="12" cy="12" r="2"/><path d="M16.2 7.8a6 6 0 0 1 0 8.4M7.8 16.2a6 6 0 0 1 0-8.4M19 5a10 10 0 0 1 0 14M5 19A10 10 0 0 1 5 5"/>'),
   history: svg('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l4 2"/>'),
   plus: svg('<path d="M12 5v14M5 12h14"/>'),
+  minus: svg('<path d="M5 12h14"/>'),
+  star: svg('<path d="M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6-4.9-4.6 6.6-.8z"/>', true),
+  alertCircle: svg('<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5h.01"/>'),
   trash: svg('<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>'),
   edit: svg('<path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'),
   chevL: svg('<path d="m15 18-6-6 6-6"/>'),

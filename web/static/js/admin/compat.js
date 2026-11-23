@@ -45,7 +45,7 @@ function compatSummary(sum, req) {
   const capped = !req.maxBitrate && sum.remote && sum.causes.some((c) => c.kind === 'bitrate');
   const quality = (QUALITIES.find(([v]) => v === req.maxBitrate) || [0, `${req.maxBitrate} kbps`])[1];
   const method = { auto: 'Automatic', direct: 'Prefer Direct Play', remux: 'Always Direct Stream', transcode: 'Always Transcode' }[req.mode] || 'Automatic';
-  const dot = (t) => h('i', { class: 'compat-dot', style: { background: TIER_COLOR[t] } });
+  const swatch = (t) => h('i', { class: 'compat-swatch', style: { background: TIER_COLOR[t] } });
 
   // The reasons in one group. When converting would fix it, only the
   // reasons it can't be repackaged count; "conversion is off" becomes a link.
@@ -56,7 +56,7 @@ function compatSummary(sum, req) {
     const reasons = all.filter((c) => c !== off).sort((a, b) => Number(a.kind === 'audio') - Number(b.kind === 'audio') || b.files - a.files);
     return h('section', { class: 'compat-group' },
       h('button', { type: 'button', class: 'compat-head', onclick: () => open(t) },
-        dot(t), h('b', null, TIERS[t].label), h('span', { class: 'muted' }, plural(sum.tiers[t], 'file')), h('span', { class: 'chev', 'aria-hidden': 'true', html: icons.chevR })),
+        h('b', null, TIERS[t].label), h('span', { class: 'muted' }, plural(sum.tiers[t], 'file')), h('span', { class: 'chev', 'aria-hidden': 'true', html: icons.chevR })),
       reasons.length ? h('ul', { class: 'compat-reasons' }, reasons.map((c) => h('li', null,
         h('button', { type: 'button', onclick: () => open(t, { stage: c.stage, kind: c.kind, key: c.key }) },
           h('span', null, causeLabel(c, sum)), h('span', { class: 'muted nowrap' }, c.files.toLocaleString()))))) : null,
@@ -71,7 +71,7 @@ function compatSummary(sum, req) {
         tiers.map((t) => h('i', { style: { flexGrow: sum.tiers[t], background: TIER_COLOR[t] }, title: `${TIERS[t].label}: ${plural(sum.tiers[t], 'file')}` }))),
       h('ul', { class: 'compat-legend' }, tiers.map((t) => h('li', null,
         h('button', { type: 'button', onclick: () => open(t), title: TIERS[t].text },
-          dot(t), h('span', null, TIERS[t].label), h('span', { class: 'num' }, sum.tiers[t].toLocaleString()), h('span', { class: 'muted num' }, pct(sum.tiers[t])))))),
+          swatch(t), h('span', null, TIERS[t].label), h('span', { class: 'num' }, sum.tiers[t].toLocaleString()), h('span', { class: 'muted num' }, pct(sum.tiers[t])))))),
       h('p', { class: 'help compat-help' },
         'This browser’s codecs and this device’s ', h('a', { href: '#/settings/preferences' }, 'playback settings'), ` (${quality}, ${method.toLowerCase()})${capped ? ', with the server’s limit for streaming from outside your network' : ''}. `,
         'Assumes the default audio track and no subtitles; image subtitles (PGS, VobSub) make the server convert the video.')),

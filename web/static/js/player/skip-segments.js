@@ -66,7 +66,7 @@ export const skipSegments = {
       if (hadFocus) this.root.focus();
     }
     if (s && !this.skipBtn) {
-      const label = s.kind === 'intro' ? 'Skip Intro' : 'Skip Credits';
+      const label = s.kind === 'intro' ? 'Skip intro' : 'Skip credits';
       this.skipKind = s.kind;
       this.skipBtn = h('button', { class: 'btn skip-intro', 'aria-keyshortcuts': 's', title: `${label} (s)`, onclick: (e) => {
         e.stopPropagation();

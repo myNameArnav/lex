@@ -74,7 +74,7 @@ export const subtitles = {
       return true;
     } catch (e) {
       if (token !== this.subToken) return false;
-      toast(`Could not load subtitles: ${e.message}`, 'error');
+      toast(`Couldn’t load subtitles: ${e.message}`, 'error');
       // Don't leave the failed track checked in the menu (or asked for by the next plan).
       if (this.subtitle === idx) {
         this.subtitle = -1;
@@ -104,7 +104,7 @@ export const subtitles = {
         await apply(data ?? text);
         if (!partial) return;
       } catch (e) {
-        if (token === this.subToken) toast(`Could not load subtitles: ${e.message}`, 'error');
+        if (token === this.subToken) toast(`Couldn’t load subtitles: ${e.message}`, 'error');
         return;
       }
     }
@@ -172,7 +172,7 @@ export const subtitles = {
       console.warn('PGS renderer failed; burning in', e);
       this.destroyPGS();
       this.noPgs = true;
-      toast('Could not draw these subtitles here: burning them in (transcoding)');
+      toast('Couldn’t draw these subtitles here: burning them in (transcoding)');
       this.replan();
       return false;
     } finally {
@@ -248,7 +248,7 @@ export const subtitles = {
           : 'Subtitle search isn’t set up on this server.'));
         return;
       }
-      list.append(h('div', { class: 'sub-err row', role: 'alert' }, h('span', { class: 'spacer' }, e.message), h('button', { class: 'btn sm', onclick: search }, 'Retry')));
+      list.append(h('div', { class: 'sub-err row', role: 'alert' }, h('span', { class: 'spacer' }, e.message), h('button', { class: 'btn sm', onclick: search }, 'Try again')));
     };
     const search = async () => {
       clear(list);
@@ -265,7 +265,8 @@ export const subtitles = {
           ];
           const btn = h('button', { class: 'btn sm primary' }, 'Use');
           btn.onclick = async () => {
-            btn.disabled = true; btn.textContent = 'Downloading…';
+            const was = status.textContent;
+            btn.disabled = true; btn.setAttribute('aria-busy', 'true'); status.textContent = 'Downloading…';
             try {
               const st = await api(`/api/files/${this.file.id}/subsearch`, { method: 'POST', body: { fileId: r.fileId, language: r.language, release: r.release || r.fileName, hearingImpaired: r.hearingImpaired } });
               const { remaining, ...track } = st;
@@ -279,12 +280,13 @@ export const subtitles = {
               if (e.code === 'quota') {
                 state.subsRemaining = 0;
                 allowance.textContent = allowanceText();
-                list.prepend(h('div', { class: 'sub-err', role: 'alert' }, 'Today’s OpenSubtitles download allowance has run out. It renews within 24 hours; subtitles already downloaded still work.'));
-                btn.textContent = 'Use';
+                status.replaceChildren(h('span', { class: 'bad', role: 'alert' }, 'Today’s OpenSubtitles download allowance has run out. It renews within 24 hours; subtitles already downloaded still work.'));
+                btn.removeAttribute('aria-busy');
                 return;
               }
               toast(e.message, 'error');
-              btn.disabled = false; btn.textContent = 'Use';
+              status.textContent = was;
+              btn.disabled = false; btn.removeAttribute('aria-busy');
             }
           };
           list.append(h('div', { class: 'sub-res' },

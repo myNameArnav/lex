@@ -1,9 +1,10 @@
 // Minimal canvas charts for the dashboard. Series palette: validated
-// categorical dark-mode slots (blue, orange, aqua) against the panel surface;
-// grid, axis and surface colours come from the CSS theme.
+// categorical dark-mode slots (blue, aqua) against the panel surface. No
+// orange: that is the warning colour. Grid, axis and surface colours come
+// from the CSS theme.
 import { h, icons } from './ui.js';
 
-export const SERIES = ['#3987e5', '#d95926', '#199e70'];
+export const SERIES = ['#3987e5', '#199e70'];
 const SERIES_HOVER = '#5598e7';
 
 function theme() {

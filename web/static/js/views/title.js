@@ -89,7 +89,7 @@ export function facts(it, extra = []) {
   if (it.duration) f.push(h('span', null, fmtDuration(it.duration)));
   else if (it.runtime) f.push(h('span', null, `${it.runtime}m`));
   if (it.contentRating) f.push(h('span', { class: 'pill' }, it.contentRating));
-  if (it.rating) f.push(h('span', null, h('span', { class: 'star' }, '★ '), it.rating.toFixed(1)));
+  if (it.rating) f.push(h('span', { class: 'rating' }, h('span', { class: 'star', 'aria-hidden': 'true', html: icons.star }), it.rating.toFixed(1)));
   return h('div', { class: 'facts' }, f, extra);
 }
 
@@ -114,7 +114,7 @@ export function watchedButton(it) {
   const show = it.kind === 'show';
   // unplayedCount is left out of the JSON when it is 0.
   const played = show ? !it.unplayedCount && it.childCount > 0 : !!it.userData?.played;
-  const label = played ? 'Mark as unwatched' : 'Mark as watched';
+  const label = played ? 'Mark unwatched' : 'Mark watched';
   return h('button', { class: 'btn lg icon', title: label, 'aria-label': label, 'aria-pressed': String(played), dataset: { focusKey: `watched-${it.id}` }, style: played ? { color: 'var(--good)' } : null, html: icons.check, onclick: async (e) => {
     const b = e.currentTarget;
     if (show && !(await confirmDialog(`Mark all ${it.childCount} episodes of “${it.title}” as ${played ? 'unwatched' : 'watched'}? This clears resume points${played ? ' and watch history' : ''}.`,
@@ -289,8 +289,8 @@ function mediaView(ctx, d) {
     file ? h('span', { class: 'pill' }, [resLabel(file.width, file.height), file.hdr].filter(Boolean).join(' ') || file.container) : null,
     compat?.pill,
     file?.cached ? h('span', { class: 'pill', title: 'Plays from the SSD cache' }, 'SSD') : null,
-    d.segments?.find((s) => s.kind === 'intro') ? h('span', { class: 'pill', title: 'Intro detected' }, 'Intro ✓') : null,
-    d.segments?.find((s) => s.kind === 'credits') ? h('span', { class: 'pill', title: 'End credits detected' }, 'Credits ✓') : null,
+    d.segments?.find((s) => s.kind === 'intro') ? h('span', { class: 'pill pill-ic', title: 'Intro detected' }, h('span', { 'aria-hidden': 'true', html: icons.check }), 'Intro') : null,
+    d.segments?.find((s) => s.kind === 'credits') ? h('span', { class: 'pill pill-ic', title: 'End credits detected' }, h('span', { 'aria-hidden': 'true', html: icons.check }), 'Credits') : null,
   ]));
   if (it.genres?.length) info.push(genreLinks(it));
   if (d.collection) info.push(h('p', { class: 'collection-link' }, 'Part of ', h('a', { href: `#/collection/${d.collection.id}` }, d.collection.name)));
@@ -409,12 +409,12 @@ function mediaInfoModal(files) {
       if (s.bitrate) rows.push(['Bitrate', fmtBitrate(s.bitrate)]);
       const flags = [s.default && 'default', s.forced && 'forced', s.type === 'subtitle' && (s.textSub ? 'text' : 'image')].filter(Boolean);
       if (flags.length) rows.push(['Flags', flags.join(', ')]);
-      blocks.push(h('div', { class: 'panel' }, h('h3', null, `${s.type} #${s.index}`), h('dl', { class: 'kv' }, rows.filter(Boolean).map(([k, v]) => [h('dt', null, k), h('dd', null, String(v ?? ''))]))));
+      blocks.push(h('div', { class: 'panel' }, h('h3', null, `${s.type[0].toUpperCase()}${s.type.slice(1)} stream ${s.index}`), h('dl', { class: 'kv' }, rows.filter(Boolean).map(([k, v]) => [h('dt', null, k), h('dd', null, String(v ?? ''))]))));
     }
     for (const s of (f.subtitles || []).filter((x) => x.external)) {
-      blocks.push(h('div', { class: 'panel' }, h('h3', null, 'external subtitle'), h('p', { class: 'small', style: { margin: 0 } }, streamLabel(s))));
+      blocks.push(h('div', { class: 'panel' }, h('h3', null, 'External subtitle'), h('p', { class: 'small', style: { margin: 0 } }, streamLabel(s))));
     }
-    if (info.chapters?.length) blocks.push(h('div', { class: 'panel' }, h('h3', null, `${info.chapters.length} chapters`), h('dl', { class: 'kv' }, info.chapters.slice(0, 40).map((c) => [h('dt', null, fmtTime(c.start)), h('dd', null, c.title || '')]))));
+    if (info.chapters?.length) blocks.push(h('div', { class: 'panel' }, h('h3', null, `${info.chapters.length} chapter${info.chapters.length === 1 ? '' : 's'}`), h('dl', { class: 'kv' }, info.chapters.slice(0, 40).map((c) => [h('dt', null, fmtTime(c.start)), h('dd', null, c.title || '')]))));
     return h('div', { class: 'info-grid' }, blocks);
   });
   modal({ title: 'Media info', body, wide: true });
@@ -447,7 +447,7 @@ export async function fixMatch(it, { onDone = refreshSoft } = {}) {
     try {
       const r = await api(`/api/admin/metadata/search?kind=${it.kind}&q=${encodeURIComponent(q.value)}&year=${y.value || ''}`);
       clear(list);
-      if (!r.length) list.appendChild(h('p', { class: 'muted' }, 'No results. Adding a TMDB API key in Settings → Metadata gives the best matches.'));
+      if (!r.length) list.appendChild(h('p', { class: 'muted' }, 'No results. Adding a TMDB API key in Settings › Metadata gives the best matches.'));
       for (const c of r) {
         // Posters come through the server (the page only loads its own images);
         // a failed one leaves the empty frame.

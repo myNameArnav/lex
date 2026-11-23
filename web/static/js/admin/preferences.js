@@ -15,8 +15,9 @@ function subStyleSection(p, set) {
   const sample = h('div', { class: 'p-subs' }, h('div', { class: 'cue' }, 'This is how your subtitles look.'), h('div', { class: 'cue' }, h('i', null, 'And a second line, in italics.')));
   const preview = h('div', { class: 'sub-preview', 'aria-hidden': 'true' }, sample);
   const paint = () => { for (const [k, v] of Object.entries(subStyleVars(prefs.all()))) preview.style.setProperty(k, v); };
-  // Changes repaint the preview; the background ones also show or hide their rows.
-  const show = (el, on) => { el.style.display = on ? '' : 'none'; };
+  // Changes repaint the preview; the background and edge ones also enable or
+  // disable their colour rows (disabled, not hidden, so the page never moves).
+  const show = (el, on) => { for (const s of el.querySelectorAll('select')) s.disabled = !on; el.classList.toggle('is-off', !on); };
   const sync = () => { paint(); show(bgRows, prefs.get('subBg')); show(edgeColor, prefs.get('subEdge') !== 'none'); };
   const live = (k, conv) => (v) => { set(k, conv)(v); sync(); };
   const pick = (label, k, list, conv, help) => field(label, select(p[k], list.map(([v, l]) => [v, l]), live(k, conv)), help);
@@ -81,12 +82,12 @@ export function playbackPrefsSection() {
   return devicePage(
     h('div', { class: 'form-section' }, h('h2', null, 'Quality & method'),
       h('div', { class: 'form-grid' },
-        field('Streaming quality', select(p.quality, qualityOptions({ maxHeight: state.caps.maxTranscodeHeight}), set('quality', Number)), 'Max bitrate. "Original" direct-plays when the browser supports the file. The resolution is the most a transcode delivers on this server.'),
+        field('Streaming quality', select(p.quality, qualityOptions({ maxHeight: state.caps.maxTranscodeHeight}), set('quality', Number)), 'Max bitrate. “Original” direct-plays when the browser supports the file. The resolution is the most a transcode delivers on this server.'),
         field('Playback method', select(p.mode, [['auto', 'Automatic (recommended)'], ['direct', 'Prefer Direct Play'], ['remux', 'Always Direct Stream (remux)'], ['transcode', 'Always Transcode']], set('mode')), 'Automatic picks the lightest method that works here. Try “Always Transcode” if a video stutters or won’t play.'))),
     h('div', { class: 'form-section' }, h('h2', null, 'Player'),
-      toggleRow('Autoplay next episode', 'Shows an "Up next" card near the end with a countdown.', p.autoplayNext, set('autoplayNext')),
-      toggleRow('Skip intros automatically', 'Otherwise a "Skip Intro" button appears while an intro plays.', p.autoSkipIntro, set('autoSkipIntro')),
-      toggleRow('Skip credits automatically', 'When the end credits start, play the next episode right away (with autoplay on), or jump to the end of a film or last episode. Otherwise a "Skip Credits" button appears.', p.autoSkipCredits, set('autoSkipCredits')),
+      toggleRow('Autoplay next episode', 'Shows an “Up next” card near the end with a countdown.', p.autoplayNext, set('autoplayNext')),
+      toggleRow('Skip intros automatically', 'Otherwise a “Skip intro” button appears while an intro plays.', p.autoSkipIntro, set('autoSkipIntro')),
+      toggleRow('Skip credits automatically', 'When the end credits start, play the next episode right away (with autoplay on), or jump to the end of a film or last episode. Otherwise a “Skip credits” button appears.', p.autoSkipCredits, set('autoSkipCredits')),
       toggleRow('Show stats for nerds by default', 'Overlay with codecs, bitrate, buffer health, dropped frames and server transcode speed (press i in the player).', p.showStats, set('showStats')),
       h('div', { class: 'form-grid' },
         field('Autoplay countdown', select(p.countdown, [[5, '5 seconds'], [10, '10 seconds'], [15, '15 seconds'], [30, '30 seconds']], set('countdown', Number))),
@@ -98,7 +99,7 @@ export function playbackPrefsSection() {
         field('Keep behind playhead', select(p.backBuffer, [[10, '10 seconds'], [30, '30 seconds'], [60, '1 minute'], [120, '2 minutes']], set('backBuffer', Number)), 'Lets you rewind instantly; lower saves memory on phones/TVs.'),
         field('Progress update interval', select(p.heartbeat, [[5, '5 seconds'], [10, '10 seconds'], [30, '30 seconds']], set('heartbeat', Number)), 'How often your position is saved, so you can resume on another device.'))),
     h('div', { class: 'form-section' }, h('details', { class: 'caps', open: capsOpen, ontoggle: (e) => { capsOpen = e.target.open; } }, h('summary', null, h('h2', null, 'Technical: this browser’s codecs')),
-      state.me.isAdmin ? h('p', { class: 'small', style: { margin: '0 0 12px' } }, h('a', { href: '#/dashboard/library' }, 'See how your library plays in this browser →')) : null,
+      state.me.isAdmin ? h('p', { class: 'small', style: { margin: '0 0 12px' } }, h('a', { href: '#/dashboard/library' }, 'See how your library plays in this browser')) : null,
       h('dl', { class: 'kv' }, Object.entries(caps).map(([k, v]) => [h('dt', null, k), h('dd', null, v)])))));
 }
 

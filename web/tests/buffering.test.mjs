@@ -9,11 +9,11 @@ test('a connection slower than the video is named, with both rates', () => {
   assert.match(c.text, /arriving at 5\.3 Mbps but needs about 8\.2 Mbps/);
   assert.match(c.text, /Your connection/);
   // Transcoding is off: say so rather than suggest a quality that fails.
-  assert.match(c.hint, /turned off in Settings → Transcoding/);
-  assert.match(bufferingCause({ needKbps: 8227, bandwidth: 5e6, canTranscode: false }).hint, /doesn't transcode/);
-  assert.match(bufferingCause({ needKbps: 8227, bandwidth: 5e6, canTranscode: true }).hint, /lower quality in Settings → Playback/);
+  assert.match(c.hint, /turned off in Settings › Transcoding/);
+  assert.match(bufferingCause({ needKbps: 8227, bandwidth: 5e6, canTranscode: false }).hint, /doesn’t transcode/);
+  assert.match(bufferingCause({ needKbps: 8227, bandwidth: 5e6, canTranscode: true }).hint, /lower quality in Settings › Playback/);
   // On the local network it's the server's side.
-  assert.match(bufferingCause({ needKbps: 8227, bandwidth: 5e6 }).text, /server's network or disk/);
+  assert.match(bufferingCause({ needKbps: 8227, bandwidth: 5e6 }).text, /server’s network or disk/);
 });
 
 test('fast enough, or unknown, explains nothing', () => {

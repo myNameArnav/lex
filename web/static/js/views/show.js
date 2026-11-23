@@ -135,7 +135,7 @@ export async function showView(ctx, d) {
       renderEpisodes(s, eps);
       replaceHash(`#/item/${it.id}?season=${s.id}`);
     } catch (e) {
-      if (active === s && ctx.isCurrent()) clear(list).append(h('p', { class: 'bad', role: 'alert' }, e.message), h('button', { class: 'btn', onclick: () => showSeason(s) }, 'Retry'));
+      if (active === s && ctx.isCurrent()) clear(list).append(h('p', { class: 'bad', role: 'alert' }, e.message), h('button', { class: 'btn', onclick: () => showSeason(s) }, 'Try again'));
     } finally {
       if (active === s) list.setAttribute('aria-busy', 'false');
     }
