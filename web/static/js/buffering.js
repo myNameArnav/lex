@@ -10,7 +10,7 @@ const ADMIN_HINTS = {
   disk: 'Downloads or cache copies on the same drive slow it down.',
   cpu: 'Transcodes or scans are using the CPU.',
   memory: 'Other programs are using the memory.',
-  throttled: "Check the Pi's power supply and cooling.",
+  throttled: 'Check the Pi’s power supply and cooling.',
 };
 const VIEWER_HINT = 'Should recover once the server catches up.';
 
@@ -65,11 +65,11 @@ export function bufferingCause({ needKbps = 0, bandwidth = 0, remote = false, jo
     if (strain) return { kind: strain.kind, text: `${arriving} ${strain.text}`, hint: serverHint(strain.kind) };
     const where = remote
       ? 'Your connection to the server is too slow for this quality.'
-      : "The server's network or disk can't keep up with this quality.";
+      : 'The server’s network or disk can’t keep up with this quality.';
     let hint;
-    if (canTranscode) hint = 'Choose a lower quality in Settings → Playback.';
-    else if (isAdmin) hint = 'A lower quality needs transcoding, which is turned off in Settings → Transcoding.';
-    else hint = "A lower quality isn't available: this server doesn't transcode.";
+    if (canTranscode) hint = 'Choose a lower quality in Settings › Playback.';
+    else if (isAdmin) hint = 'A lower quality needs transcoding, which is turned off in Settings › Transcoding.';
+    else hint = 'A lower quality isn’t available: this server doesn’t transcode.';
     return { kind: 'network', text: `${arriving} ${where}`, hint };
   }
   // Nothing measured, but the server says it's overloaded.

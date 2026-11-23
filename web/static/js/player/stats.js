@@ -183,7 +183,7 @@ export const stats = {
       const idle = es.throttled || !es.fetching;
       r('Download', es.throttled ? 'paused' : es.fetching ? fmtBitrate(es.bandwidth) : 'idle',
         `${es.throttled ? 'buffer full · ' : ''}${idle && es.bandwidth ? `last ${fmtBitrate(es.bandwidth)} · ` : ''}${fmtBytes(es.bytes)} total`);
-      const ranges = es.ranges.map(([s, e]) => `${fmtTime(s)}–${fmtTime(e)}`).join(', ') || '—';
+      const ranges = es.ranges.map(([s, e]) => `${fmtTime(s)}–${fmtTime(e)}`).join(', ') || 'none';
       r('Ranges', ranges, '', '', ranges);
       sum(`${secs(cs.bufferAhead)} ahead · ${es.throttled ? 'download paused' : es.fetching ? fmtBitrate(es.bandwidth) : 'idle'}`);
     } else {
@@ -445,7 +445,7 @@ export const stats = {
       this.root.appendChild(ta); ta.select();
       const ok = document.execCommand('copy');
       ta.remove();
-      if (!ok) { toast('Could not copy stats', 'error'); return; }
+      if (!ok) { toast('Couldn’t copy stats', 'error'); return; }
     }
     toast('Stats copied');
   },

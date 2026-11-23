@@ -60,7 +60,7 @@ function myDevices(devs) {
     if (await run(e.currentTarget, () => api('/api/me/devices', { method: 'DELETE' }), 'Signed out everywhere else')) refreshSoft();
   };
   return h('div', { class: 'form-section' }, h('h2', null, 'Your devices'),
-    h('p', { class: 'muted', style: { margin: 0 } }, 'Where you’re signed in. Sign out a lost or shared device here; changing your password also signs out every other device.'),
+    h('p', { class: 'muted', style: { margin: 0 } }, 'Changing your password also signs out every other device.'),
     h('div', { class: 'table-wrap' }, h('table', { class: 'tbl stack' }, h('tr', null, h('th', null, 'Client'), h('th', null, 'IP'), h('th', null, 'Signed in'), h('th', null, 'Last seen'), actionsTh()),
       devs.map((d) => h('tr', null,
         h('td', { class: 'nowrap' }, h('b', null, d.client), d.current ? [' ', h('span', { class: 'chip this-device' }, 'This device')] : null),

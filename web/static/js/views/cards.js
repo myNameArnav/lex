@@ -60,7 +60,7 @@ async function setWatchlist(it, on) {
 // setFavorite marks a title as a favorite or not, like setWatchlist.
 /** @param {Item} it */
 async function setFavorite(it, on) {
-  const ok = await run(null, () => api(`/api/items/${it.id}/favorite`, { method: 'POST', body: { favorite: on } }), on ? 'Added to Favorites' : 'Removed from Favorites');
+  const ok = await run(null, () => api(`/api/items/${it.id}/favorite`, { method: 'POST', body: { favorite: on } }), on ? 'Added to favorites' : 'Removed from favorites');
   if (ok) (it.userData ||= /** @type {UserData} */ ({})).favorite = on;
   return !!ok;
 }
@@ -76,8 +76,8 @@ function posterMenuButton(it) {
     ? { label: 'Remove from Watchlist', icon: 'bookmarkFill', onClick: async () => { if (await setWatchlist(it, false)) refreshSoft(); } }
     : { label: 'Add to Watchlist', icon: 'bookmark', onClick: async () => { if (await setWatchlist(it, true)) refreshSoft(); } },
   ud.favorite
-    ? { label: 'Remove from Favorites', icon: 'heartFill', onClick: async () => { if (await setFavorite(it, false)) refreshSoft(); } }
-    : { label: 'Add to Favorites', icon: 'heart', onClick: async () => { if (await setFavorite(it, true)) refreshSoft(); } }];
+    ? { label: 'Remove from favorites', icon: 'heartFill', onClick: async () => { if (await setFavorite(it, false)) refreshSoft(); } }
+    : { label: 'Add to favorites', icon: 'heart', onClick: async () => { if (await setFavorite(it, true)) refreshSoft(); } }];
   if (it.kind === 'movie') {
     items.push(ud.played
       ? { label: 'Mark unwatched', icon: 'check', onClick: async () => { if (await run(null, () => api(`/api/items/${it.id}/played`, { method: 'POST', body: { played: false } }), 'Marked unwatched')) refreshSoft(); } }
@@ -93,7 +93,7 @@ export function landCard(it, { playOnClick = true } = {}) {
   /** @type {Partial<UserData>} */
   const ud = it.userData || {};
   const title = it.kind === 'episode' ? (it.showTitle || it.title) : it.title;
-  const sub = it.kind === 'episode' ? `${fmtEpisode(it)} — ${it.title}` : [it.year, ud.position && it.duration ? `${fmtDuration(it.duration - ud.position)} left` : ''].filter(Boolean).join(' · ');
+  const sub = it.kind === 'episode' ? `${fmtEpisode(it)} · ${it.title}` : [it.year, ud.position && it.duration ? `${fmtDuration(it.duration - ud.position)} left` : ''].filter(Boolean).join(' · ');
   const kids = [placeholder(it), lazyImg(img(it, 'thumb', 480), ''), h('div', { class: 'play-hover', 'aria-hidden': 'true' }, h('span', { html: icons.play })),
     ud.position > 0 && it.duration ? progressBar(ud.position, it.duration) : null];
   // The card's own click handler covers taps beside the art, so the button
@@ -102,7 +102,7 @@ export function landCard(it, { playOnClick = true } = {}) {
     ? h('button', { type: 'button', class: 'art', 'aria-label': `${ud.position > 0 ? 'Resume' : 'Play'} ${title}, ${sub}`, dataset: { focusKey: `land-${it.id}` }, onclick: (e) => { e.stopPropagation(); play(it.id); } }, kids)
     : h('div', { class: 'art' }, kids);
   const text = h('div', null, h('a', { class: 't', href: `#/item/${it.id}`, 'aria-label': `${title}, ${sub}`, style: { display: 'block' } }, title), h('div', { class: 's' }, sub));
-  const card = h('div', { class: 'card land', title: `${title} — ${sub}`, onclick: (e) => {
+  const card = h('div', { class: 'card land', title: `${title} · ${sub}`, onclick: (e) => {
     if (e.target.closest('.meta a, .card-more')) return;
     if (playOnClick) play(it.id); else location.hash = `#/item/${it.id}`;
   } }, art, h('div', { class: 'meta' }, text, playOnClick ? landMenuButton(it, title, () => card) : null));

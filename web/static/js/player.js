@@ -137,7 +137,7 @@ export class Player {
     this.volRange = h('input', { type: 'range', 'aria-label': 'Volume', min: 0, max: 1, step: 0.05, value: prefs.get('volume'), oninput: (e) => { this.video.volume = +e.target.value; this.video.muted = false; }, onclick: (e) => e.stopPropagation() });
     this.nextBtn = b('next', this.live ? 'Next channel (n)' : 'Next episode (n)', () => this.playNext(), 'hidden');
     // Live TV: LIVE while at the live point, Go live once behind it.
-    this.liveBtn = this.live ? h('button', { class: 'p-live', type: 'button', title: 'Back to what’s on now', onclick: (e) => { e.stopPropagation(); this.goLive(); } }, 'LIVE') : null;
+    this.liveBtn = this.live ? h('button', { class: 'p-live', type: 'button', title: 'Back to what’s on now', onclick: (e) => { e.stopPropagation(); this.goLive(); } }, 'Live') : null;
     this.chanBtn = this.live ? h('button', { class: 'p-chans', type: 'button', title: 'Channels (t)', 'aria-haspopup': 'dialog', 'aria-expanded': 'false', onclick: (e) => { e.stopPropagation(); this.toggleMenu('channels'); } }, 'Channels') : null;
     this.fsBtn = b('fullscreen', 'Fullscreen (f)', () => this.toggleFullscreen());
     // A live stream has one audio track and no subtitles: no menu for them (CSS hides it).
@@ -410,7 +410,7 @@ export class Player {
     } else if (this.detail.extra) {
       this.titleEl.append(h('b', null, it.title), h('span', null, this.detail.extra.title));
     } else if (it.kind === 'episode') {
-      this.titleEl.append(h('b', null, this.detail.show?.title || it.showTitle || ''), h('span', null, `${fmtEpisode(it)} — ${it.title}${this.shuffle ? ' · Shuffle' : ''}`));
+      this.titleEl.append(h('b', null, this.detail.show?.title || it.showTitle || ''), h('span', null, `${fmtEpisode(it)} · ${it.title}${this.shuffle ? ' · Shuffle' : ''}`));
     } else {
       this.titleEl.append(h('b', null, it.title), h('span', null, [it.year, resLabel(this.file?.width, this.file?.height)].filter(Boolean).join(' · ')));
     }
@@ -439,7 +439,7 @@ export class Player {
     if (forceHls) {
       mode = 'auto';
       if (!this.nativeHls()) {
-        toast("This browser can't play HLS natively (Safari and iOS can). Using the normal stream");
+        toast('This browser can’t play HLS natively (Safari and iOS can). Using the normal stream');
         this.mode = 'auto';
         prefs.set('mode', 'auto');
       }
@@ -565,7 +565,7 @@ export class Player {
     // The browser threw away the video after a seek and the transcode it
     // fell back to is off: say what happened instead of the server's refusal.
     else if (this.discarded && e.status === 422 && /transcoding is disabled/.test(e.message)) {
-      this.showError(DISCARDED_HELP, { title: "Can't play from here in this browser", retry: false });
+      this.showError(DISCARDED_HELP, { title: 'Can’t play from here in this browser', retry: false });
     } else this.showError(e.message);
   }
 
@@ -743,7 +743,7 @@ export class Player {
     // decode); the next method still converts the audio here.
     const serverAudio = () => {
       this.noClientAudio = true;
-      toast("Couldn't convert the audio in this browser. The server will convert it");
+      toast('Couldn’t convert the audio in this browser. The server will convert it');
       return this.replan({ mode: this.mode, resume: true });
     };
     const clientAudio = this.plan.clientAudio && !this.noClientAudio;
@@ -753,7 +753,7 @@ export class Player {
     // method. A video the browser can't decode still goes to transcode.
     if (this.plan.clientRemux && !this.noClientRemux && remuxFault(reason, this.video.error)) {
       this.noClientRemux = true;
-      toast("Couldn't remux this file in the browser. The server will remux it");
+      toast('Couldn’t remux this file in the browser. The server will remux it');
       return this.replan({ mode: this.mode, resume: true });
     }
     // A hardware-encoded transcode the browser can't parse: retry once with
@@ -771,7 +771,7 @@ export class Player {
     }
     this.fallbacks++;
     const next = order[idx + 1];
-    toast(`${METHOD_LABEL[this.plan.method]} didn't work in this browser. Switching to ${METHOD_LABEL[next]}`);
+    toast(`${METHOD_LABEL[this.plan.method]} didn’t work in this browser. Switching to ${METHOD_LABEL[next]}`);
     this.mode = next;
     // Media errors pause the element; that isn't the viewer pausing.
     await this.replan({ mode: next, resume: true });
@@ -781,7 +781,7 @@ export class Player {
   // it are inert and Tab stays inside. transcode offers 'Try transcoding',
   // only for failures a transcode can fix (codec/container, not network,
   // missing files or a stopped session).
-  showError(msg, { retry = true, transcode = false, title = "Can't play this" } = {}) {
+  showError(msg, { retry = true, transcode = false, title = 'Can’t play this' } = {}) {
     if (this.plan) this.logEvent('error', `${title}: ${msg}`);
     this.startupWatch = null;
     this.waitingSince = 0;
@@ -794,7 +794,7 @@ export class Player {
       h('h2', { id: 'p-err-title', style: { margin: 0 } }, title),
       h('p', { id: 'p-err-msg', class: 'muted', style: { margin: 0 } }, msg),
       h('div', { class: 'row wrap' },
-        retry ? h('button', { class: 'btn primary', onclick: () => this.retry() }, 'Retry') : null,
+        retry ? h('button', { class: 'btn primary', onclick: () => this.retry() }, 'Try again') : null,
         transcode && this.item && this.plan && this.plan.method !== 'transcode' ? h('button', { class: 'btn', onclick: () => { this.hideError(); this.mode = 'transcode'; this.replan({ mode: 'transcode', resume: true }); } }, 'Try transcoding') : null,
         h('button', { class: 'btn', onclick: () => this.close() }, 'Close'))));
     this.root.appendChild(this.errEl);

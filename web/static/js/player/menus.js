@@ -166,9 +166,9 @@ export const menus = {
           m.append(h('div', { class: 'pm-row pm-stepper', role: 'group', 'aria-label': 'Subtitle size' },
             h('span', { class: 'pm-label' }, 'Size'),
             h('div', { class: 'pm-seg pm-seg-step' },
-              h('button', { class: 'pm-step', 'data-key': 'size-down', 'aria-label': 'Smaller subtitles', disabled: si === 0, onclick: () => setSize(si - 1) }, '−'),
+              h('button', { class: 'pm-step', 'data-key': 'size-down', 'aria-label': 'Smaller subtitles', disabled: si === 0, onclick: () => setSize(si - 1), html: icons.minus }),
               h('span', { class: 'pm-seg-val', 'aria-live': 'polite' }, SUB_SIZES[si][1]),
-              h('button', { class: 'pm-step', 'data-key': 'size-up', 'aria-label': 'Larger subtitles', disabled: si === sizes.length - 1, onclick: () => setSize(si + 1) }, '+'))));
+              h('button', { class: 'pm-step', 'data-key': 'size-up', 'aria-label': 'Larger subtitles', disabled: si === sizes.length - 1, onclick: () => setSize(si + 1), html: icons.plus }))));
           m.append(h('div', { class: 'pm-row pm-stepper', role: 'group', 'aria-label': 'Subtitle position' },
             h('span', { class: 'pm-label' }, 'Position'),
             h('div', { class: 'pm-seg', role: 'radiogroup', 'aria-label': 'Subtitle position' }, SUB_POSITIONS.map(([k, l]) => h('button', {
@@ -192,12 +192,12 @@ export const menus = {
           m.append(sw('Bold', prefs.get('subWeight') !== 'normal', (v) => { prefs.set('subWeight', v ? 'bold' : 'normal'); this.applySubStyle(); }));
           m.append(h('div', { class: 'pm-sep' }));
           m.append(sw('Background box', prefs.get('subBg'), (v) => { prefs.set('subBg', v); this.applySubStyle(); this.renderMenu(); }));
-          if (prefs.get('subBg')) {
-            m.append(srow('Background color', subLabel(SUB_COLORS, prefs.get('subBgColor')) || 'Black', 'sBgColor', prefs.get('subBgColor')));
-            m.append(srow('Background opacity', subLabel(SUB_BG_OPACITIES, prefs.get('subBgOpacity')) || `${Math.round(prefs.get('subBgOpacity') * 100)}%`, 'sBgOpacity'));
-          }
+          // Rows that don't apply stay in place, disabled, so toggling never moves the menu.
+          const off = (r, on) => { r.disabled = !on; return r; };
+          m.append(off(srow('Background color', subLabel(SUB_COLORS, prefs.get('subBgColor')) || 'Black', 'sBgColor', prefs.get('subBgColor')), prefs.get('subBg')));
+          m.append(off(srow('Background opacity', subLabel(SUB_BG_OPACITIES, prefs.get('subBgOpacity')) || `${Math.round(prefs.get('subBgOpacity') * 100)}%`, 'sBgOpacity'), prefs.get('subBg')));
           m.append(srow('Edge', subLabel(SUB_EDGES, prefs.get('subEdge')) || 'Automatic', 'sEdge'));
-          if (prefs.get('subEdge') !== 'none') m.append(srow('Edge color', subLabel(SUB_COLORS, prefs.get('subEdgeColor')) || 'Black', 'sEdgeColor', prefs.get('subEdgeColor')));
+          m.append(off(srow('Edge color', subLabel(SUB_COLORS, prefs.get('subEdgeColor')) || 'Black', 'sEdgeColor', prefs.get('subEdgeColor')), prefs.get('subEdge') !== 'none'));
           m.append(h('div', { class: 'pm-sep' }));
           m.append(h('button', { class: 'pm-opt', 'data-key': 'sReset', onclick: () => {
             for (const k of Object.keys(SUB_STYLE_DEFAULTS)) if (k !== 'subSize' && k !== 'subPos') prefs.set(k, SUB_STYLE_DEFAULTS[k]);

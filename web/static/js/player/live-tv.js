@@ -178,7 +178,7 @@ export const liveTv = {
     const behind = this.livePosition() - this.video.currentTime > 15;
     if (this.liveBtn.classList.contains('behind') !== behind) {
       this.liveBtn.classList.toggle('behind', behind);
-      this.liveBtn.textContent = behind ? 'Go live' : 'LIVE';
+      this.liveBtn.textContent = behind ? 'Go live' : 'Live';
       this.liveBtn.title = behind ? 'Jump to what’s on now' : 'Playing live';
     }
   },

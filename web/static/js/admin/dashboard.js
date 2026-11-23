@@ -198,10 +198,10 @@ function sessionCard(s0, refresh) {
   const stop = h('button', { class: 'btn sm danger', onclick: async (e) => {
     const btn = e.currentTarget;
     const { userName, title: t, id } = s;
-    if (!(await confirmDialog(`Stop ${userName}'s stream of ${t}? Their player will show that playback was stopped.`, 'Stop', true, 'Stop stream?'))) return;
+    if (!(await confirmDialog(`Stop ${userName}’s stream of ${t}? Their player will show that playback was stopped.`, 'Stop', true, 'Stop stream?'))) return;
     await run(btn, () => api(`/api/admin/sessions/${id}`, { method: 'DELETE' }).catch((err) => {
       throw err.status === 404 ? new Error('That stream had already ended') : err;
-    }), `Stopped ${userName}'s stream`);
+    }), `Stopped ${userName}’s stream`);
     refresh();
   } }, 'Stop');
   const el = h('div', { class: 'session' },
@@ -225,7 +225,7 @@ function sessionCard(s0, refresh) {
     method.className = `method ${s.method}`;
     method.title = s.reasons?.map(reasonLabel).join('; ') || '';
     setText(method, METHOD_LABEL[s.method] || s.method);
-    stop.setAttribute('aria-label', `Stop ${s.userName}'s stream of ${s.title}`);
+    stop.setAttribute('aria-label', `Stop ${s.userName}’s stream of ${s.title}`);
     summary.setAttribute('aria-label', `Details for ${s.title}`);
     setText(status, `${s.paused ? 'Paused' : 'Playing'} · ${fmtTime(s.position)} / ${fmtTime(s.duration)}`);
     /** @type {HTMLElement} */ (bar.firstChild).style.width = `${s.duration ? Math.min(100, (s.position / s.duration) * 100) : 0}%`;
@@ -266,10 +266,9 @@ async function playbackTab(ctx) {
     historySection(ctx, days),
   ]);
   const range = h('div', { class: 'toolbar' },
-    h('div', { class: 'row wrap range-group', role: 'group', 'aria-label': 'Range' },
-      h('span', { class: 'muted', 'aria-hidden': 'true' }, 'Range'),
+    h('div', { class: 'seg range-group', role: 'group', 'aria-label': 'Range' },
       RANGES.map((d) => h('button', {
-        class: `btn sm${d === days ? ' primary' : ''}`, 'aria-pressed': String(d === days), dataset: { focusKey: `range-${d}` },
+        class: 'seg-btn', type: 'button', 'aria-pressed': String(d === days), dataset: { focusKey: `range-${d}` },
         onclick: () => { if (d === days) return; focusAfterRoute(`range-${d}`); location.hash = `#/dashboard/playback?days=${d}`; },
       }, `${d} days`))),
     h('div', { class: 'spacer' }),
@@ -338,7 +337,7 @@ async function playbackTab(ctx) {
           h('p', { class: 'small dim', style: { margin: '-4px 0 8px' } }, 'A play can count toward several reasons.'),
           barList(st.reasons.map((m) => ({ label: reasonLabel(m.key), value: m.count })), (v) => `${v}`, null, { wrap: true })] : null),
       h('div', { class: 'panel' }, h('h2', { class: 'panel-title' }, 'Most watched'), barList((st.topItems || []).map((m) => ({ label: m.key, value: m.count })), (v) => `${v} play${v === 1 ? '' : 's'}`)),
-      h('div', { class: 'panel' }, h('h2', { class: 'panel-title' }, "Who's watching"), barList((st.users || []).map((m) => ({ label: m.key, value: m.value })), (v) => fmtHours(v)),
+      h('div', { class: 'panel' }, h('h2', { class: 'panel-title' }, 'Who’s watching'), barList((st.users || []).map((m) => ({ label: m.key, value: m.value })), (v) => fmtHours(v)),
         h('h3', { class: 'panel-sub' }, 'Clients'), barList((st.clients || []).map((m) => ({ label: m.key || 'unknown', value: m.count })), (v) => `${v} play${v === 1 ? '' : 's'}`))),
     history);
   requestAnimationFrame(() => {
@@ -395,7 +394,6 @@ async function libraryTab() {
         st.probeErrors ? [' · ', h('button', { class: 'link-btn', type: 'button', 'aria-haspopup': 'dialog', onclick: () => unreadableModal() }, `${st.probeErrors} unreadable`)] : null]),
       stat('Metadata', `${st.metaMatched} matched`, [st.metaMissing ? h('button', { class: 'link-btn', type: 'button', 'aria-haspopup': 'dialog', onclick: () => unmatchedModal() }, `${st.metaMissing} not found`) : '0 not found', ` · ${st.metaPending} pending`])),
     st.files ? compatPanel() : null,
-    st.files ? h('p', { class: 'small dim', style: { margin: '0 0 10px' } }, 'Storage used by each kind of file. Select a row to see its titles.') : null,
     h('div', { class: 'dash-3' },
       panel('Libraries', bucketList('library', st.libraries)),
       panel('Resolution', bucketList('resolution', st.resolutions)),

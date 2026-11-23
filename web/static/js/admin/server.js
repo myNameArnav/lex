@@ -76,7 +76,7 @@ function webhookManual(path, lanBases) {
   return h('details', { class: 'arr-manual' },
     h('summary', null, 'Set it up by hand'),
     h('div', { class: 'help' },
-      'In Sonarr or Radarr, add Settings → Connect → Webhook with this URL (method POST or PUT):',
+      'In Sonarr or Radarr, add Settings › Connect › Webhook with this URL (method POST or PUT):',
       copyableUrl(location.origin + path),
       lan.length ? ['If its Test fails (common when the app runs in Docker or Podman), use a LAN address instead:', ...lan.map((b) => copyableUrl(b + path))] : null));
 }
@@ -91,10 +91,10 @@ export function arrPage() {
     return [h('div', { class: 'form-section', dataset: { searchSection: 'Sonarr & Radarr' } }, heading('Sonarr & Radarr', 'Connect them so lex rescans the moment they import, upgrade, rename or delete something, instead of waiting for the next scheduled scan. Radarr is also used as a keyless TMDB source for movies (matched by folder name).'),
       h('div', { class: 'form-grid', oninput: later(radarr) },
         field('Radarr URL', text('radarrUrl', { placeholder: 'http://127.0.0.1:7878' })),
-        field('Radarr API key', text('radarrKey', { type: 'password', autocomplete: 'off' }), 'Radarr → Settings → General → API Key')),
+        field('Radarr API key', text('radarrKey', { type: 'password', autocomplete: 'off' }), 'Radarr › Settings › General › API Key')),
       h('div', { class: 'form-grid', oninput: later(sonarr) },
         field('Sonarr URL', text('sonarrUrl', { placeholder: 'http://127.0.0.1:8989' })),
-        field('Sonarr API key', text('sonarrKey', { type: 'password', autocomplete: 'off' }), 'Sonarr → Settings → General → API Key')),
+        field('Sonarr API key', text('sonarrKey', { type: 'password', autocomplete: 'off' }), 'Sonarr › Settings › General › API Key')),
       h('div', { class: 'arr-rows' }, radarr, sonarr),
       webhookManual(info.webhookUrl, info.webhookLanUrls))];
   });
@@ -148,7 +148,7 @@ export function transcodingSection() {
           field('Process priority (nice)', num('ffmpegNice', { min: 0, max: 19 }), 'Higher = yields CPU to other services.')),
         tg('hwDecode', 'Hardware HEVC decoding (Raspberry Pi)', info.ffmpeg.hevcHwDecode ? 'Uses the Pi\'s HEVC decoder (/dev/video19) when transcoding HEVC; falls back to software automatically.' : info.ffmpeg.hevcHwDecodeIssue ? `Unavailable: ${info.ffmpeg.hevcHwDecodeIssue}` : 'Unavailable: needs dtoverlay=vc4-kms-v3d in /boot/firmware/config.txt (then reboot) and an ffmpeg with the drm hwaccel.', { disabled: !info.ffmpeg.hevcHwDecode }),
         info.hwFallback ? h('p', { class: 'help warn' }, `Hardware decoding last fell back to software ${new Date(info.hwFallback.at).toLocaleString()} (${info.hwFallback.source}, ${info.hwFallback.count}× since start): ${info.hwFallback.message}`) : null,
-        tg('tonemap', 'HDR → SDR tone mapping', info.ffmpeg.hasZscale ? 'Converts HDR colours when transcoding. Expensive.' : 'Unavailable: this ffmpeg has no zscale filter.', { disabled: !info.ffmpeg.hasZscale })),
+        tg('tonemap', 'HDR → SDR tone mapping', info.ffmpeg.hasZscale ? 'Converts HDR colors when transcoding. Expensive.' : 'Unavailable: this ffmpeg has no zscale filter.', { disabled: !info.ffmpeg.hasZscale })),
       h('div', { class: 'form-section' }, h('h2', null, 'Audio'),
         h('div', { class: 'form-grid' },
           field('Transcoded audio channels', h('select', { onchange: (e) => { draft.audioChannels = +e.target.value; } }, [[2, 'Stereo'], [6, '5.1 surround']].map(([v, l]) => h('option', { value: v, selected: draft.audioChannels === v }, l)))),
@@ -167,7 +167,7 @@ export function transcodingSection() {
 // saved settings.
 export async function metadataSection() {
   const form = await configForm(({ draft, text, tg }) => [
-    h('div', { class: 'form-section' }, heading('Providers', 'TMDB gives the richest data (posters, backdrops, cast, episode stills). Get a free API key at themoviedb.org → Settings → API. Without it, TVmaze is used for shows and your local Radarr (auto-detected, or set under ', h('a', { href: '#/settings/arr' }, 'Sonarr & Radarr'), ') for movies, with no keys needed.'),
+    h('div', { class: 'form-section' }, heading('Providers', 'TMDB gives the richest data (posters, backdrops, cast, episode stills). Get a free API key at themoviedb.org › Settings › API. Without it, TVmaze is used for shows and your local Radarr (auto-detected, or set under ', h('a', { href: '#/settings/arr' }, 'Sonarr & Radarr'), ') for movies, with no keys needed.'),
       field('TMDB API key or read access token', text('tmdbKey', { type: 'password', placeholder: 'v3 key or v4 token', autocomplete: 'off' }), 'Saving a new key retries unmatched items automatically.'),
       field('Language', text('metadataLanguage', { placeholder: 'en-US' })),
       tg('enableTmdb', 'Use TMDB'),
@@ -175,7 +175,7 @@ export async function metadataSection() {
     h('div', { class: 'form-section' }, h('h2', null, 'Local'),
       tg('useLocalMetadata', 'Use local artwork & hints', 'poster.jpg / fanart.jpg / *-thumb.jpg, .plexmatch and .nfo ids.'),
       tg('generateThumbs', 'Generate missing episode thumbnails', 'Grabs one frame with ffmpeg when no still is available (cached).')),
-    h('div', { class: 'form-section' }, heading('Subtitle downloads', 'Search and download subtitles from the player (Subtitles → Search online). Needs a free API key: create an account at opensubtitles.com, then Profile → API consumers → New consumer. Username and password are optional but raise the daily download limit.'),
+    h('div', { class: 'form-section' }, heading('Subtitle downloads', 'Search and download subtitles from the player (Subtitles › Search online). Needs a free API key: create an account at opensubtitles.com, then Profile › API consumers › New consumer. Username and password are optional but raise the daily download limit.'),
       field('OpenSubtitles API key', text('openSubtitlesKey', { type: 'password', autocomplete: 'off' })),
       h('div', { class: 'form-grid' },
         field('OpenSubtitles username', text('openSubtitlesUser', { autocomplete: 'off' })),
@@ -205,15 +205,15 @@ export async function analysisSection() {
       h('div', { class: 'form-grid' },
         field('Interval (seconds)', num('trickplayInterval', { min: 2, max: 60 }), 'Changes apply to newly generated previews.'),
         field('Thumbnail width (px)', num('trickplayWidth', { min: 120, max: 480, step: 20 })))),
-    h('div', { class: 'form-section' }, heading('Intro & credits detection', 'Finds TV intros and end credits by comparing audio fingerprints of neighbouring episodes, or from chapters named Intro/Opening and Credits/Ending. Runs in the background at the lowest CPU priority after scans.'),
+    h('div', { class: 'form-section' }, heading('Intro & credits detection', 'Finds TV intros and end credits by comparing audio fingerprints of neighboring episodes, or from chapters named Intro/Opening and Credits/Ending. Runs in the background at the lowest CPU priority after scans.'),
       tg('introDetect', 'Detect intros'),
       h('div', { class: 'form-grid' },
-        field('Analyse the first (seconds)', num('introScanSecs', { min: 120, max: 1800, step: 30 }), 'Intros after cold opens can start a few minutes in.'),
+        field('Analyze the first (seconds)', num('introScanSecs', { min: 120, max: 1800, step: 30 }), 'Intros after cold opens can start a few minutes in.'),
         field('Shortest intro (seconds)', num('introMinSecs', { min: 5, max: 60 })),
         field('Longest intro (seconds)', num('introMaxSecs', { min: 20, max: 300 }))),
       tg('creditsDetect', 'Detect end credits', '"Up next" then starts when the credits do, and films and last episodes get "Skip Credits".'),
       h('div', { class: 'form-grid' },
-        field('Analyse the last (seconds)', num('creditsScanSecs', { min: 120, max: 1200, step: 30 }), 'At most 40% of an episode is analysed.'),
+        field('Analyze the last (seconds)', num('creditsScanSecs', { min: 120, max: 1200, step: 30 }), 'At most 40% of an episode is analyzed.'),
         field('Shortest credits (seconds)', num('creditsMinSecs', { min: 5, max: 120 }))),
       h('div', { class: 'row wrap' },
         h('button', { class: 'btn', type: 'button', disabled: !introOK, 'aria-describedby': introOK ? null : 'intro-unavail', onclick: (e) => run(e.currentTarget, () => api('/api/admin/intro/scan', { method: 'POST' }), 'Intro & credits detection started') }, 'Detect intros & credits now')),

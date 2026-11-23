@@ -134,7 +134,7 @@ function channelDialog(ch, genres, { onSaved, onRemoved }) {
       const mine = ++seq;
       let r;
       try { r = await api('/api/admin/tv/preview', { method: 'POST', body: body() }); } catch (e) {
-        if (mine === seq) preview.replaceChildren(h('p', { class: 'help warn' }, `Couldn’t preview: ${e.message}`));
+        if (mine === seq) preview.replaceChildren(h('p', { class: 'help bad' }, `Couldn’t preview: ${e.message}`));
         return;
       }
       if (mine !== seq || !preview.isConnected) return;
@@ -167,7 +167,7 @@ function channelDialog(ch, genres, { onSaved, onRemoved }) {
     }, saved ? `Saved ${b.name}` : `Added ${b.name}`, (msg) => (/name/i.test(msg) ? [name] : []));
   };
   const removeBtn = saved ? h('button', { class: 'btn danger', type: 'button', onclick: async () => {
-    if (!await confirmDialog({ message: `Remove ${saved.name} from Live TV? The channels after it move up a number.`, okLabel: 'Remove channel', danger: true, title: 'Remove channel' })) return;
+    if (!await confirmDialog({ message: `Remove ${saved.name} from Live TV? The channels after it move up a number.`, okLabel: 'Remove channel', danger: true, title: 'Remove channel?' })) return;
     run(removeBtn, async () => {
       const l = await api(`/api/admin/tv/channels/${encodeURIComponent(saved.id)}`, { method: 'DELETE' });
       m.close();
@@ -209,7 +209,7 @@ export async function liveTvSection() {
     onkeydown: (e) => { if (e.key === 'Escape' && q) { e.preventDefault(); e.stopPropagation(); filterInput.value = q = ''; draw(); } } });
   const showSel = select(showing, [['all', 'On and off'], ['on', 'On only'], ['off', 'Off only']], (v) => { showing = v; draw(); });
   showSel.setAttribute('aria-label', 'Show channels that are');
-  const chips = h('div', { class: 'tv-filter-words', role: 'group', 'aria-label': 'Common words: click to keep, again to leave out, again to clear' });
+  const chips = h('div', { class: 'tv-filter-words', role: 'group', 'aria-label': 'Common words: select to keep, again to leave out, again to clear' });
   const count = h('span', { class: 'muted small', role: 'status' });
   const bulkOn = h('button', { type: 'button', class: 'btn sm', onclick: () => setShown(true) });
   const bulkOff = h('button', { type: 'button', class: 'btn sm', onclick: () => setShown(false) });
@@ -227,7 +227,7 @@ export async function liveTvSection() {
     chips.replaceChildren(...commonWords(lineup.channels).map(({ word, label, count: n }) => {
       const st = wordState(q, word);
       return h('button', { type: 'button', class: `tv-word ${st}`, 'aria-pressed': st ? 'true' : 'false', dataset: { focusKey: `word-${word}` },
-        title: st === 'want' ? `Only channels with “${label}”. Click to leave them out instead.` : st === 'not' ? `Leaving out channels with “${label}”. Click to clear.` : `Only channels with “${label}”`,
+        title: st === 'want' ? `Only channels with “${label}”. Select again to leave them out.` : st === 'not' ? `Leaving out channels with “${label}”. Select again to clear.` : `Only channels with “${label}”`,
         onclick: () => { q = toggleWord(q, label); filterInput.value = q; draw(); } },
       st === 'not' ? h('s', null, label) : label, h('span', { class: 'n' }, n));
     }));
@@ -327,7 +327,7 @@ export async function liveTvSection() {
 
   // Playlists (IPTV) to pick live channels from.
   const sources = h('ol', { class: 'tv-lineup', 'aria-label': 'Playlists' });
-  const guideNote = h('p', { class: 'help warn', role: 'status' });
+  const guideNote = h('p', { class: 'help bad', role: 'status' });
   const noSources = h('p', { class: 'muted', style: { margin: 0 } }, 'No playlists. Add one to pick channels from it, or add a single live channel above.');
   const drawSources = () => {
     const have = new Set(lineup.channels.filter((c) => c.stream).map((c) => c.stream.url));
@@ -337,7 +337,7 @@ export async function liveTvSection() {
       edit: () => sourceDialog(lineup.sources, src, saved),
       remove: async (e) => {
         const btn = e.currentTarget;
-        if (!await confirmDialog({ message: `Remove the playlist ${src.name}? Channels you added from it stay, without its guide.`, okLabel: 'Remove playlist', danger: true, title: 'Remove playlist' })) return;
+        if (!await confirmDialog({ message: `Remove the playlist ${src.name}? Channels you added from it stay, without its guide.`, okLabel: 'Remove playlist', danger: true, title: 'Remove playlist?' })) return;
         run(btn, async () => saved(await api('/api/admin/tv/sources', { method: 'PUT', body: lineup.sources.filter((s) => s.id !== src.id) })), `Removed ${src.name}`);
       },
     })));

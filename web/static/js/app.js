@@ -103,7 +103,7 @@ async function boot() {
     if (e.status === 401) return renderAuth(false);
     const down = e.status === 0 || e.status >= 502;
     clear(app).appendChild(h('main', { id: 'main' }, emptyState({
-      title: down ? 'Can’t reach lex' : 'Something went wrong', text: down ? 'It may be restarting. Try again in a moment.' : e.message, alert: true,
+      title: down ? 'Can’t reach lex' : 'Couldn’t start lex', text: down ? 'It may be restarting. Try again in a moment.' : e.message, alert: true,
       actions: [h('button', { class: 'btn primary', onclick: () => { clear(app).appendChild(spinner()); boot(); } }, 'Try again')],
     })));
   }
@@ -530,7 +530,7 @@ function errorView(e, section) {
   const actions = [h('button', { class: 'btn primary', onclick: () => route() }, 'Try again'), section ? h('a', { class: 'btn', href: '#/' }, 'Go home') : null].filter(Boolean);
   // 0: no response; 502–504: a proxy in front of Lex while it restarts.
   if (e.status === 0 || e.status >= 502) return emptyState({ title: 'Can’t reach lex', text: 'It may be restarting. Try again in a moment.', alert: true, actions });
-  return emptyState({ title: 'Something went wrong', text: e.message, alert: true, actions });
+  return emptyState({ title: 'Couldn’t load this page', text: e.message, alert: true, actions });
 }
 
 // ---------- scroll restoration ----------

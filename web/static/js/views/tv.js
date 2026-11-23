@@ -33,7 +33,7 @@ function programHead(it) {
 /** @param {Item} it */
 function programSub(it) {
   if (it.kind === 'live') return it.originalTitle || 'Live';
-  return it.kind === 'episode' ? `${fmtEpisode(it)} — ${it.title}` : String(it.year || '');
+  return it.kind === 'episode' ? `${fmtEpisode(it)} · ${it.title}` : String(it.year || '');
 }
 
 // art is a program's picture: a live channel's logo, else the title's.
@@ -57,8 +57,7 @@ async function guide(path) {
 
 const nothing = () => emptyState({ level: 'h2', title: 'Nothing to air yet', text: 'Live TV plays movies and episodes once a library scan has read their running times.' });
 
-const intro = () => [h('h1', { class: 'page-title' }, 'Live TV'),
-  h('p', { class: 'muted', style: { margin: 0 } }, 'Channels that play your library at random, like TV, and live channels from the internet.')];
+const intro = () => [h('h1', { class: 'page-title' }, 'Live TV')];
 
 // The search: kept while the guide refreshes, and for coming back to it.
 let query = '';
@@ -146,7 +145,7 @@ function programDialog(p, ch, channels, now) {
     ] : [
       h('a', { class: 'btn', href: titleHref(it), onclick: () => m.close() }, it.kind === 'episode' ? 'Show details' : 'Movie details'),
       h('div', { class: 'spacer' }),
-      h('button', { class: `btn${on ? '' : ' primary'}`, type: 'button', onclick: () => { m.close(); openPlayer({ itemId: it.id, start: 0 }); } }, 'Play from the start'),
+      h('button', { class: `btn${on ? '' : ' primary'}`, type: 'button', onclick: () => { m.close(); openPlayer({ itemId: it.id, start: 0 }); } }, 'Play from start'),
       on ? h('button', { class: 'btn primary', type: 'button', onclick: () => { m.close(); playChannel(ch.id, channels); } }, h('span', { html: icons.play }), 'Tune in') : null,
     ],
   });

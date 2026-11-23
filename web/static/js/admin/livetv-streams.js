@@ -78,7 +78,7 @@ export function streamDialog(st, { onSaved, onRemoved }) {
     headersEditor(d, 'Any other headers the provider wants with every request, such as a Cookie, Origin or token.', () => result.replaceChildren()),
     h('div', { class: 'form-grid' },
       field('Logo address', input('logo', { inputmode: 'url', placeholder: 'Optional' })),
-      field('Guide id', input('guideId', { placeholder: 'tvg-id, optional' }), 'The channel’s id in a playlist’s guide (XMLTV), for what’s on.')),
+      field('Guide ID', input('guideId', { placeholder: 'tvg-id, optional' }), 'The channel’s id in a playlist’s guide (XMLTV), for what’s on.')),
     h('div', { class: 'row wrap' }, test, result));
   const saveBtn = h('button', { class: 'btn primary', type: 'button', onclick: () => submit() }, st ? 'Save' : 'Add channel');
   const submit = () => {
@@ -94,7 +94,7 @@ export function streamDialog(st, { onSaved, onRemoved }) {
     }, st ? `Saved ${d.name.trim()}` : `Added ${d.name.trim()}`, (msg) => (/name/i.test(msg) ? [name] : /address/i.test(msg) ? [url] : []));
   };
   const removeBtn = st ? h('button', { class: 'btn danger', type: 'button', onclick: async () => {
-    if (!await confirmDialog({ message: `Remove ${st.name} from Live TV? The channels after it move up a number.`, okLabel: 'Remove channel', danger: true, title: 'Remove channel' })) return;
+    if (!await confirmDialog({ message: `Remove ${st.name} from Live TV? The channels after it move up a number.`, okLabel: 'Remove channel', danger: true, title: 'Remove channel?' })) return;
     run(removeBtn, async () => { const l = await api(`/api/admin/tv/streams/${encodeURIComponent(st.id)}`, { method: 'DELETE' }); m.close(); onRemoved(l); }, `Removed ${st.name}`);
   } }, h('span', { html: icons.trash }), 'Remove') : null;
   const m = modal({ title: st ? `Edit ${st.name}` : 'New live channel', wide: true, dismissible: false, body: form,

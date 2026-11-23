@@ -17,7 +17,7 @@ export async function openPlayer(opts) {
   try {
     return (await warmPlayer()).openPlayer(opts);
   } catch (e) {
-    toast(`Couldn't load the player: ${e.message}`, 'error');
+    toast(`Couldn’t load the player: ${e.message}`, 'error');
     return null;
   }
 }

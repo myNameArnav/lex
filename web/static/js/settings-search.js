@@ -129,11 +129,11 @@ const INDEX = {
     ]],
     ['Intro & credits detection', 'intro credits skip chromaprint fingerprint detect now', [
       ['Detect intros', 'skip intro opening chromaprint'],
-      ['Analyse the first (seconds)', 'intro'],
+      ['Analyze the first (seconds)', 'intro'],
       ['Shortest intro (seconds)', 'intro minimum'],
       ['Longest intro (seconds)', 'intro maximum'],
       ['Detect end credits', 'credits ending outro'],
-      ['Analyse the last (seconds)', 'credits'],
+      ['Analyze the last (seconds)', 'credits'],
       ['Shortest credits (seconds)', 'credits minimum'],
     ]],
   ],
@@ -290,7 +290,7 @@ export function searchSettings(query, { isAdmin = false, limit = 12 } = {}) {
 export function resultText(e) {
   if (e.label) return [e.label, `${e.pageLabel} › ${e.section}`];
   if (e.section) return [e.section, e.pageLabel];
-  return [e.pageLabel, 'Settings page'];
+  return [e.pageLabel, ''];
 }
 
 const text = (el) => norm(el?.textContent).trim();
