@@ -287,6 +287,9 @@ func clientName(ua string) string {
 		browser = "Edge"
 	case strings.Contains(ua, "OPR/"):
 		browser = "Opera"
+	case strings.Contains(ua, "Ladybird/"):
+		// Ladybird's user agent also carries Chrome/ and Safari/ tokens.
+		browser = "Ladybird"
 	case strings.Contains(ua, "Firefox/"):
 		browser = "Firefox"
 	case strings.Contains(ua, "Chrome/"):

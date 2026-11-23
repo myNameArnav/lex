@@ -186,6 +186,16 @@ function checkVideo(src, mp4, from = 0) {
   assert.equal(got[0], from * 1000);
   assert.ok(frames[0].key, 'starts at a keyframe');
   for (let i = 1; i < frames.length; i++) assert.ok(frames[i].dts > frames[i - 1].dts, `frame ${i}: decode time not increasing`);
+  // Decode times step by whole frames, the gaps between presentation times
+  // in order, as an encoder writes them: players that time frames by the
+  // sample duration (Ladybird) drop the frames left 1 tick long otherwise.
+  // (Two frames at one time, as where concatenated files meet, are the
+  // exception: decode times still have to increase.)
+  const shown = frames.map((f) => f.pts).sort((a, b) => a - b);
+  for (let i = 1; i < frames.length; i++) {
+    const gap = ms(shown[i] - shown[i - 1]);
+    if (gap > 0) assert.ok(Math.abs(ms(frames[i].dts - frames[i - 1].dts) - gap) <= 2, `frame ${i}: decode time step`);
+  }
 }
 
 test('H.264 (B-frames) + AAC: the server remux\'s fMP4 with the file\'s timestamps', { skip }, async () => {
