@@ -43,6 +43,7 @@ export const DEFAULTS = {
   showStats: false,
   statsCompact: false, // stats panel collapsed to its summary and graph
   statsOpen: [],       // stats panel sections shown in full (by title)
+  statsPos: null,      // where the stats panel was dragged to ({x, y} as fractions of the room), or null for its corner
   volume: 1,
   muted: false,
   nightMode: false,    // compress loud and quiet parts (audio-fx.js)

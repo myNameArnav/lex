@@ -129,11 +129,11 @@ export function interfacePrefsSection() {
       toggleRow('Single-key shortcuts', 'p, /, ? and g-then-key. Ctrl/⌘ K and the player keys always work.', p.shortcuts, set('shortcuts'))));
 }
 
-// Volume and the stats panel's compact state aren't shown on this page, so a
+// Volume and the stats panel's compact state and position aren't shown on this page, so a
 // reset leaves them as they are.
 async function resetPrefs() {
   if (!(await confirmDialog('Reset playback, audio & subtitle and interface settings on this device to their defaults?', 'Reset', true, 'Reset this device’s settings?'))) return;
-  const keep = ['volume', 'muted', 'statsCompact'].map((k) => [k, prefs.get(k)]);
+  const keep = ['volume', 'muted', 'statsCompact', 'statsPos'].map((k) => [k, prefs.get(k)]);
   prefs.reset();
   keep.forEach(([k, v]) => prefs.set(k, v));
   toast('Reset to defaults', 'ok');

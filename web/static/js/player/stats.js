@@ -13,7 +13,10 @@ import { diskLevel } from '../buffering.js';
 
 export const stats = {
   toggleStats() {
-    if (this.statsEl) { this.statsEl.remove(); this.statsEl = null; prefs.set('showStats', false); this.statsChanged(); return; }
+    if (this.statsEl) {
+      this.statsRO?.disconnect();
+      this.statsEl.remove(); this.statsEl = null; prefs.set('showStats', false); this.statsChanged(); return;
+    }
     if (!this.plan && !this.live?.stream) return;
     prefs.set('showStats', true);
     const stop = (on) => (e) => { e.stopPropagation(); on(e); };
@@ -33,15 +36,89 @@ export const stats = {
     }) }, this.statsSum);
     this.statsEl = h('div', { class: `p-stats${compact ? ' compact' : ''}`, onclick: (e) => e.stopPropagation() },
       h('div', { class: 'ps-head' }, toggle,
-        h('button', { class: 'ps-btn', title: 'Copy stats as text', onclick: stop(() => this.copyStats()) }, 'Copy'),
-        h('button', { class: 'ps-btn ps-close', title: 'Close (I)', 'aria-label': 'Close stats (I)', html: icons.close, onclick: stop(() => this.toggleStats()) })),
+        h('button', { class: 'ps-btn ps-icon', title: 'Copy stats as text', 'aria-label': 'Copy stats as text', html: icons.copy, onclick: stop(() => this.copyStats()) }),
+        h('button', { class: 'ps-btn ps-icon', title: 'Close (I)', 'aria-label': 'Close stats (I)', html: icons.close, onclick: stop(() => this.toggleStats()) })),
       this.statsIssues,
       h('div', { class: 'ps-graph' }, h('div', { class: 'ps-cap' }, 'Buffer · last 90s'), this.statsCanvas),
       this.statsBody);
     this.root.appendChild(this.statsEl);
+    this.statsDrag();
     this.renderStats(this.clientStats());
     this.statsChanged();
     this.beat();
+  },
+
+  // The header and the graph move the panel; a press that doesn't travel is
+  // still a click. Where it sits is kept as a fraction of the room it has, so
+  // it stays put across fullscreen and resizes.
+  statsDrag() {
+    const el = this.statsEl, root = this.root;
+    const place = (pos = prefs.get('statsPos')) => {
+      el.classList.toggle('moved', !!pos);
+      if (!pos) { el.style.left = el.style.top = ''; return; }
+      const room = this.statsRoom();
+      el.style.left = `${room.x0 + Math.round(pos.x * room.w)}px`;
+      el.style.top = `${room.y0 + Math.round(pos.y * room.h)}px`;
+    };
+    this.statsRO = new ResizeObserver(() => { if (!el.classList.contains('dragging')) place(); });
+    this.statsRO.observe(root); this.statsRO.observe(el);
+    let dragged = false;
+    el.addEventListener('click', (e) => { if (dragged) { e.stopPropagation(); e.preventDefault(); } }, true);
+    const grab = (e) => {
+      if (e.button !== 0) return;
+      const sx = e.clientX, sy = e.clientY;
+      const r0 = el.getBoundingClientRect(), rr = root.getBoundingClientRect();
+      let moving = false, pos = null;
+      const move = (ev) => {
+        if (ev.pointerId !== e.pointerId) return;
+        // A release we never heard about (it happened outside the window).
+        if (!ev.buttons) { up(ev); return; }
+        const dx = ev.clientX - sx, dy = ev.clientY - sy;
+        if (!moving) {
+          if (Math.hypot(dx, dy) < 5) return;
+          moving = true;
+          el.classList.add('dragging');
+          try { handle.setPointerCapture(e.pointerId); } catch {}
+        }
+        const room = this.statsRoom();
+        const x = Math.min(Math.max(r0.left - rr.left + dx, room.x0), room.x0 + room.w);
+        const y = Math.min(Math.max(r0.top - rr.top + dy, room.y0), room.y0 + room.h);
+        pos = { x: room.w ? (x - room.x0) / room.w : 0, y: room.h ? (y - room.y0) / room.h : 0 };
+        place(pos);
+      };
+      const handle = e.currentTarget;
+      const up = (ev) => {
+        if (ev.pointerId !== e.pointerId) return;
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        window.removeEventListener('pointercancel', up);
+        if (!moving) return;
+        el.classList.remove('dragging');
+        prefs.set('statsPos', pos);
+        // The click that ends a drag mustn't collapse the panel.
+        dragged = true;
+        setTimeout(() => { dragged = false; }, 0);
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+      window.addEventListener('pointercancel', up);
+    };
+    for (const handle of el.querySelectorAll('.ps-head, .ps-graph')) handle.addEventListener('pointerdown', grab);
+    place();
+  },
+
+  // Where the panel's top-left corner may go: inside the player, clear of
+  // its edges (and the notch).
+  statsRoom() {
+    // env() insets only resolve on an element, so measure a box that has them.
+    const probe = h('div', { class: 'ps-room' });
+    this.root.appendChild(probe);
+    const pr = probe.getBoundingClientRect(), rr = this.root.getBoundingClientRect();
+    probe.remove();
+    const x0 = pr.left - rr.left, y0 = pr.top - rr.top;
+    const w = Math.max(0, pr.width - this.statsEl.offsetWidth);
+    const h2 = Math.max(0, pr.height - this.statsEl.offsetHeight);
+    return { x0, y0, w, h: h2 };
   },
 
   // The badge and an open Settings menu show whether the panel is up.
@@ -84,7 +161,7 @@ export const stats = {
     const lvls = [bufLvl, dropLvl, jobLvl, diskLvl, hostLvl];
     const lvl = lvls.includes('bad') ? 'bad' : lvls.includes('warn') ? 'warn' : '';
     const status = cs.buffering ? 'Buffering' : lvl === 'bad' ? 'Error' : lvl === 'warn' ? 'Degraded' : 'Healthy';
-    const summary = `${status} · ${secs(cs.bufferAhead)} buffered · ${plural(cs.bufferEvents, 'stall')} · ${cs.droppedFrames} dropped`;
+    const summary = `${status} · ${secs(cs.bufferAhead)} ahead · ${plural(cs.bufferEvents, 'stall')} · ${cs.droppedFrames} dropped`;
 
     sec('Playback');
     sum(`${method} · ${fmtTime(t)} / ${fmtTime(d)}`);
@@ -199,7 +276,7 @@ export const stats = {
     const lvls = [bufLvl, dropLvl];
     const lvl = lvls.includes('bad') ? 'bad' : lvls.includes('warn') ? 'warn' : '';
     const status = cs.buffering ? 'Buffering' : lvl === 'bad' ? 'Error' : lvl === 'warn' ? 'Degraded' : 'Healthy';
-    const summary = `${status} · ${secs(cs.bufferAhead)} buffered · ${plural(cs.bufferEvents, 'stall')} · ${cs.droppedFrames} dropped`;
+    const summary = `${status} · ${secs(cs.bufferAhead)} ahead · ${plural(cs.bufferEvents, 'stall')} · ${cs.droppedFrames} dropped`;
     const playingFor = si.playing ? fmtTime(si.seconds) : '';
 
     sec('Channel');

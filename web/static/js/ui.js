@@ -582,6 +582,7 @@ export const icons = {
   pip: svg('<rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="11" width="8" height="6" rx="1" fill="currentColor"/>'),
   next: svg('<path d="M5 4.5v15l10-7.5z" fill="currentColor"/><path d="M19 5v14"/>'),
   close: svg('<path d="M18 6 6 18M6 6l12 12"/>'),
+  copy: svg('<rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/>'),
   back: svg('<path d="M19 12H5M12 19l-7-7 7-7"/>'),
   check: svg('<path d="M20 6 9 17l-5-5"/>'),
   alert: svg('<path d="M12 5v9M12 19h.01"/>'),
