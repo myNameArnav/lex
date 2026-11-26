@@ -22,6 +22,10 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 COPY web ./web
+# Minify the UI's scripts and stylesheet (with source maps) before they are
+# embedded; --build-arg MINIFY_UI=no ships them as written.
+ARG MINIFY_UI=yes
+RUN if [ "$MINIFY_UI" = "yes" ]; then go run ./cmd/lex-minify-ui ./web/static; fi
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags "-s -w -X lex/internal/version.Commit=$COMMIT" -o /out/lex ./cmd/lex
 

@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html"
 	"io"
 	"io/fs"
@@ -60,7 +61,8 @@ type Server struct {
 	ListenAddr string // -addr, used to suggest LAN webhook URLs
 
 	static    map[string]*asset
-	buildID   string // content hash of the UI files; assets are also served under /b/<buildID>/
+	imports   map[string][]string // a minified build's import manifest (see staticImports)
+	buildID   string              // content hash of the UI files; assets are also served under /b/<buildID>/
 	loginMu   sync.Mutex
 	loginFail map[string]*failWindow
 	thumbSem  chan struct{}
@@ -521,6 +523,9 @@ func (s *Server) loadStatic() error {
 	if err != nil {
 		return err
 	}
+	if err := s.loadImportManifest(); err != nil {
+		return err
+	}
 	s.buildID = s.computeBuildID()
 	s.preloadModules()
 	s.versionPages()
@@ -594,8 +599,7 @@ func (s *Server) moduleGraph(entry string) []string {
 		if a == nil {
 			continue
 		}
-		for _, m := range staticImportRe.FindAllSubmatch(a.body, -1) {
-			spec := string(m[1])
+		for _, spec := range s.staticImports(queue[0], a.body) {
 			if !strings.HasPrefix(spec, "/") {
 				spec = path.Join(path.Dir(queue[0]), spec)
 			}
@@ -606,6 +610,44 @@ func (s *Server) moduleGraph(entry string) []string {
 			out = append(out, spec)
 			queue = append(queue, spec)
 		}
+	}
+	return out
+}
+
+// importManifest is written by the release image's UI build
+// (internal/uibuild), which minifies each module onto one line: it lists the
+// static imports of every /js module as esbuild parsed them.
+const importManifest = "/js/imports.json"
+
+// loadImportManifest takes the manifest out of the served files, if the
+// build wrote one.
+func (s *Server) loadImportManifest() error {
+	a := s.static[importManifest]
+	if a == nil {
+		return nil
+	}
+	delete(s.static, importManifest)
+	var m map[string][]string
+	if err := json.Unmarshal(a.body, &m); err != nil {
+		return fmt.Errorf("%s: %w", importManifest, err)
+	}
+	s.imports = map[string][]string{}
+	for file, specs := range m {
+		s.imports["/js/"+file] = specs
+	}
+	return nil
+}
+
+// staticImports lists the specifiers module p imports statically (or
+// re-exports from): from the manifest in a minified build, otherwise read
+// from the source, where each such statement starts a line.
+func (s *Server) staticImports(p string, body []byte) []string {
+	if specs, ok := s.imports[p]; ok {
+		return specs
+	}
+	var out []string
+	for _, m := range staticImportRe.FindAllSubmatch(body, -1) {
+		out = append(out, string(m[1]))
 	}
 	return out
 }
@@ -637,8 +679,11 @@ func (s *Server) preloadModules() {
 func newAsset(p string, b []byte) *asset {
 	sum := sha1.Sum(b)
 	a := &asset{body: b, etag: `"` + hex.EncodeToString(sum[:8]) + `"`, ctype: mime.TypeByExtension(path.Ext(p))}
-	if path.Ext(p) == ".woff2" { // not in Go's built-in table; system mime.types may lack it
+	switch path.Ext(p) { // not in Go's built-in table; system mime.types may lack them
+	case ".woff2":
 		a.ctype = "font/woff2"
+	case ".map": // source maps of the release image's minified UI
+		a.ctype = "application/json"
 	}
 	if a.ctype == "" {
 		a.ctype = "application/octet-stream"
@@ -666,7 +711,8 @@ func (s *Server) shellPaths() []string {
 	shell := []string{"/"}
 	for p := range s.static {
 		switch {
-		case p == "/index.html", p == "/sw.js", strings.HasPrefix(p, "/vendor/"):
+		case p == "/index.html", p == "/sw.js", strings.HasPrefix(p, "/vendor/"), path.Ext(p) == ".map":
+			// Source maps are only fetched by DevTools.
 		case strings.HasPrefix(p, "/js/") && path.Ext(p) == ".js", strings.HasPrefix(p, "/css/"):
 			// What the pages load: from the build prefix.
 			shell = append(shell, s.versioned(p))
