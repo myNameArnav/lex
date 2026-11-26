@@ -151,7 +151,7 @@ for record in log.split(b"\0"):
 # The Go version named in the docs and the Dockerfile must match go.mod,
 # which a local toolchain has to satisfy (GOTOOLCHAIN=local fails otherwise).
 go_mod = re.search(r"^go (\S+)$", pathlib.Path("go.mod").read_text(), re.M).group(1)
-for path, pattern in [("README.md", r"Go \*\*(\S+) or newer\*\*"),
+for path, pattern in [("README.md", r"\(Go (\d[\d.]*)\+\)"),
                       ("docs/install.md", r"Go \*\*(\S+) or newer\*\*"),
                       ("CONTRIBUTING.md", r"Use Go (\S+) or newer"),
                       ("Dockerfile", r"golang:([\d.]+)-")]:
