@@ -1178,6 +1178,9 @@ select:disabled { opacity: .5; cursor: default; }
   .p-menu .pm-row:not(:disabled):hover, .p-menu .pm-opt:hover, .p-menu .pm-back:hover { background: rgba(255,255,255,.08); }
   .p-menu .pm-stepper:hover { background: none; }
 }
+/* Keyboard focus sits inside the control: the scrolling track lists clip a ring drawn outside it. */
+.p-menu :is(button, input):focus-visible { outline-offset: -2px; }
+.p-menu :is(.pm-row, .pm-opt, .pm-back):focus-visible { background: rgba(255,255,255,.08); }
 .p-menu .pm-row:disabled { opacity: .4; cursor: default; }
 .p-menu .pm-label { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .p-menu .pm-label small, .p-menu .pm-opt-l small { color: rgba(255,255,255,.6); font-size: 11.5px; }
